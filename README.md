@@ -59,3 +59,24 @@ npm run dev -- --port 18056 --host 0.0.0.0
 
 ## 开发规范
 见 docs/03-开发规范与铁律.md，所有开发必须遵守。
+
+## Docker Compose 一键部署（私有化）
+
+前置：安装 Docker 和 docker-compose 1.29+。
+
+```
+cd agent-platform
+docker-compose up -d --build
+```
+
+启动 5 个容器：api(8000)、web(18056)、postgres(5432)、redis(6379)、minio(9000)。
+
+- 前端控制台：http://<服务器IP>:18056
+- 后端 API：http://<服务器IP>:8000
+- 登录：admin / admin123
+- 数据持久化：pgdata / miniodata 两个数据卷
+
+配置项在根目录 .env（数据库密码、密钥等），首次部署按需修改。
+
+停止：docker-compose down
+停止并清空数据：docker-compose down -v
