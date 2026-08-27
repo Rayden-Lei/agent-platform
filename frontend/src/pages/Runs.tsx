@@ -21,6 +21,7 @@ export default function Runs() {
   const failed = data.filter((r) => r.status === 'failed').length
   const running = data.filter((r) => r.status === 'running').length
   const totalTokens = data.reduce((s, r) => s + (r.token_usage?.total_tokens || 0), 0)
+  const totalCost = data.reduce((s, r) => s + (r.cost || 0), 0)
 
   const viewDetail = async (id: number) => {
     try {
@@ -34,6 +35,7 @@ export default function Runs() {
     { title: '类型', dataIndex: 'run_type', width: 90, render: (v: string) => runTypeLabel[v] || v },
     { title: '状态', dataIndex: 'status', width: 100, render: (v: string) => <Tag color={v === 'success' ? 'green' : v === 'running' ? 'blue' : 'red'}>{v}</Tag> },
     { title: 'Token', dataIndex: ['token_usage', 'total_tokens'], width: 90, render: (v: number) => v || '-' },
+    { title: '成本(元)', dataIndex: 'cost', width: 100, render: (v: number) => v != null ? v.toFixed(4) : '-' },
     { title: '耗时(ms)', dataIndex: 'latency_ms', width: 100 },
     { title: '错误', dataIndex: 'error', ellipsis: true },
     { title: '操作', width: 80, render: (_: any, r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => viewDetail(r.id)}>详情</Button> },
@@ -48,6 +50,7 @@ export default function Runs() {
           <Col xs={12} md={6}><Card className="tech-card"><Statistic title="成功" value={success} valueStyle={{ color: '#16a34a' }} /></Card></Col>
           <Col xs={12} md={6}><Card className="tech-card"><Statistic title="失败" value={failed} valueStyle={{ color: '#dc2626' }} /></Card></Col>
           <Col xs={12} md={6}><Card className="tech-card"><Statistic title="Token 消耗" value={totalTokens} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总成本(元)" value={totalCost} precision={4} /></Card></Col>
         </Row>
       </div>
 

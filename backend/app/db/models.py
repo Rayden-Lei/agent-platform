@@ -29,6 +29,8 @@ class ModelConfig(Base, TimestampMixin):
     model_name = Column(String(128), nullable=False)
     default_params = Column(JSONB, nullable=False, default=dict)
     is_enabled = Column(Boolean, nullable=False, default=True)
+    price_input = Column(Float, nullable=True)
+    price_output = Column(Float, nullable=True)
     created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
 
 
@@ -46,6 +48,15 @@ class Agent(Base, TimestampMixin):
     status = Column(String(16), nullable=False, default="draft", index=True)
     version = Column(Integer, nullable=False, default=1)
     created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+
+
+class AgentVersion(Base):
+    __tablename__ = "agent_versions"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Tool(Base):
@@ -90,7 +101,7 @@ class DocumentChunk(Base):
     doc_id = Column(BigInteger, ForeignKey("documents.id"), nullable=False, index=True)
     kb_id = Column(BigInteger, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(1536), nullable=False)
+    embedding = Column(Vector(2048), nullable=False)
     meta = Column(JSONB, nullable=False, default=dict)
     token_count = Column(Integer, nullable=False, default=0)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)

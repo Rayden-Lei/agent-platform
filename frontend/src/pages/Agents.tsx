@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag } from 'antd'
-import { PlusOutlined, MessageOutlined } from '@ant-design/icons'
+import { PlusOutlined, MessageOutlined, HistoryOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { listAgents, createAgent, updateAgent, deleteAgent, publishAgent, listModels, listTools, listKBs } from '../api'
+import { listAgents, createAgent, updateAgent, deleteAgent, publishAgent, getAgentVersions, rollbackAgent, listModels, listTools, listKBs } from '../api'
 
 export default function Agents() {
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
+  const [versionOpen, setVersionOpen] = useState(false)
+  const [versions, setVersions] = useState<any[]>([])
+  const [versionAgent, setVersionAgent] = useState<any>(null)
   const [models, setModels] = useState<any[]>([])
   const [tools, setTools] = useState<any[]>([])
   const [kbs, setKBs] = useState<any[]>([])
@@ -55,6 +58,7 @@ export default function Agents() {
         <Space>
           <Button size="small" icon={<MessageOutlined />} onClick={() => navigate('/chat', { state: { agentId: record.id } })}>对话</Button>
           {record.status !== 'published' && <Button size="small" type="primary" onClick={async () => { await publishAgent(record.id); load() }}>发布</Button>}
+          <Button size="small" icon={<HistoryOutlined />} onClick={async () => { setVersionAgent(record); setVersions(await getAgentVersions(record.id) as any); setVersionOpen(true) }}>版本</Button>
           <Button size="small" onClick={() => { setEditing(record); form.setFieldsValue(record); setOpen(true) }}>编辑</Button>
           <Popconfirm title="确定删除？" onConfirm={async () => { await deleteAgent(record.id); load() }}>
             <Button size="small" danger>删除</Button>
@@ -88,6 +92,26 @@ export default function Agents() {
             <Select mode="multiple" options={kbs.map((k: any) => ({ value: k.id, label: k.name }))} allowClear />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal title={'版本历史：' + (versionAgent?.name || '')} open={versionOpen} onCancel={() => setVersionOpen(false)} footer={null} width={560}>
+        {versions.length === 0 ? '暂无版本记录' : (
+          <Table
+            size="small"
+            rowKey="id"
+            dataSource={versions}
+            pagination={false}
+            columns={[
+              { title: '版本', dataIndex: 'version', width: 80, render: (v: number) => 'v' + v },
+              { title: '发布时间', dataIndex: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+              { title: '操作', width: 100, render: (_: any, rec: any) => (
+                <Popconfirm title={'回滚到 v' + rec.version + '？'} onConfirm={async () => { await rollbackAgent(versionAgent.id, rec.id); message.success('已回滚'); setVersionOpen(false); load() }}>
+                  <Button size="small">回滚</Button>
+                </Popconfirm>
+              ) },
+            ]}
+          />
+        )}
       </Modal>
     </div>
   )

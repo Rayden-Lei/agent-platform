@@ -13,6 +13,8 @@ export const createAgent = (data: any) => client.post('/agents', data)
 export const updateAgent = (id: number, data: any) => client.put(`/agents/${id}`, data)
 export const deleteAgent = (id: number) => client.delete(`/agents/${id}`)
 export const publishAgent = (id: number) => client.post(`/agents/${id}/publish`)
+export const getAgentVersions = (id: number) => client.get(`/agents/${id}/versions`)
+export const rollbackAgent = (id: number, versionId: number) => client.post(`/agents/${id}/rollback/${versionId}`)
 
 export const listConversations = () => client.get('/conversations')
 export const listMessages = (id: number) => client.get(`/conversations/${id}/messages`)

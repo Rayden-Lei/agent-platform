@@ -27,6 +27,8 @@ def create_model(data: ModelIn, db: Session = Depends(get_db), user: User = Depe
         api_key_enc=encrypt_secret(data.api_key),
         model_name=data.model_name,
         default_params=data.default_params,
+        price_input=data.price_input,
+        price_output=data.price_output,
         created_by=user.id,
     )
     db.add(m)
@@ -54,6 +56,8 @@ def update_model(model_id: int, data: ModelIn, db: Session = Depends(get_db), us
     m.api_key_enc = encrypt_secret(data.api_key)
     m.model_name = data.model_name
     m.default_params = data.default_params
+    m.price_input = data.price_input
+    m.price_output = data.price_output
     db.commit()
     db.refresh(m)
     return ModelOut.model_validate(m)

@@ -103,6 +103,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             lc_messages.append(HumanMessage(content=message_text))
 
             final_content = ""
+            usage_total = {}
             try:
                 async for chunk, _meta in graph.astream({"messages": lc_messages}, stream_mode="messages"):
                     msg_type = getattr(chunk, "type", None)
@@ -113,6 +114,13 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                             yield _sse({"type": "delta", "content": delta})
                         for tc in getattr(chunk, "tool_calls", None) or []:
                             yield _sse({"type": "tool_call", "name": tc.get("name"), "arguments": tc.get("args", {})})
+                        um = getattr(chunk, "usage_metadata", None)
+                        if um:
+                            usage_total = {
+                                "prompt_tokens": um.get("input_tokens", 0),
+                                "completion_tokens": um.get("output_tokens", 0),
+                                "total_tokens": um.get("total_tokens", 0),
+                            }
                     elif msg_type == "tool":
                         yield _sse({"type": "tool_result", "content": str(chunk.content)[:200]})
 
@@ -121,14 +129,15 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                     role="assistant",
                     content=final_content,
                     citations=citations,
-                    token_usage={},
+                    token_usage=usage_total,
                 )
                 db2.add(assistant_msg)
                 run2 = db2.get(Run, run_id)
                 run2.status = "success"
                 run2.output = {"content": final_content}
+                run2.token_usage = usage_total
                 db2.commit()
-                yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id, "conversation_id": conversation_id})
+                yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id, "conversation_id": conversation_id, "usage": usage_total})
             except Exception as e:
                 run2 = db2.get(Run, run_id)
                 if run2:

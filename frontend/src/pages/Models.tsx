@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag } from 'antd'
+import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag, InputNumber } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { listModels, createModel, updateModel, deleteModel } from '../api'
 
@@ -79,6 +79,8 @@ export default function Models() {
           <Form.Item name="api_base" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]}><Input placeholder="https://xxx/v1" /></Form.Item>
           <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: '请输入 API Key' }]}><Input.Password placeholder="编辑时需重新填写" /></Form.Item>
           <Form.Item name="model_name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}><Input placeholder="deepseek-v4-pro-0813" /></Form.Item>
+          <Form.Item name="price_input" label="输入价格(元/百万token)"><InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="可选" /></Form.Item>
+          <Form.Item name="price_output" label="输出价格(元/百万token)"><InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="可选" /></Form.Item>
         </Form>
       </Modal>
     </div>

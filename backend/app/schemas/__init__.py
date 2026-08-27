@@ -39,6 +39,8 @@ class ModelIn(BaseModel):
     api_key: str
     model_name: str
     default_params: dict = Field(default_factory=dict)
+    price_input: Optional[float] = None
+    price_output: Optional[float] = None
 
 
 class ModelOut(BaseModel):
@@ -50,6 +52,8 @@ class ModelOut(BaseModel):
     model_name: str
     default_params: dict
     is_enabled: bool
+    price_input: Optional[float] = None
+    price_output: Optional[float] = None
 
 
 class AgentIn(BaseModel):

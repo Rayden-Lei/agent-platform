@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Select, Input, Button, Tag, message, List, Empty, Popconfirm, Space, Divider } from 'antd'
-import { SendOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Select, Input, Button, Tag, message, List, Empty, Popconfirm, Space } from 'antd'
+import { SendOutlined, PlusOutlined, DeleteOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useLocation } from 'react-router-dom'
 import { listAgents, listConversations, listMessages, deleteConversation } from '../api'
 
@@ -9,6 +9,7 @@ interface Msg {
   content: string
   tools?: { name: string; args: any }[]
   citations?: any[]
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
 }
 
 export default function Chat() {
@@ -21,6 +22,7 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   const loadAgents = async () => {
     try { setAgents((await listAgents() as any).filter((a: any) => a.status === 'published')) } catch {}
@@ -36,7 +38,7 @@ export default function Chat() {
     setConversationId(cid)
     try {
       const msgs: any = await listMessages(cid)
-      setMessages(msgs.map((m: any) => ({ role: m.role, content: m.content, tools: m.tool_calls || [], citations: m.citations || [] })))
+      setMessages(msgs.map((m: any) => ({ role: m.role, content: m.content, tools: m.tool_calls || [], citations: m.citations || [], usage: m.token_usage || undefined })))
     } catch { message.error('加载历史失败') }
   }
 
@@ -45,12 +47,22 @@ export default function Chat() {
     setMessages([])
   }
 
-  const send = async () => {
-    if (!input.trim() || !agentId || sending) return
-    const msg = input.trim()
-    setInput('')
-    setMessages((prev) => [...prev, { role: 'user', content: msg }, { role: 'assistant', content: '' }])
+  const doSend = async (msg: string, isRegen: boolean) => {
+    if (!msg || !agentId || sending) return
+    if (isRegen) {
+      setMessages((prev) => {
+        const next = [...prev]
+        next.pop()
+        next.push({ role: 'assistant', content: '' })
+        return next
+      })
+    } else {
+      setMessages((prev) => [...prev, { role: 'user', content: msg }, { role: 'assistant', content: '' }])
+      setInput('')
+    }
     setSending(true)
+    const controller = new AbortController()
+    abortRef.current = controller
 
     try {
       const token = localStorage.getItem('token')
@@ -58,6 +70,7 @@ export default function Chat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
         body: JSON.stringify({ message: msg, conversation_id: conversationId }),
+        signal: controller.signal,
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -86,6 +99,8 @@ export default function Chat() {
               last.tools = [...(last.tools || []), { name: evt.name, args: evt.arguments }]
             } else if (evt.type === 'error') {
               last.content += '\n[错误] ' + evt.message
+            } else if (evt.type === 'done' && evt.usage) {
+              last.usage = evt.usage
             }
             return next
           })
@@ -98,11 +113,20 @@ export default function Chat() {
         loadConversations()
       }
     } catch (e: any) {
+      if (e.name === 'AbortError') return
       message.error(e.message || '发送失败')
     } finally {
       setSending(false)
+      abortRef.current = null
       scrollBottom()
     }
+  }
+
+  const send = () => doSend(input.trim(), false)
+  const stop = () => { abortRef.current?.abort() }
+  const regenerate = () => {
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+    if (lastUser) doSend(lastUser.content, true)
   }
 
   return (
@@ -145,12 +169,12 @@ export default function Chat() {
       </div>
 
       {/* 右侧对话区 */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #eee', borderRadius: 8 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #eee', borderRadius: 8, minWidth: 0 }}>
         <div style={{ flex: 1, overflow: 'auto', padding: 16, background: '#fafafa' }}>
           {messages.length === 0 && <Empty style={{ marginTop: 60 }} description="选择一个智能体开始对话" />}
           {messages.map((m, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
-              <div style={{ maxWidth: '75%', padding: '10px 14px', borderRadius: 8, background: m.role === 'user' ? '#1677ff' : '#fff', color: m.role === 'user' ? '#fff' : '#000', border: m.role === 'user' ? 'none' : '1px solid #eee', whiteSpace: 'pre-wrap' }}>
+              <div style={{ maxWidth: '75%', padding: '10px 14px', borderRadius: 8, background: m.role === 'user' ? '#1e40af' : '#fff', color: m.role === 'user' ? '#fff' : '#000', border: m.role === 'user' ? 'none' : '1px solid #eee', whiteSpace: 'pre-wrap' }}>
                 {m.tools?.map((t, j) => (
                   <div key={j}><Tag color="purple" style={{ marginBottom: 4 }}>🔧 {t.name}({JSON.stringify(t.args)})</Tag></div>
                 ))}
@@ -162,6 +186,9 @@ export default function Chat() {
                       <div key={k} style={{ fontSize: 12, color: '#666' }}>· {c.doc_name || '文档'}：{String(c.content).slice(0, 80)}...</div>
                     ))}
                   </div>
+                )}
+                {m.usage && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: '#999' }}>⚡ {m.usage.total_tokens} tokens（输入 {m.usage.prompt_tokens} / 输出 {m.usage.completion_tokens}）</div>
                 )}
               </div>
             </div>
@@ -176,7 +203,14 @@ export default function Chat() {
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
             autoSize={{ minRows: 1, maxRows: 4 }}
           />
-          <Button type="primary" icon={<SendOutlined />} onClick={send} loading={sending}>发送</Button>
+          {sending ? (
+            <Button danger icon={<StopOutlined />} onClick={stop}>停止</Button>
+          ) : (
+            <Button type="primary" icon={<SendOutlined />} onClick={send}>发送</Button>
+          )}
+          {messages.some((m) => m.role === 'user') && !sending && (
+            <Button icon={<ReloadOutlined />} onClick={regenerate}>重新生成</Button>
+          )}
         </div>
       </div>
     </div>

@@ -14,6 +14,7 @@ def build_llm(model: ModelConfig):
         base_url=model.api_base.rstrip("/"),
         timeout=settings.MODEL_HTTP_TIMEOUT,
         streaming=True,
+        stream_usage=True,
     )
     if params.get("temperature") is not None:
         kwargs["temperature"] = params["temperature"]
