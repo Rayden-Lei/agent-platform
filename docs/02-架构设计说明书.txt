@@ -22,9 +22,12 @@ pgvector 向量检索；Redis 会话/限流；MinIO 对象存储；APScheduler �
 四、核心模块
 模型网关：ChatOpenAI（OpenAI 兼容，stream_usage 提取 token）。
 会话/对话：create_agent 工具调用循环 + RAG 检索注入 + SSE 流式。
-工作流引擎：LangGraph StateGraph，节点执行 + run_nodes 日志。
-  节点类型（8 类）：开始/结束/智能体/工具/条件/知识库检索/代码执行/HTTP请求。
-  节点配置：智能体(提示词覆盖)、工具(固定参数)、知识库检索(kb+top_k)、代码(Python)、HTTP(url+method)。
+工作流引擎：LangGraph StateGraph（共享 checkpointer，支持 interrupt/resume），节点执行 + run_nodes 全节点日志。
+  节点类型（10 类）：开始/结束/智能体/工具/条件/知识库检索/代码执行/HTTP请求/循环/人工审核。
+  节点配置：智能体(提示词覆盖)、工具(固定参数)、知识库检索(kb+top_k)、代码(Python)、HTTP(url+method)、
+    循环(次数/条件)、人工审核(审核说明)；通用字段：变量映射(input_ref，如 {{node_id.字段}}) + 输出字段(output_field)。
+  循环：loop 节点递增 loop_index，条件边回环(loop 边)/退出(exit 边)；审核：interrupt 暂停、Command(resume) 恢复。
+  执行：工作流统一走同步 invoke（asyncio.to_thread 线程池），兼容 Python 3.10/3.11。
 RAG 管道：按文件类型差异化解析+分片，智谱 embedding-3 向量化，混合检索（见下）。
   分片策略：文本按段落 / Markdown按标题(MarkdownHeaderTextSplitter) / PDF按页 /
   Word按段落(保留标题) / 表格csv/xlsx按行(保留列名) / 图片OCR(tesseract)，均保留元数据(页码/行号/列名/标题)。

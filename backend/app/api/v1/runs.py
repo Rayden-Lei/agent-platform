@@ -42,7 +42,7 @@ def get_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(req
         raise HTTPException(status_code=404, detail="运行记录不存在")
     nodes = db.query(RunNode).filter(RunNode.run_id == run_id).order_by(RunNode.id).all()
     return {
-        "id": r.id, "run_type": r.run_type, "status": r.status, "input": r.input,
+        "id": r.id, "run_type": r.run_type, "workflow_id": r.workflow_id, "agent_id": r.agent_id, "status": r.status, "input": r.input,
         "output": r.output, "error": r.error, "token_usage": r.token_usage, "cost": _calc_cost(db, r), "latency_ms": r.latency_ms,
         "nodes": [{"node_id": n.node_id, "node_type": n.node_type, "status": n.status, "error": n.error} for n in nodes],
     }

@@ -1,20 +1,34 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, message, Card, Col, Row, Statistic, Modal, Descriptions, Button, Space, Typography } from 'antd'
-import { EyeOutlined } from '@ant-design/icons'
-import { listRuns, getRun } from '../api'
+import { EyeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
+import { listRuns, getRun, resumeWorkflow } from '../api'
 
 const runTypeLabel: Record<string, string> = { chat: '对话', workflow: '工作流' }
+
+const statusColor = (v: string) => v === 'success' ? 'green' : v === 'running' ? 'blue' : v === 'awaiting_review' ? 'orange' : v === 'failed' ? 'red' : 'default'
 
 export default function Runs() {
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [detail, setDetail] = useState<any>(null)
+  const [resuming, setResuming] = useState(false)
 
   const load = async () => {
     setLoading(true)
     try { setData(await listRuns() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
+
+  const doResume = async (decision: any) => {
+    if (!detail?.workflow_id) return
+    setResuming(true)
+    try {
+      await resumeWorkflow(detail.workflow_id, detail.id, decision)
+      message.success('已提交审核结果')
+      setDetail(null)
+      load()
+    } catch (e: any) { message.error(e.response?.data?.detail || '操作失败') } finally { setResuming(false) }
+  }
 
   const total = data.length
   const success = data.filter((r) => r.status === 'success').length
@@ -33,7 +47,7 @@ export default function Runs() {
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     { title: '类型', dataIndex: 'run_type', width: 90, render: (v: string) => runTypeLabel[v] || v },
-    { title: '状态', dataIndex: 'status', width: 100, render: (v: string) => <Tag color={v === 'success' ? 'green' : v === 'running' ? 'blue' : 'red'}>{v}</Tag> },
+    { title: '状态', dataIndex: 'status', width: 110, render: (v: string) => <Tag color={statusColor(v)}>{v}</Tag> },
     { title: 'Token', dataIndex: ['token_usage', 'total_tokens'], width: 90, render: (v: number) => v || '-' },
     { title: '成本(元)', dataIndex: 'cost', width: 100, render: (v: number) => v != null ? v.toFixed(4) : '-' },
     { title: '耗时(ms)', dataIndex: 'latency_ms', width: 100 },
@@ -63,7 +77,7 @@ export default function Runs() {
           <div>
             <Descriptions column={2} size="small" bordered style={{ marginBottom: 16 }}>
               <Descriptions.Item label="类型">{runTypeLabel[detail.run_type] || detail.run_type}</Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={detail.status === 'success' ? 'green' : 'red'}>{detail.status}</Tag></Descriptions.Item>
+              <Descriptions.Item label="状态"><Tag color={statusColor(detail.status)}>{detail.status}</Tag></Descriptions.Item>
               <Descriptions.Item label="耗时">{detail.latency_ms} ms</Descriptions.Item>
               <Descriptions.Item label="Token">{JSON.stringify(detail.token_usage || {})}</Descriptions.Item>
             </Descriptions>
@@ -71,6 +85,16 @@ export default function Runs() {
             <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.input, null, 2)}</pre>
             <Typography.Text strong>输出：</Typography.Text>
             <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.output, null, 2)}</pre>
+            {detail.status === 'awaiting_review' && (
+              <>
+                <Typography.Text strong type="warning">等待人工审核：</Typography.Text>
+                <pre style={{ background: '#fffbeb', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12, color: '#92400e' }}>{JSON.stringify(detail.output?.interrupt, null, 2)}</pre>
+                <Space style={{ marginTop: 8 }}>
+                  <Button type="primary" size="small" icon={<CheckOutlined />} loading={resuming} onClick={() => doResume({ decision: 'approved' })}>通过</Button>
+                  <Button danger size="small" icon={<CloseOutlined />} loading={resuming} onClick={() => doResume({ decision: 'rejected' })}>拒绝</Button>
+                </Space>
+              </>
+            )}
             {detail.error && (
               <>
                 <Typography.Text strong type="danger">错误：</Typography.Text>

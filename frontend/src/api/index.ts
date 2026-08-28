@@ -45,6 +45,7 @@ export const deleteWorkflow = (id: number) => client.delete(`/workflows/${id}`)
 export const runWorkflow = (id: number, data: any) => client.post(`/workflows/${id}/run`, data)
 export const testRunWorkflow = (data: any) => client.post('/workflows/test-run', data)
 export const listWorkflowRuns = (id: number) => client.get(`/workflows/${id}/runs`)
+export const resumeWorkflow = (workflowId: number, runId: number, decision: any) => client.post(`/workflows/${workflowId}/runs/${runId}/resume`, { decision })
 
 export const listRuns = () => client.get('/runs')
 export const getRun = (id: number) => client.get(`/runs/${id}`)

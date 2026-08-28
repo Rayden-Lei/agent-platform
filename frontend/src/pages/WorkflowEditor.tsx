@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, Handle, Position, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button, Form, Input, InputNumber, Select, Space, message, Empty, Tag, Alert, Divider, Drawer, Grid } from 'antd'
-import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DeleteOutlined, CheckOutlined, MenuOutlined, DatabaseOutlined, CodeOutlined, ApiOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DeleteOutlined, CheckOutlined, MenuOutlined, DatabaseOutlined, CodeOutlined, ApiOutlined, SyncOutlined, AuditOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow } from '../api'
 
@@ -15,6 +15,8 @@ const PALETTE = [
   { type: 'kb_retrieval', label: '知识库检索', color: '#0d9488', icon: <DatabaseOutlined />, description: '检索知识库' },
   { type: 'code', label: '代码执行', color: '#334155', icon: <CodeOutlined />, description: '执行 Python' },
   { type: 'http', label: 'HTTP请求', color: '#2563eb', icon: <ApiOutlined />, description: '调用接口' },
+  { type: 'loop', label: '循环', color: '#0891b2', icon: <SyncOutlined />, description: '按次数/条件循环' },
+  { type: 'human_review', label: '人工审核', color: '#d97706', icon: <AuditOutlined />, description: '暂停等待人工确认' },
 ]
 
 function FlowNode({ data, selected }: any) {
@@ -42,6 +44,8 @@ function buildDetail(nodeType: string, config: any, agents: any[], tools: any[])
   if (nodeType === 'kb_retrieval') return config.kb_id ? '知识库检索' : '未选择知识库'
   if (nodeType === 'code') return '代码执行'
   if (nodeType === 'http') return config.url || '未配置URL'
+  if (nodeType === 'loop') return config.expression ? '条件循环' : '循环 ' + (config.count || 1) + ' 次'
+  if (nodeType === 'human_review') return config.instruction || '人工审核'
   return ''
 }
 
@@ -99,7 +103,7 @@ function EditorInner() {
 
   const onNodeClick = (_: any, node: any) => {
     setSelectedNode(node); setSelectedEdge(null)
-    nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression, prompt: node.data.config?.prompt, argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '', kb_id: node.data.config?.kb_id, top_k: node.data.config?.top_k || 4, code: node.data.config?.code, url: node.data.config?.url, method: node.data.config?.method || 'POST' })
+    nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression, prompt: node.data.config?.prompt, argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '', kb_id: node.data.config?.kb_id, top_k: node.data.config?.top_k || 4, code: node.data.config?.code, url: node.data.config?.url, method: node.data.config?.method || 'POST', count: node.data.config?.count || 1, instruction: node.data.config?.instruction, input_ref: node.data.config?.input_ref, output_field: node.data.config?.output_field })
   }
   const onEdgeClick = (_: any, edge: any) => { setSelectedEdge(edge); setSelectedNode(null); setEdgeLabel(edge.label || '') }
   const onPaneClick = () => { setSelectedNode(null); setSelectedEdge(null) }
@@ -114,6 +118,12 @@ function EditorInner() {
     if (selectedNode.data.nodeType === 'kb_retrieval') config = { kb_id: vals.kb_id, top_k: vals.top_k || 4 }
     if (selectedNode.data.nodeType === 'code') config = { code: vals.code || '' }
     if (selectedNode.data.nodeType === 'http') config = { url: vals.url, method: vals.method || 'POST' }
+    if (selectedNode.data.nodeType === 'loop') { config = { count: vals.count || 1 }; if (vals.expression) config.expression = vals.expression }
+    if (selectedNode.data.nodeType === 'human_review') config = { instruction: vals.instruction || '请审核' }
+    if (['agent', 'tool', 'kb_retrieval', 'code', 'http', 'human_review', 'loop', 'condition'].includes(selectedNode.data.nodeType)) {
+      if (vals.input_ref) config.input_ref = vals.input_ref
+      if (vals.output_field) config.output_field = vals.output_field
+    }
     const detail = buildDetail(selectedNode.data.nodeType, config, agents, tools)
     setNodes((nds) => nds.map((n) => (n.id === selectedNode.id ? { ...n, data: { ...n.data, config, detail } } : n)))
     message.success('配置已应用')
@@ -148,6 +158,8 @@ function EditorInner() {
       message.success('保存成功'); navigate('/workflows')
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
+
+  const edgeSourceType = selectedEdge ? nodes.find((n) => n.id === selectedEdge.source)?.data?.nodeType : null
 
   const paletteContent = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -192,6 +204,15 @@ function EditorInner() {
                 <Form.Item name="url" label="请求 URL"><Input placeholder="https://api.example.com/xxx" /></Form.Item>
                 <Form.Item name="method" label="方法"><Select options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} /></Form.Item>
               </>)}
+              {selectedNode.data.nodeType === 'loop' && (<>
+                <Form.Item name="count" label="循环次数"><InputNumber min={1} max={100} style={{ width: '100%' }} /></Form.Item>
+                <Form.Item name="expression" label="循环条件(可选,优先于次数)"><Input placeholder="如 len(output) < 10" /></Form.Item>
+              </>)}
+              {selectedNode.data.nodeType === 'human_review' && <Form.Item name="instruction" label="审核说明"><Input placeholder="请人工确认后通过" /></Form.Item>}
+              {['agent', 'tool', 'kb_retrieval', 'code', 'http', 'human_review', 'loop', 'condition'].includes(selectedNode.data.nodeType) && (<>
+                <Form.Item name="input_ref" label="输入引用(可选)"><Input placeholder="留空=上游输出；如 {{input}} 或 {{node_xxx.字段}}" /></Form.Item>
+                <Form.Item name="output_field" label="输出字段(可选)"><Input placeholder="留空=完整输出；如 data.items" /></Form.Item>
+              </>)}
               {(selectedNode.data.nodeType === 'start' || selectedNode.data.nodeType === 'end') && <div style={{ color: '#9ca3af' }}>该节点无需配置。</div>}
             </Form>
             <Space style={{ marginTop: 12 }}>
@@ -201,9 +222,11 @@ function EditorInner() {
           </>
         ) : selectedEdge ? (
           <>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>连线配置 · 条件分支</div>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>连线配置 · {edgeSourceType === 'loop' ? '循环分支' : '条件分支'}</div>
             <Form layout="vertical" size="small">
-              <Form.Item label="分支值(true/false)"><Input value={edgeLabel} onChange={(e) => setEdgeLabel(e.target.value)} placeholder="true 或 false" /></Form.Item>
+              <Form.Item label={edgeSourceType === 'loop' ? '分支值(loop=回环 / exit=退出)' : '分支值(true/false)'}>
+                <Input value={edgeLabel} onChange={(e) => setEdgeLabel(e.target.value)} placeholder={edgeSourceType === 'loop' ? 'loop 或 exit' : 'true 或 false'} />
+              </Form.Item>
             </Form>
             <Space style={{ marginTop: 12 }}>
               <Button type="primary" size="small" icon={<CheckOutlined />} onClick={saveEdge}>应用</Button>
@@ -227,6 +250,8 @@ function EditorInner() {
               <pre style={{ background: '#f8fafc', padding: 8, borderRadius: 6, fontSize: 12, maxHeight: 120, overflow: 'auto', margin: 0 }}>{JSON.stringify(testResult.output, null, 2)}</pre>
               {testResult.steps?.length > 0 && <div style={{ marginTop: 8 }}>{testResult.steps.map((s: string, i: number) => <Tag key={i} style={{ marginBottom: 4 }}>{s}</Tag>)}</div>}
             </>
+          ) : testResult.status === 'awaiting_review' ? (
+            <Alert type="warning" message="等待人工审核" description={JSON.stringify(testResult.interrupt)} showIcon />
           ) : <Alert type="error" message="运行失败" description={testResult.error} showIcon />}
         </div>
       )}
