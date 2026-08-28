@@ -98,7 +98,7 @@ export default function AppLayout() {
             <Button size="small" icon={<LogoutOutlined />} onClick={() => { logout(); navigate('/login') }} />
           </Space>
         </Header>
-        <Content style={{ flex: 1, overflow: 'auto', padding: isMobile ? 12 : 20, minHeight: 0 }}>
+        <Content style={{ flex: 1, overflow: 'hidden', padding: isMobile ? 12 : 20, minHeight: 0 }}>
           <Outlet />
         </Content>
       </Layout>
