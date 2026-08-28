@@ -9,13 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.5.1",
+    "@xyflow/react": "^12.3.5",
+    "antd": "^5.21.0",
+    "axios": "^1.7.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.26.2",
-    "antd": "^5.21.0",
-    "@ant-design/icons": "^5.5.1",
-    "axios": "^1.7.7",
-    "@xyflow/react": "^12.3.5",
+    "remark-gfm": "^4.0.1",
     "zustand": "^4.5.5"
   },
   "devDependencies": {

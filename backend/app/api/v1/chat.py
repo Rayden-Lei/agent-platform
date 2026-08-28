@@ -1,12 +1,15 @@
 import json
+import warnings
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langgraph.prebuilt import create_react_agent  # noqa
+
+warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 
 from app.config import settings
 from app.core.deps import get_current_user
@@ -86,7 +89,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                         f"[{i + 1}] {c['content']}" for i, c in enumerate(citations)
                     )
             system_prompt = agent2.system_prompt + (("\n\n" + kb_context) if kb_context else "")
-            graph = create_agent(llm, tools, system_prompt=system_prompt)
+            graph = create_react_agent(llm, tools, prompt=system_prompt)
 
             history = (
                 db2.query(Message)
@@ -106,8 +109,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             usage_total = {}
             try:
                 async for chunk, _meta in graph.astream({"messages": lc_messages}, stream_mode="messages"):
-                    msg_type = getattr(chunk, "type", None)
-                    if msg_type == "ai":
+                    if isinstance(chunk, AIMessageChunk):
                         delta = chunk.content
                         if isinstance(delta, str) and delta:
                             final_content += delta
@@ -121,7 +123,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                                 "completion_tokens": um.get("output_tokens", 0),
                                 "total_tokens": um.get("total_tokens", 0),
                             }
-                    elif msg_type == "tool":
+                    elif isinstance(chunk, ToolMessage):
                         yield _sse({"type": "tool_result", "content": str(chunk.content)[:200]})
 
                 assistant_msg = Message(

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Select, Input, Button, Tag, message, List, Empty, Popconfirm, Space } from 'antd'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { SendOutlined, PlusOutlined, DeleteOutlined, StopOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useLocation } from 'react-router-dom'
 import { listAgents, listConversations, listMessages, deleteConversation } from '../api'
@@ -186,7 +188,13 @@ export default function Chat() {
                 {m.tools?.map((t, j) => (
                   <div key={j}><Tag color="purple" style={{ marginBottom: 4 }}>🔧 {t.name}({JSON.stringify(t.args)})</Tag></div>
                 ))}
-                <div>{m.content || (i === messages.length - 1 && sending ? '思考中...' : '')}</div>
+                {m.role === 'user' ? (
+                  <div>{m.content}</div>
+                ) : (
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || (i === messages.length - 1 && sending ? '思考中...' : '')}</ReactMarkdown>
+                  </div>
+                )}
                 {m.citations && m.citations.length > 0 && (
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee' }}>
                     <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>📚 引用来源：</div>
