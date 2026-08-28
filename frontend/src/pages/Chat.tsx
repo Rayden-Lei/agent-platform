@@ -25,7 +25,11 @@ export default function Chat() {
   const abortRef = useRef<AbortController | null>(null)
 
   const loadAgents = async () => {
-    try { setAgents((await listAgents() as any).filter((a: any) => a.status === 'published')) } catch {}
+    try {
+      const list = (await listAgents() as any).filter((a: any) => a.status === 'published')
+      setAgents(list)
+      if (list.length > 0) setAgentId((prev) => prev ?? list[0].id)
+    } catch {}
   }
   const loadConversations = async () => {
     try { setConversations(await listConversations() as any) } catch {}
@@ -122,7 +126,11 @@ export default function Chat() {
     }
   }
 
-  const send = () => doSend(input.trim(), false)
+  const send = () => {
+    if (!agentId) { message.error('请先选择智能体'); return }
+    if (!input.trim()) return
+    doSend(input.trim(), false)
+  }
   const stop = () => { abortRef.current?.abort() }
   const regenerate = () => {
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')
