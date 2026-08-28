@@ -65,6 +65,7 @@ def _finish_node(rn_id: int, status: str, output: Any = None, error: str = None)
 
 def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
     agent_id = config.get("agent_id")
+    prompt_override = config.get("prompt")
 
     async def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "agent", state)
@@ -78,7 +79,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
             model = db.get(ModelConfig, agent.model_id)
             llm = build_llm(model)
             text = str(state.get("output") if state.get("output") is not None else state.get("input", ""))
-            resp = await llm.ainvoke([SystemMessage(content=agent.system_prompt), HumanMessage(content=text)])
+            resp = await llm.ainvoke([SystemMessage(content=prompt_override or agent.system_prompt), HumanMessage(content=text)])
             out = {"output": resp.content, "steps": [*state.get("steps", []), f"agent:{agent.name}"]}
             _finish_node(rn_id, "success", out["output"])
             return out
@@ -93,6 +94,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
     tool_name = config.get("tool_name")
+    fixed_args = config.get("args")
 
     async def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "tool", state)
@@ -104,7 +106,10 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
                 _finish_node(rn_id, "failed", out, "工具不存在")
                 return out
             raw = state.get("output") if state.get("output") is not None else state.get("input")
-            args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            if fixed_args:
+                args = fixed_args
+            else:
+                args = json.loads(raw) if isinstance(raw, str) else (raw or {})
             result = await execute_tool(tool_db, args)
             out = {"output": json.dumps(result, ensure_ascii=False), "steps": [*state.get("steps", []), f"tool:{tool_name}"]}
             _finish_node(rn_id, "success", out["output"])

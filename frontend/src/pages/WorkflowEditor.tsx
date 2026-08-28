@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, Handle, Position, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Button, Modal, Form, Input, Select, Space, message, Empty } from 'antd'
+import { Button, Modal, Form, Input, Select, Space, message, Empty, Tag, Alert } from 'antd'
 import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools } from '../api'
+import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, testRunWorkflow } from '../api'
 
 const PALETTE = [
   { type: 'start', label: '开始', color: '#15803d', icon: <PlayCircleOutlined />, description: '流程入口' },
@@ -67,6 +67,10 @@ function EditorInner() {
   const [agents, setAgents] = useState<any[]>([])
   const [tools, setTools] = useState<any[]>([])
   const [selectedNode, setSelectedNode] = useState<any>(null)
+  const [testOpen, setTestOpen] = useState(false)
+  const [testInput, setTestInput] = useState('')
+  const [testResult, setTestResult] = useState<any>(null)
+  const [testing, setTesting] = useState(false)
   const [selectedEdge, setSelectedEdge] = useState<any>(null)
   const [nodeForm] = Form.useForm()
   const [edgeLabel, setEdgeLabel] = useState('')
@@ -120,7 +124,13 @@ function EditorInner() {
   const onNodeClick = (_: any, node: any) => {
     setSelectedNode(node)
     setSelectedEdge(null)
-    nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression })
+    nodeForm.setFieldsValue({
+      agent_id: node.data.config?.agent_id,
+      tool_name: node.data.config?.tool_name,
+      expression: node.data.config?.expression,
+      prompt: node.data.config?.prompt,
+      argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '',
+    })
   }
 
   const onEdgeClick = (_: any, edge: any) => {
@@ -132,9 +142,17 @@ function EditorInner() {
   const saveNode = () => {
     if (!selectedNode) return
     const vals = nodeForm.getFieldsValue()
-    let config = {}
-    if (selectedNode.data.nodeType === 'agent') config = { agent_id: vals.agent_id }
-    if (selectedNode.data.nodeType === 'tool') config = { tool_name: vals.tool_name }
+    let config: any = {}
+    if (selectedNode.data.nodeType === 'agent') {
+      config = { agent_id: vals.agent_id }
+      if (vals.prompt) config.prompt = vals.prompt
+    }
+    if (selectedNode.data.nodeType === 'tool') {
+      config = { tool_name: vals.tool_name }
+      if (vals.argsStr) {
+        try { config.args = JSON.parse(vals.argsStr) } catch { message.error('参数 JSON 格式错误'); return }
+      }
+    }
     if (selectedNode.data.nodeType === 'condition') config = { expression: vals.expression }
     const detail = buildDetail(selectedNode.data.nodeType, config, agents, tools)
     setNodes((nds) => nds.map((n) => (n.id === selectedNode.id ? { ...n, data: { ...n.data, config, detail } } : n)))
@@ -160,6 +178,23 @@ function EditorInner() {
       navigate('/workflows')
     } catch (e: any) {
       message.error(e.response?.data?.detail || '保存失败')
+    }
+  }
+
+  const doTest = async () => {
+    const graph = {
+      nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, config: n.data.config, position: n.position })),
+      edges: edges.map((e) => ({ from: e.source, to: e.target, when: e.label || undefined })),
+    }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res: any = await testRunWorkflow({ graph, input: testInput })
+      setTestResult(res)
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '测试失败')
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -198,7 +233,10 @@ function EditorInner() {
             <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/workflows')}>返回</Button>
             <Input value={name} onChange={(e) => setName(e.target.value)} style={{ width: 200 }} placeholder="工作流名称" />
           </Space>
-          <Button type="primary" icon={<SaveOutlined />} onClick={onSave}>保存</Button>
+          <Space>
+            <Button icon={<PlayCircleOutlined />} onClick={() => { setTestOpen(true); setTestInput(''); setTestResult(null) }}>测试运行</Button>
+            <Button type="primary" icon={<SaveOutlined />} onClick={onSave}>保存</Button>
+          </Space>
         </div>
         <div style={{ flex: 1, minHeight: 0, background: '#f8fafc' }}>
           {nodes.length === 0 ? (
@@ -230,14 +268,24 @@ function EditorInner() {
       <Modal title="节点配置" open={!!selectedNode} onCancel={() => setSelectedNode(null)} onOk={saveNode} destroyOnClose>
         <Form form={nodeForm} layout="vertical">
           {selectedNode?.data?.nodeType === 'agent' && (
-            <Form.Item name="agent_id" label="选择智能体">
-              <Select options={agents.map((a: any) => ({ value: a.id, label: a.name }))} placeholder="选择智能体" />
-            </Form.Item>
+            <>
+              <Form.Item name="agent_id" label="选择智能体">
+                <Select options={agents.map((a: any) => ({ value: a.id, label: a.name }))} placeholder="选择智能体" />
+              </Form.Item>
+              <Form.Item name="prompt" label="提示词覆盖(可选)">
+                <Input.TextArea rows={2} placeholder="留空则使用智能体默认提示词" />
+              </Form.Item>
+            </>
           )}
           {selectedNode?.data?.nodeType === 'tool' && (
-            <Form.Item name="tool_name" label="选择工具">
-              <Select options={tools.map((t: any) => ({ value: t.name, label: t.name }))} placeholder="选择工具" />
-            </Form.Item>
+            <>
+              <Form.Item name="tool_name" label="选择工具">
+                <Select options={tools.map((t: any) => ({ value: t.name, label: t.name }))} placeholder="选择工具" />
+              </Form.Item>
+              <Form.Item name="argsStr" label="参数(JSON，可选)">
+                <Input.TextArea rows={2} placeholder='留空则用上游输出，如 {"expression":"2+3"}' />
+              </Form.Item>
+            </>
           )}
           {selectedNode?.data?.nodeType === 'condition' && (
             <Form.Item name="expression" label="条件表达式">
@@ -257,6 +305,34 @@ function EditorInner() {
             <Input value={edgeLabel} onChange={(e) => setEdgeLabel(e.target.value)} placeholder="true 或 false" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 测试运行 */}
+      <Modal title="测试运行" open={testOpen} onCancel={() => setTestOpen(false)} onOk={doTest} okText="运行" confirmLoading={testing} width={620} destroyOnClose>
+        <Form layout="vertical">
+          <Form.Item label="输入(JSON 或文本)">
+            <Input.TextArea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={3} placeholder='{"expression": "2+3*4"}' />
+          </Form.Item>
+        </Form>
+        {testResult && (
+          <div>
+            {testResult.status === 'success' ? (
+              <>
+                <Alert type="success" message="运行成功" style={{ marginBottom: 12 }} />
+                <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13 }}>输出：</div>
+                <pre style={{ background: '#f8fafc', padding: 10, borderRadius: 6, fontSize: 12, maxHeight: 140, overflow: 'auto' }}>{JSON.stringify(testResult.output, null, 2)}</pre>
+                {testResult.steps?.length > 0 && (
+                  <>
+                    <div style={{ fontWeight: 600, margin: '8px 0 4px', fontSize: 13 }}>执行步骤：</div>
+                    <div>{testResult.steps.map((s: string, i: number) => <Tag key={i} style={{ marginBottom: 4 }}>{s}</Tag>)}</div>
+                  </>
+                )}
+              </>
+            ) : (
+              <Alert type="error" message="运行失败" description={testResult.error} />
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   )

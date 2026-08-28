@@ -35,6 +35,22 @@ def create_workflow(data: WorkflowIn, db: Session = Depends(get_db), user: User 
     return {"id": w.id, "name": w.name, "description": w.description, "status": w.status, "version": w.version}
 
 
+class TestRunIn(BaseModel):
+    graph: dict
+    input: str = ""
+
+
+@router.post("/test-run")
+async def test_run_workflow(data: TestRunIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """编辑器内测试运行：用当前图直接执行，不落库。"""
+    try:
+        graph = build_workflow(data.graph)
+        result = await graph.ainvoke({"input": data.input, "steps": []})
+        return {"status": "success", "output": result.get("output"), "steps": result.get("steps", [])}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
+
+
 @router.get("/{workflow_id}")
 def get_workflow(workflow_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     w = db.get(Workflow, workflow_id)
