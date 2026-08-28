@@ -99,7 +99,7 @@ export default function AppLayout() {
           </Space>
         </Header>
         <Content style={{ flex: 1, minHeight: 0, padding: isMobile ? 12 : 20, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <Outlet />
           </div>
         </Content>

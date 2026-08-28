@@ -235,14 +235,14 @@ export default function Chat() {
 
   if (isMobile) {
     return (
-      <div style={{ height: '100%', minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {showList ? conversationList : chatArea}
       </div>
     )
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%', gap: 12, minHeight: 0 }}>
+    <div style={{ display: 'flex', flex: 1, gap: 12, minHeight: 0 }}>
       {conversationList}
       {chatArea}
     </div>

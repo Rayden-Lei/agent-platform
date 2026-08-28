@@ -41,7 +41,7 @@ export default function Workflows() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
         <h2>工作流</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>新建工作流</Button>

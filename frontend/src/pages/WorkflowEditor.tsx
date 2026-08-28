@@ -142,7 +142,7 @@ function EditorInner() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
       {/* 顶部工具栏 */}
       <div style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', marginBottom: 12, flexShrink: 0 }}>
         <Space>

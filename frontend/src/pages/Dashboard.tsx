@@ -30,7 +30,7 @@ export default function Dashboard() {
   ]
 
   return (
-    <div style={{ height: '100%', overflow: 'auto' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
       <div className="dash-banner">
         <div style={{ position: 'relative', zIndex: 1 }}>
           <Typography.Title level={3} style={{ color: '#fff', margin: '0 0 8px' }}>

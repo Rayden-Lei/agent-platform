@@ -43,7 +43,7 @@ export default function ApiKeys() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><KeyOutlined /> API Key 管理</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>生成 Key</Button>

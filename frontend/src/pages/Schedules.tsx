@@ -47,7 +47,7 @@ export default function Schedules() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ClockCircleOutlined /> 定时任务</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>新建定时任务</Button>

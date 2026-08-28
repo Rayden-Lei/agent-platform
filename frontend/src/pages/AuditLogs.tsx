@@ -30,7 +30,7 @@ export default function AuditLogs() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ flexShrink: 0 }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><AuditOutlined /> 审计日志</h2>
       </div>

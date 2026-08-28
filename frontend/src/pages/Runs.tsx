@@ -42,7 +42,7 @@ export default function Runs() {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ flexShrink: 0 }}>
         <h2 style={{ marginBottom: 16 }}>运行记录</h2>
         <Row gutter={[16, 16]}>
