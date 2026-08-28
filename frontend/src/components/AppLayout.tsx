@@ -10,6 +10,9 @@ import {
   HistoryOutlined,
   TeamOutlined,
   LogoutOutlined,
+  AuditOutlined,
+  KeyOutlined,
+  ClockCircleOutlined,
   MenuOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -38,7 +41,7 @@ export default function AppLayout() {
     { key: '/knowledge-bases', icon: <DatabaseOutlined />, label: '知识库' },
     { key: '/workflows', icon: <PartitionOutlined />, label: '工作流' },
     { key: '/runs', icon: <HistoryOutlined />, label: '运行记录' },
-    ...(user?.role === 'admin' ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }] : []),
+    ...(user?.role === 'admin' ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }, { key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }, { key: '/api-keys', icon: <KeyOutlined />, label: 'API Key' }, { key: '/schedules', icon: <ClockCircleOutlined />, label: '定时任务' }] : []),
   ]
 
   const logo = (

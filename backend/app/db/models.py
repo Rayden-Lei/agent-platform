@@ -167,6 +167,46 @@ class Run(Base):
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
+class ScheduledJob(Base):
+    __tablename__ = "scheduled_jobs"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    cron = Column(String(64), nullable=False)
+    input = Column(JSONB, nullable=False, default=dict)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    last_run_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(64), nullable=False)
+    key_prefix = Column(String(16), nullable=False)
+    key_hash = Column(String(128), nullable=False)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    quota = Column(Integer, nullable=False, default=1000)
+    used = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    username = Column(String(64), nullable=False)
+    action = Column(String(64), nullable=False)
+    resource = Column(String(64), nullable=False)
+    resource_id = Column(BigInteger, nullable=True)
+    detail = Column(JSONB, nullable=False, default=dict)
+    ip = Column(String(64), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class RunNode(Base):
     __tablename__ = "run_nodes"
     id = Column(BigInteger, primary_key=True, autoincrement=True)

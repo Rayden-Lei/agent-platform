@@ -12,6 +12,9 @@ import WorkflowEditor from './pages/WorkflowEditor'
 import Tools from './pages/Tools'
 import Runs from './pages/Runs'
 import Users from './pages/Users'
+import AuditLogs from './pages/AuditLogs'
+import ApiKeys from './pages/ApiKeys'
+import Schedules from './pages/Schedules'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { token } = useAuth()
@@ -35,6 +38,9 @@ export default function App() {
         <Route path="workflows/:id/edit" element={<WorkflowEditor />} />
         <Route path="runs" element={<Runs />} />
         <Route path="users" element={<Users />} />
+        <Route path="audit-logs" element={<AuditLogs />} />
+        <Route path="api-keys" element={<ApiKeys />} />
+        <Route path="schedules" element={<Schedules />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

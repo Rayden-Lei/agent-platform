@@ -40,6 +40,8 @@ def _init_db() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _init_db()
+    from app.core.scheduler import get_scheduler
+    get_scheduler()
     yield
 
 

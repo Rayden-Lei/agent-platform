@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from langchain_core.messages import HumanMessage
 
+from app.core.audit import record_audit
 from app.core.deps import require_roles
 from app.core.security import encrypt_secret
 from app.db.models import ModelConfig, User
@@ -34,6 +35,7 @@ def create_model(data: ModelIn, db: Session = Depends(get_db), user: User = Depe
     db.add(m)
     db.commit()
     db.refresh(m)
+    record_audit(db, user, "create", "model", m.id, detail={"name": m.name})
     return ModelOut.model_validate(m)
 
 
@@ -68,6 +70,7 @@ def delete_model(model_id: int, db: Session = Depends(get_db), user: User = Depe
     m = db.get(ModelConfig, model_id)
     if m is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
+    record_audit(db, user, "delete", "model", model_id, detail={"name": m.name})
     db.delete(m)
     db.commit()
     return {"code": 0, "message": "ok"}

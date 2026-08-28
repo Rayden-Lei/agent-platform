@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.deps import require_roles
 from app.db.models import Agent, AgentVersion, Conversation, Message, Run, RunNode, User
 from app.db.session import get_db
@@ -95,6 +96,7 @@ def publish_agent(agent_id: int, db: Session = Depends(get_db), user: User = Dep
     ))
     db.commit()
     db.refresh(a)
+    record_audit(db, user, "publish", "agent", a.id, detail={"name": a.name, "version": a.version})
     return AgentOut.model_validate(a)
 
 
