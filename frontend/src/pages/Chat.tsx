@@ -190,9 +190,11 @@ export default function Chat() {
               ))}
               {m.role === 'user' ? (
                 <div>{m.content}</div>
+              ) : (i === messages.length - 1 && sending) ? (
+                <div>{m.content || '思考中...'}</div>
               ) : (
                 <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || (i === messages.length - 1 && sending ? '思考中...' : '')}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                 </div>
               )}
               {m.citations && m.citations.length > 0 && (
