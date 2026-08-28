@@ -8,26 +8,24 @@ import 'antd/dist/reset.css'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ConfigProvider
-      locale={zhCN}
-      theme={{
-        token: {
-          colorPrimary: '#1e40af',
-          borderRadius: 6,
-          fontSize: 14,
-          colorLink: '#1e40af',
-          colorBgLayout: '#f5f6f8',
-        },
-        components: {
-          Menu: { darkItemBg: 'transparent' },
-          Table: { headerBg: '#f8fafc' },
-        },
-      }}
-    >
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </ConfigProvider>
-  </React.StrictMode>,
+  <ConfigProvider
+    locale={zhCN}
+    theme={{
+      token: {
+        colorPrimary: '#1e40af',
+        borderRadius: 6,
+        fontSize: 14,
+        colorLink: '#1e40af',
+        colorBgLayout: '#f5f6f8',
+      },
+      components: {
+        Menu: { darkItemBg: 'transparent' },
+        Table: { headerBg: '#f8fafc' },
+      },
+    }}
+  >
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </ConfigProvider>,
 )

@@ -97,11 +97,12 @@ export default function Chat() {
           try { evt = JSON.parse(part.slice(6)) } catch { continue }
           setMessages((prev) => {
             const next = [...prev]
-            const last = next[next.length - 1]
+            const last = { ...next[next.length - 1] }
             if (evt.type === 'delta') last.content += evt.content
             else if (evt.type === 'tool_call') last.tools = [...(last.tools || []), { name: evt.name, args: evt.arguments }]
             else if (evt.type === 'error') last.content += '\n[错误] ' + evt.message
             else if (evt.type === 'done' && evt.usage) last.usage = evt.usage
+            next[next.length - 1] = last
             return next
           })
           if (evt.type === 'done' && evt.conversation_id) newCid = evt.conversation_id
