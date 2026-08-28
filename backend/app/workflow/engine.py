@@ -1,12 +1,14 @@
 import json
 from typing import Any, Callable, TypedDict
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.db.models import Agent, ModelConfig, RunNode, Tool
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm
+from app.rag.retriever import retrieve
 from app.tools.executor import execute_tool
 
 
@@ -143,12 +145,80 @@ def _make_pass_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
+def _make_kb_node(config: dict, run_id: int, node_id: str) -> Callable:
+    kb_id = config.get("kb_id")
+    top_k = config.get("top_k")
+
+    async def run(state: WorkflowState) -> dict:
+        rn_id = _start_node(run_id, node_id, "kb_retrieval", state)
+        try:
+            query = str(state.get("output") if state.get("output") is not None else state.get("input", ""))
+            results = retrieve(kb_id, query, top_k)
+            output = json.dumps(results, ensure_ascii=False)
+            out = {"output": output, "steps": [*state.get("steps", []), f"kb_retrieval:{len(results)}"]}
+            _finish_node(rn_id, "success", output)
+            return out
+        except Exception as e:
+            _finish_node(rn_id, "failed", error=str(e))
+            raise
+
+    return run
+
+
+def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
+    code = config.get("code", "")
+
+    async def run(state: WorkflowState) -> dict:
+        rn_id = _start_node(run_id, node_id, "code", state)
+        try:
+            input_data = state.get("output") if state.get("output") is not None else state.get("input", "")
+            namespace = {"input": input_data, "output": input_data, "result": None}
+            exec(code, {"__builtins__": __builtins__}, namespace)
+            output = str(namespace.get("result") if namespace.get("result") is not None else namespace.get("output", ""))
+            out = {"output": output, "steps": [*state.get("steps", []), "code"]}
+            _finish_node(rn_id, "success", output)
+            return out
+        except Exception as e:
+            _finish_node(rn_id, "failed", error=str(e))
+            raise
+
+    return run
+
+
+def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
+    url = config.get("url")
+    method = config.get("method", "POST")
+
+    async def run(state: WorkflowState) -> dict:
+        rn_id = _start_node(run_id, node_id, "http", state)
+        try:
+            input_data = state.get("output") if state.get("output") is not None else state.get("input", "")
+            async with httpx.AsyncClient(timeout=30) as client:
+                if method.upper() == "GET":
+                    resp = await client.get(url, params={"input": input_data})
+                else:
+                    resp = await client.post(url, json={"input": input_data})
+                resp.raise_for_status()
+                output = resp.text
+            out = {"output": output, "steps": [*state.get("steps", []), "http"]}
+            _finish_node(rn_id, "success", output)
+            return out
+        except Exception as e:
+            _finish_node(rn_id, "failed", error=str(e))
+            raise
+
+    return run
+
+
 NODE_BUILDERS = {
     "start": _make_pass_node,
     "end": _make_pass_node,
     "agent": _make_agent_node,
     "tool": _make_tool_node,
     "condition": _make_condition_node,
+    "kb_retrieval": _make_kb_node,
+    "code": _make_code_node,
+    "http": _make_http_node,
 }
 
 

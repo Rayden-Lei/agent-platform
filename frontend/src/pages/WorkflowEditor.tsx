@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, Handle, Position, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Button, Form, Input, Select, Space, message, Empty, Tag, Alert, Divider, Drawer, Grid } from 'antd'
-import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DeleteOutlined, CheckOutlined, MenuOutlined } from '@ant-design/icons'
+import { Button, Form, Input, InputNumber, Select, Space, message, Empty, Tag, Alert, Divider, Drawer, Grid } from 'antd'
+import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DeleteOutlined, CheckOutlined, MenuOutlined, DatabaseOutlined, CodeOutlined, ApiOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, testRunWorkflow } from '../api'
+import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow } from '../api'
 
 const PALETTE = [
   { type: 'start', label: '开始', color: '#15803d', icon: <PlayCircleOutlined />, description: '流程入口' },
@@ -12,6 +12,9 @@ const PALETTE = [
   { type: 'agent', label: '智能体', color: '#1e40af', icon: <RobotOutlined />, description: '调用智能体' },
   { type: 'tool', label: '工具', color: '#0e7490', icon: <ToolOutlined />, description: '调用工具' },
   { type: 'condition', label: '条件', color: '#b45309', icon: <BranchesOutlined />, description: '条件分支' },
+  { type: 'kb_retrieval', label: '知识库检索', color: '#0d9488', icon: <DatabaseOutlined />, description: '检索知识库' },
+  { type: 'code', label: '代码执行', color: '#334155', icon: <CodeOutlined />, description: '执行 Python' },
+  { type: 'http', label: 'HTTP请求', color: '#2563eb', icon: <ApiOutlined />, description: '调用接口' },
 ]
 
 function FlowNode({ data, selected }: any) {
@@ -36,6 +39,9 @@ function buildDetail(nodeType: string, config: any, agents: any[], tools: any[])
   if (nodeType === 'agent') { const a = agents.find((x: any) => x.id === config.agent_id); return a ? a.name : '未选择智能体' }
   if (nodeType === 'tool') return config.tool_name || '未选择工具'
   if (nodeType === 'condition') return config.expression || '未设表达式'
+  if (nodeType === 'kb_retrieval') return config.kb_id ? '知识库检索' : '未选择知识库'
+  if (nodeType === 'code') return '代码执行'
+  if (nodeType === 'http') return config.url || '未配置URL'
   return ''
 }
 
@@ -48,6 +54,7 @@ function EditorInner() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [agents, setAgents] = useState<any[]>([])
   const [tools, setTools] = useState<any[]>([])
+  const [kbs, setKBs] = useState<any[]>([])
   const [selectedNode, setSelectedNode] = useState<any>(null)
   const [selectedEdge, setSelectedEdge] = useState<any>(null)
   const [testInput, setTestInput] = useState('')
@@ -63,6 +70,7 @@ function EditorInner() {
   useEffect(() => {
     listAgents().then((r: any) => setAgents(r))
     listTools().then((r: any) => setTools(r))
+    listKBs().then((r: any) => setKBs(r))
     if (!isNew && id) {
       getWorkflow(Number(id)).then((wf: any) => {
         setName(wf.name)
@@ -91,7 +99,7 @@ function EditorInner() {
 
   const onNodeClick = (_: any, node: any) => {
     setSelectedNode(node); setSelectedEdge(null)
-    nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression, prompt: node.data.config?.prompt, argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '' })
+    nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression, prompt: node.data.config?.prompt, argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '', kb_id: node.data.config?.kb_id, top_k: node.data.config?.top_k || 4, code: node.data.config?.code, url: node.data.config?.url, method: node.data.config?.method || 'POST' })
   }
   const onEdgeClick = (_: any, edge: any) => { setSelectedEdge(edge); setSelectedNode(null); setEdgeLabel(edge.label || '') }
   const onPaneClick = () => { setSelectedNode(null); setSelectedEdge(null) }
@@ -103,6 +111,9 @@ function EditorInner() {
     if (selectedNode.data.nodeType === 'agent') { config = { agent_id: vals.agent_id }; if (vals.prompt) config.prompt = vals.prompt }
     if (selectedNode.data.nodeType === 'tool') { config = { tool_name: vals.tool_name }; if (vals.argsStr) { try { config.args = JSON.parse(vals.argsStr) } catch { message.error('参数 JSON 格式错误'); return } } }
     if (selectedNode.data.nodeType === 'condition') config = { expression: vals.expression }
+    if (selectedNode.data.nodeType === 'kb_retrieval') config = { kb_id: vals.kb_id, top_k: vals.top_k || 4 }
+    if (selectedNode.data.nodeType === 'code') config = { code: vals.code || '' }
+    if (selectedNode.data.nodeType === 'http') config = { url: vals.url, method: vals.method || 'POST' }
     const detail = buildDetail(selectedNode.data.nodeType, config, agents, tools)
     setNodes((nds) => nds.map((n) => (n.id === selectedNode.id ? { ...n, data: { ...n.data, config, detail } } : n)))
     message.success('配置已应用')
@@ -172,6 +183,15 @@ function EditorInner() {
                 <Form.Item name="argsStr" label="参数(JSON,可选)"><Input.TextArea rows={2} placeholder='留空则用上游输出' /></Form.Item>
               </>)}
               {selectedNode.data.nodeType === 'condition' && <Form.Item name="expression" label="条件表达式"><Input placeholder="len(input) > 5" /></Form.Item>}
+              {selectedNode.data.nodeType === 'kb_retrieval' && (<>
+                <Form.Item name="kb_id" label="选择知识库"><Select options={kbs.map((k: any) => ({ value: k.id, label: k.name }))} placeholder="选择知识库" /></Form.Item>
+                <Form.Item name="top_k" label="召回数量 Top K"><InputNumber min={1} max={20} /></Form.Item>
+              </>)}
+              {selectedNode.data.nodeType === 'code' && <Form.Item name="code" label="Python 代码"><Input.TextArea rows={6} placeholder={"可用变量 input(上游输出)，把结果赋给 result"} /></Form.Item>}
+              {selectedNode.data.nodeType === 'http' && (<>
+                <Form.Item name="url" label="请求 URL"><Input placeholder="https://api.example.com/xxx" /></Form.Item>
+                <Form.Item name="method" label="方法"><Select options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} /></Form.Item>
+              </>)}
               {(selectedNode.data.nodeType === 'start' || selectedNode.data.nodeType === 'end') && <div style={{ color: '#9ca3af' }}>该节点无需配置。</div>}
             </Form>
             <Space style={{ marginTop: 12 }}>
