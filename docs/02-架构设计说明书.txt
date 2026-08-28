@@ -23,7 +23,12 @@ pgvector 向量检索；Redis 会话/限流；MinIO 对象存储；APScheduler �
 模型网关：ChatOpenAI（OpenAI 兼容，stream_usage 提取 token）。
 会话/对话：create_agent 工具调用循环 + RAG 检索注入 + SSE 流式。
 工作流引擎：LangGraph StateGraph，节点执行 + run_nodes 日志。
-RAG 管道：解析(pypdf/python-docx) + 切片 + 智谱 embedding-3 向量化 + pgvector 检索。
+  节点类型（8 类）：开始/结束/智能体/工具/条件/知识库检索/代码执行/HTTP请求。
+  节点配置：智能体(提示词覆盖)、工具(固定参数)、知识库检索(kb+top_k)、代码(Python)、HTTP(url+method)。
+RAG 管道：按文件类型差异化解析+分片，智谱 embedding-3 向量化，混合检索（见下）。
+  分片策略：文本按段落 / Markdown按标题(MarkdownHeaderTextSplitter) / PDF按页 /
+  Word按段落(保留标题) / 表格csv/xlsx按行(保留列名) / 图片OCR(tesseract)，均保留元数据(页码/行号/列名/标题)。
+  检索：混合召回（向量 pgvector cosine + 关键词 ILIKE），加权融合(向量0.7+关键词0.3)重排。
 安全：bcrypt + AES + JWT + 登录限流(Redis) + 审计日志。
 调度：APScheduler BackgroundScheduler，Cron 触发工作流。
 
