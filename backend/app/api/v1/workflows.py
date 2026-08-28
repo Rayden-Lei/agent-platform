@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
-from app.db.models import Run, User, Workflow
+from app.db.models import Run, RunNode, User, Workflow
 from app.db.session import SessionLocal, get_db
 from app.workflow.engine import build_workflow
 
@@ -62,6 +62,10 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
     w = db.get(Workflow, workflow_id)
     if w is None:
         raise HTTPException(status_code=404, detail="工作流不存在")
+    run_ids = [r.id for r in db.query(Run).filter(Run.workflow_id == workflow_id).all()]
+    if run_ids:
+        db.query(RunNode).filter(RunNode.run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(Run).filter(Run.workflow_id == workflow_id).delete(synchronize_session=False)
     db.delete(w)
     db.commit()
     return {"code": 0, "message": "ok"}

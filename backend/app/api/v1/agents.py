@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
-from app.db.models import Agent, AgentVersion, User
+from app.db.models import Agent, AgentVersion, Conversation, Message, Run, RunNode, User
 from app.db.session import get_db
 from app.schemas import AgentIn, AgentOut
 
@@ -58,7 +58,15 @@ def delete_agent(agent_id: int, db: Session = Depends(get_db), user: User = Depe
     a = db.get(Agent, agent_id)
     if a is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="智能体不存在")
-    db.query(AgentVersion).filter(AgentVersion.agent_id == agent_id).delete()
+    db.query(AgentVersion).filter(AgentVersion.agent_id == agent_id).delete(synchronize_session=False)
+    conv_ids = [c.id for c in db.query(Conversation).filter(Conversation.agent_id == agent_id).all()]
+    if conv_ids:
+        db.query(Message).filter(Message.conversation_id.in_(conv_ids)).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.agent_id == agent_id).delete(synchronize_session=False)
+    run_ids = [r.id for r in db.query(Run).filter(Run.agent_id == agent_id).all()]
+    if run_ids:
+        db.query(RunNode).filter(RunNode.run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(Run).filter(Run.agent_id == agent_id).delete(synchronize_session=False)
     db.delete(a)
     db.commit()
     return {"code": 0, "message": "ok"}
