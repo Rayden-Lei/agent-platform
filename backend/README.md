@@ -6,7 +6,7 @@
 app/
   main.py            应用入口
   config.py          配置（.env）
-  db/                base/session/models（14 张表）
+  db/                base/session/models（17 张表）
   core/              security（JWT/bcrypt/AES）、deps（鉴权依赖）
   schemas/           Pydantic 模型
   api/v1/            auth/users/models/agents 路由
@@ -20,7 +20,13 @@ scripts/
   init_db.py         建表 + 初始化管理员
 
 ## 快速开始
-1. 安装依赖：pip install -r requirements.txt
+
+> 要求 **Python 3.12+**（LangChain 1.x 需 3.10+，用 3.9 会报 `create_agent` 缺失）。依赖用 uv 管理。
+
+1. 建虚拟环境并装依赖：
+   uv venv .venv --python 3.12
+   source .venv/bin/activate
+   uv pip install -r requirements.txt
 2. 配置 .env（参考 .env.example）
 3. 初始化数据库：
    PYTHONPATH=. python3 scripts/setup_db.py
@@ -36,7 +42,7 @@ admin / admin123（角色 admin）
 - 用户管理（管理员 CRUD）
 - 模型管理（CRUD + API 密钥 AES 加密）
 - 智能体管理（CRUD + 发布版本）
-- 14 张表数据库模型（含 pgvector 向量列）
+- 17 张表数据库模型（含 pgvector 向量列）
 
 ## 待实现
 - 模型网关（chat/chat_stream 流式）

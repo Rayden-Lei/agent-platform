@@ -29,9 +29,14 @@ agent-platform/
 ## 快速启动
 
 ### 后端（8000 端口）
+
+> 要求 **Python 3.12+**（LangChain 1.x 需 3.10+，用 3.9 会报 `create_agent` 缺失）。依赖用 uv 管理。
+
 ```
 cd backend
-pip install -r requirements.txt
+uv venv .venv --python 3.12      # 建虚拟环境（毫秒级）
+source .venv/bin/activate
+uv pip install -r requirements.txt
 cp .env.example .env   # 按需修改数据库/模型配置
 PYTHONPATH=. python3 scripts/setup_db.py
 PYTHONPATH=. python3 scripts/init_db.py
