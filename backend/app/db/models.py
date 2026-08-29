@@ -2,6 +2,7 @@ from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Integer, 
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from pgvector.sqlalchemy import Vector
 
+from app.config import settings
 from app.db.base import Base
 
 
@@ -31,7 +32,7 @@ class ModelConfig(Base, TimestampMixin):
     is_enabled = Column(Boolean, nullable=False, default=True)
     price_input = Column(Float, nullable=True)
     price_output = Column(Float, nullable=True)
-    created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
 class Agent(Base, TimestampMixin):
@@ -40,20 +41,20 @@ class Agent(Base, TimestampMixin):
     name = Column(String(128), nullable=False)
     description = Column(Text, nullable=True)
     system_prompt = Column(Text, nullable=False)
-    model_id = Column(BigInteger, ForeignKey("models.id"), nullable=False)
+    model_id = Column(BigInteger, ForeignKey("models.id", ondelete="RESTRICT"), nullable=False)
     params = Column(JSONB, nullable=False, default=dict)
     kb_ids = Column(JSONB, nullable=False, default=list)
     tool_ids = Column(JSONB, nullable=False, default=list)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True)
     status = Column(String(16), nullable=False, default="draft", index=True)
     version = Column(Integer, nullable=False, default=1)
-    created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
 class AgentVersion(Base):
     __tablename__ = "agent_versions"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    agent_id = Column(BigInteger, ForeignKey("agents.id"), nullable=False, index=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     snapshot = Column(JSONB, nullable=False, default=dict)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -79,13 +80,13 @@ class KnowledgeBase(Base, TimestampMixin):
     embedding_model = Column(String(128), nullable=False)
     chunk_size = Column(Integer, nullable=False, default=500)
     chunk_overlap = Column(Integer, nullable=False, default=50)
-    created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
 class Document(Base):
     __tablename__ = "documents"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    kb_id = Column(BigInteger, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
+    kb_id = Column(BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)
@@ -98,10 +99,10 @@ class Document(Base):
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    doc_id = Column(BigInteger, ForeignKey("documents.id"), nullable=False, index=True)
-    kb_id = Column(BigInteger, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
+    doc_id = Column(BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    kb_id = Column(BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(2048), nullable=False)
+    embedding = Column(Vector(settings.EMBEDDING_DIM), nullable=False)
     meta = Column(JSONB, nullable=False, default=dict)
     token_count = Column(Integer, nullable=False, default=0)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -115,13 +116,13 @@ class Workflow(Base, TimestampMixin):
     graph = Column(JSONB, nullable=False, default=dict)
     version = Column(Integer, nullable=False, default=1)
     status = Column(String(16), nullable=False, default="draft")
-    created_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
 class WorkflowNode(Base):
     __tablename__ = "workflow_nodes"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=False, index=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
     node_id = Column(String(64), nullable=False)
     node_type = Column(String(16), nullable=False)
     config = Column(JSONB, nullable=False, default=dict)
@@ -132,16 +133,16 @@ class WorkflowNode(Base):
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    agent_id = Column(BigInteger, ForeignKey("agents.id"), nullable=True)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=True)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=True)
 
 
 class Message(Base):
     __tablename__ = "messages"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    conversation_id = Column(BigInteger, ForeignKey("conversations.id"), nullable=False, index=True)
+    conversation_id = Column(BigInteger, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False)
     tool_calls = Column(JSONB, nullable=False, default=list)
@@ -154,9 +155,9 @@ class Run(Base):
     __tablename__ = "runs"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     run_type = Column(String(16), nullable=False, index=True)
-    agent_id = Column(BigInteger, ForeignKey("agents.id"), nullable=True)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=True)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(16), nullable=False, default="running", index=True)
     input = Column(JSONB, nullable=False, default=dict)
     output = Column(JSONB, nullable=False, default=dict)
@@ -171,8 +172,8 @@ class ScheduledJob(Base):
     __tablename__ = "scheduled_jobs"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(128), nullable=False)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id"), nullable=False, index=True)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     cron = Column(String(64), nullable=False)
     input = Column(JSONB, nullable=False, default=dict)
     is_enabled = Column(Boolean, nullable=False, default=True)
@@ -183,7 +184,7 @@ class ScheduledJob(Base):
 class ApiKey(Base):
     __tablename__ = "api_keys"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(64), nullable=False)
     key_prefix = Column(String(16), nullable=False)
     key_hash = Column(String(128), nullable=False)
@@ -197,7 +198,7 @@ class ApiKey(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     username = Column(String(64), nullable=False)
     action = Column(String(64), nullable=False)
     resource = Column(String(64), nullable=False)
@@ -210,7 +211,7 @@ class AuditLog(Base):
 class RunNode(Base):
     __tablename__ = "run_nodes"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, ForeignKey("runs.id"), nullable=False, index=True)
+    run_id = Column(BigInteger, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
     node_id = Column(String(64), nullable=False)
     node_type = Column(String(16), nullable=False)
     status = Column(String(16), nullable=False, default="pending")
