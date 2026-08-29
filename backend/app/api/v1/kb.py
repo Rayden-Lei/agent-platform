@@ -22,6 +22,7 @@ class KnowledgeBaseIn(BaseModel):
 class SearchIn(BaseModel):
     query: str
     top_k: int = 4
+    debug: bool = False
 
 
 @router.get("")
@@ -65,6 +66,11 @@ def list_documents(kb_id: int, db: Session = Depends(get_db), user: User = Depen
     return kb_service.list_documents(db, kb_id)
 
 
+@router.get("/{kb_id}/documents/{doc_id}/chunks")
+def list_chunks(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return kb_service.list_document_chunks(db, kb_id, doc_id)
+
+
 @router.delete("/{kb_id}/documents/{doc_id}")
 def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     kb_service.delete_document(db, kb_id, doc_id)
@@ -73,4 +79,4 @@ def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), user
 
 @router.post("/{kb_id}/search")
 def search(kb_id: int, data: SearchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return kb_service.search_kb(db, kb_id, data.query, data.top_k)
+    return kb_service.search_kb(db, kb_id, data.query, data.top_k, debug=data.debug)

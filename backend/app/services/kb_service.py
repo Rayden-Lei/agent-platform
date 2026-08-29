@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import BizError
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.rag.minio_client import upload_file
-from app.rag.retriever import retrieve
+from app.rag.retriever import retrieve, retrieve_with_stats
 
 
 def list_kbs(db: Session) -> list[dict]:
@@ -74,6 +74,35 @@ def delete_document(db: Session, kb_id: int, doc_id: int) -> None:
     db.commit()
 
 
-def search_kb(db: Session, kb_id: int, query: str, top_k: int) -> dict:
+def list_document_chunks(db: Session, kb_id: int, doc_id: int) -> dict:
     get_kb(db, kb_id)
+    doc = db.get(Document, doc_id)
+    if doc is None or doc.kb_id != kb_id:
+        raise BizError(404, "文档不存在")
+    rows = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.doc_id == doc_id)
+        .order_by(DocumentChunk.id)
+        .all()
+    )
+    return {
+        "doc_id": doc.id,
+        "doc_name": doc.name,
+        "chunk_count": len(rows),
+        "items": [
+            {
+                "id": c.id,
+                "content": c.content,
+                "meta": c.meta or {},
+                "token_count": c.token_count,
+            }
+            for c in rows
+        ],
+    }
+
+
+def search_kb(db: Session, kb_id: int, query: str, top_k: int, debug: bool = False) -> dict:
+    get_kb(db, kb_id)
+    if debug:
+        return retrieve_with_stats(kb_id, query, top_k)
     return {"items": retrieve(kb_id, query, top_k)}

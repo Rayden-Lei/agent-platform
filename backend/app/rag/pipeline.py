@@ -100,6 +100,7 @@ def process_document(doc_id: int) -> None:
                     content=chunk["content"],
                     embedding=emb,
                     meta={**chunk["meta"], "index": i},
+                    token_count=max(1, len(chunk["content"])),
                 ))
 
             doc.chunk_count = len(chunks)
