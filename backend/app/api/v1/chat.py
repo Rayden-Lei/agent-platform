@@ -83,7 +83,8 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             if agent2.kb_ids:
                 for kb_id in agent2.kb_ids:
                     for s in retrieve(kb_id, message_text, settings.RAG_TOP_K):
-                        citations.append({"kb_id": kb_id, "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]})
+                        citations.append(
+                            {"kb_id": kb_id, "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]})
                 if citations:
                     kb_context = "以下是与问题相关的知识，请优先参考：\n" + "\n".join(
                         f"[{i + 1}] {c['content']}" for i, c in enumerate(citations)
@@ -139,7 +140,8 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                 run2.output = {"content": final_content}
                 run2.token_usage = usage_total
                 db2.commit()
-                yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id, "conversation_id": conversation_id, "usage": usage_total})
+                yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id,
+                            "conversation_id": conversation_id, "usage": usage_total})
             except Exception as e:
                 run2 = db2.get(Run, run_id)
                 if run2:
