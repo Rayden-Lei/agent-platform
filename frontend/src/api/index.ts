@@ -36,6 +36,7 @@ export const uploadDoc = (kbId: number, file: File) => {
   return client.post(`/knowledge-bases/${kbId}/documents`, fd)
 }
 export const searchKB = (kbId: number, data: any) => client.post(`/knowledge-bases/${kbId}/search`, data)
+export const listDocChunks = (kbId: number, docId: number) => client.get(`/knowledge-bases/${kbId}/documents/${docId}/chunks`)
 
 export const listWorkflows = () => client.get('/workflows')
 export const getWorkflow = (id: number) => client.get(`/workflows/${id}`)
@@ -63,3 +64,74 @@ export const listSchedules = () => client.get('/schedules')
 export const createSchedule = (data: any) => client.post('/schedules', data)
 export const toggleSchedule = (id: number) => client.post(`/schedules/${id}/toggle`)
 export const deleteSchedule = (id: number) => client.delete(`/schedules/${id}`)
+
+// ===== 对话流式接口（SSE）=====
+// axios 不支持浏览器端 SSE 流式读取，此处用 fetch 直连；凭据读取方式与 client 拦截器保持一致。
+export interface ChatStreamHandlers {
+  onCitations?: (citations: any[]) => void
+  onDelta?: (content: string) => void
+  onToolCall?: (tc: { id?: string; name?: string; arguments?: any }) => void
+  onToolResult?: (tr: { tool_call_id?: string; content?: string }) => void
+  onError?: (message: string) => void
+  onDone?: (evt: { conversation_id?: number; usage?: any }) => void
+}
+
+export const chatAgentStream = async (
+  agentId: number,
+  payload: { message: string; conversation_id: number | null },
+  handlers: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<number | null> => {
+  const token = localStorage.getItem('token')
+  const res = await fetch('/api/v1/agents/' + agentId + '/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(payload),
+    signal,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err && (err.detail || err.message)) || '请求失败')
+  }
+  if (!res.body) throw new Error('响应无内容')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let newCid: number | null = payload.conversation_id
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() || ''
+    for (const part of parts) {
+      if (!part.startsWith('data: ')) continue
+      let evt: any
+      try { evt = JSON.parse(part.slice(6)) } catch { continue }
+      switch (evt.type) {
+        case 'citations':
+          handlers.onCitations?.(evt.citations || [])
+          break
+        case 'delta':
+          handlers.onDelta?.(evt.content || '')
+          break
+        case 'tool_call':
+          handlers.onToolCall?.({ id: evt.id, name: evt.name, arguments: evt.arguments })
+          break
+        case 'tool_result':
+          handlers.onToolResult?.({ tool_call_id: evt.tool_call_id, content: evt.content })
+          break
+        case 'error':
+          handlers.onError?.(evt.message || '')
+          break
+        case 'done':
+          handlers.onDone?.({ conversation_id: evt.conversation_id, usage: evt.usage })
+          if (evt.conversation_id) newCid = evt.conversation_id
+          break
+      }
+    }
+  }
+  return newCid
+}

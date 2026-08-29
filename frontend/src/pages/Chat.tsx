@@ -1,18 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Select, Input, Button, Tag, message, List, Empty, Popconfirm, Space, Grid } from 'antd'
+import { Select, Input, Button, message, List, Empty, Popconfirm, Grid } from 'antd'
 import { SendOutlined, PlusOutlined, DeleteOutlined, StopOutlined, ReloadOutlined, MessageOutlined } from '@ant-design/icons'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useLocation } from 'react-router-dom'
-import { listAgents, listConversations, listMessages, deleteConversation } from '../api'
-
-interface Msg {
-  role: 'user' | 'assistant'
-  content: string
-  tools?: { name: string; args: any }[]
-  citations?: any[]
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-}
+import { listAgents, listConversations, listMessages, deleteConversation, chatAgentStream } from '../api'
+import AssistantMessage from '../components/chat/AssistantMessage'
+import type { Msg, ToolStep } from '../components/chat/types'
 
 const { useBreakpoint } = Grid
 
@@ -50,7 +42,19 @@ export default function Chat() {
     setShowList(false)
     try {
       const msgs: any = await listMessages(cid)
-      setMessages(msgs.map((m: any) => ({ role: m.role, content: m.content, tools: m.tool_calls || [], citations: m.citations || [], usage: m.token_usage || undefined })))
+      setMessages(msgs.map((m: any): Msg => ({
+        role: m.role,
+        content: m.content,
+        citations: m.citations || [],
+        tools: (m.tool_calls || []).map((t: any): ToolStep => ({
+          id: t.id,
+          name: t.name,
+          args: t.args ?? t.arguments ?? {},
+          status: 'done',
+          result: t.result,
+        })),
+        usage: m.token_usage || undefined,
+      })))
     } catch { message.error('加载历史失败') }
   }
 
@@ -58,6 +62,18 @@ export default function Chat() {
     setConversationId(null)
     setMessages([])
     setShowList(false)
+  }
+
+  // 更新流式过程中最后一条 assistant 消息（浅拷贝后原地修改，保持不可变更新语义）
+  const patchLast = (fn: (last: Msg) => void) => {
+    setMessages((prev) => {
+      if (prev.length === 0) return prev
+      const next = [...prev]
+      const last = { ...next[next.length - 1] }
+      fn(last)
+      next[next.length - 1] = last
+      return next
+    })
   }
 
   const doSend = async (msg: string, isRegen: boolean) => {
@@ -73,42 +89,25 @@ export default function Chat() {
     abortRef.current = controller
 
     try {
-      const token = localStorage.getItem('token')
-      const res = await fetch('/api/v1/agents/' + agentId + '/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ message: msg, conversation_id: conversationId }),
-        signal: controller.signal,
-      })
-      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || '请求失败') }
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let newCid = conversationId
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() || ''
-        for (const part of parts) {
-          if (!part.startsWith('data: ')) continue
-          let evt: any
-          try { evt = JSON.parse(part.slice(6)) } catch { continue }
-          setMessages((prev) => {
-            const next = [...prev]
-            const last = { ...next[next.length - 1] }
-            if (evt.type === 'delta') last.content += evt.content
-            else if (evt.type === 'tool_call') last.tools = [...(last.tools || []), { name: evt.name, args: evt.arguments }]
-            else if (evt.type === 'error') last.content += '\n[错误] ' + evt.message
-            else if (evt.type === 'done' && evt.usage) last.usage = evt.usage
-            next[next.length - 1] = last
-            return next
-          })
-          if (evt.type === 'done' && evt.conversation_id) newCid = evt.conversation_id
-        }
-        scrollBottom()
-      }
+      const newCid = await chatAgentStream(agentId, { message: msg, conversation_id: conversationId }, {
+        onCitations: (citations) => patchLast((last) => { last.citations = citations }),
+        onDelta: (content) => patchLast((last) => { last.content += content }),
+        onToolCall: (tc) => patchLast((last) => {
+          last.tools = [...(last.tools || []), { id: tc.id, name: tc.name || '工具', args: tc.arguments ?? {}, status: 'running' as const }]
+        }),
+        onToolResult: (tr) => patchLast((last) => {
+          const tools = last.tools || []
+          let idx = tools.findIndex((t) => t.id && tr.tool_call_id && t.id === tr.tool_call_id)
+          if (idx < 0) idx = tools.findIndex((t) => t.status === 'running')
+          if (idx >= 0) {
+            const next = tools.slice()
+            next[idx] = { ...next[idx], status: 'done' as const, result: tr.content }
+            last.tools = next
+          }
+        }),
+        onError: (errMsg) => patchLast((last) => { last.content += '\n[错误] ' + errMsg }),
+        onDone: (evt) => patchLast((last) => { if (evt.usage) last.usage = evt.usage }),
+      }, controller.signal)
       if (newCid && newCid !== conversationId) { setConversationId(newCid); loadConversations() }
     } catch (e: any) {
       if (e.name === 'AbortError') return
@@ -142,7 +141,7 @@ export default function Chat() {
   )
 
   const conversationList = (
-    <div style={{ width: isMobile ? '100%' : 220, border: '1px solid #eee', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', flexShrink: 0, height: '100%', minHeight: 0 }}>
+    <div style={{ width: isMobile ? '100%' : 220, border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', flexShrink: 0, height: '100%', minHeight: 0 }}>
       <div style={{ marginBottom: 8 }}>{agentSelector}</div>
       <Button type="primary" icon={<PlusOutlined />} block onClick={newConversation} style={{ marginBottom: 8 }}>新对话</Button>
       <div style={{ flex: 1, overflow: 'auto' }}>
@@ -155,7 +154,7 @@ export default function Chat() {
             renderItem={(c: any) => (
               <List.Item
                 onClick={() => selectConversation(c.id)}
-                style={{ cursor: 'pointer', background: conversationId === c.id ? '#e6f4ff' : 'transparent', padding: '6px 8px', borderRadius: 6 }}
+                style={{ cursor: 'pointer', background: conversationId === c.id ? '#e8eefb' : 'transparent', padding: '6px 8px', borderRadius: 6 }}
                 actions={[
                   <Popconfirm key="d" title="删除会话？" onConfirm={async (e) => { e?.stopPropagation(); await deleteConversation(c.id); if (conversationId === c.id) newConversation(); loadConversations() }}>
                     <DeleteOutlined onClick={(e) => e.stopPropagation()} />
@@ -172,48 +171,33 @@ export default function Chat() {
   )
 
   const chatArea = (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #eee', borderRadius: 8, minWidth: 0, minHeight: 0 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 8, minWidth: 0, minHeight: 0 }}>
       {isMobile && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <Button size="small" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>
           <div style={{ flex: 1 }}>{agentSelector}</div>
           <Button size="small" icon={<PlusOutlined />} onClick={newConversation} />
         </div>
       )}
-      <div style={{ flex: 1, overflow: 'auto', padding: isMobile ? 12 : 16, background: '#fafafa', minHeight: 0 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: isMobile ? 12 : 16, background: '#f5f6f8', minHeight: 0 }}>
         {messages.length === 0 && <Empty style={{ marginTop: 60 }} description="选择一个智能体开始对话" />}
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
-            <div style={{ maxWidth: isMobile ? '88%' : '75%', padding: '10px 14px', borderRadius: 8, background: m.role === 'user' ? '#1e40af' : '#fff', color: m.role === 'user' ? '#fff' : '#000', border: m.role === 'user' ? 'none' : '1px solid #eee', whiteSpace: 'pre-wrap' }}>
-              {m.tools?.map((t, j) => (
-                <div key={j}><Tag color="purple" style={{ marginBottom: 4 }}>🔧 {t.name}({JSON.stringify(t.args)})</Tag></div>
-              ))}
+        {messages.map((m, i) => {
+          const isStreaming = i === messages.length - 1 && sending && m.role === 'assistant'
+          return (
+            <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
               {m.role === 'user' ? (
-                <div>{m.content}</div>
-              ) : (i === messages.length - 1 && sending) ? (
-                <div>{m.content || '思考中...'}</div>
+                <div style={{ maxWidth: isMobile ? '88%' : '75%', padding: '10px 14px', borderRadius: 8, background: '#1e40af', color: '#fff', whiteSpace: 'pre-wrap' }}>{m.content}</div>
               ) : (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                <div className="assistant-bubble" style={{ maxWidth: isMobile ? '94%' : '78%' }}>
+                  <AssistantMessage msg={m} streaming={isStreaming} />
                 </div>
-              )}
-              {m.citations && m.citations.length > 0 && (
-                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #eee' }}>
-                  <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>📚 引用来源：</div>
-                  {m.citations.map((c: any, k) => (
-                    <div key={k} style={{ fontSize: 12, color: '#666' }}>· {c.doc_name || '文档'}：{String(c.content).slice(0, 80)}...</div>
-                  ))}
-                </div>
-              )}
-              {m.usage && (
-                <div style={{ marginTop: 6, fontSize: 12, color: '#999' }}>⚡ {m.usage.total_tokens} tokens（输入 {m.usage.prompt_tokens} / 输出 {m.usage.completion_tokens}）</div>
               )}
             </div>
-          </div>
-        ))}
+          )
+        })}
         <div ref={bottomRef} />
       </div>
-      <div style={{ display: 'flex', gap: 8, padding: isMobile ? 8 : 12, borderTop: '1px solid #eee', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 8, padding: isMobile ? 8 : 12, borderTop: '1px solid #e5e7eb', flexShrink: 0, background: '#fff' }}>
         <Input.TextArea
           value={input}
           onChange={(e) => setInput(e.target.value)}

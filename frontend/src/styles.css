@@ -146,3 +146,81 @@ html, body, #root {
 .markdown-body th, .markdown-body td { border: 1px solid #e2e8f0; padding: 6px 10px; font-size: 13px; }
 .markdown-body th { background: #f8fafc; }
 .markdown-body a { color: #1e40af; }
+
+/* ===== 对话页 ===== */
+.assistant-bubble {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+  color: #1f2937;
+  min-width: 0;
+}
+
+.assistant-msg { display: flex; flex-direction: column; gap: 10px; }
+
+.assistant-typing { color: #64748b; font-size: 13px; }
+
+/* 思考过程折叠面板 */
+.thinking-trace { background: #f8fafc; border-radius: 8px; }
+.thinking-trace .ant-collapse-header { padding: 8px 10px !important; }
+.thinking-trace .ant-collapse-content-box { padding: 8px 10px 4px !important; }
+.thinking-label { display: inline-flex; align-items: center; }
+.thinking-trace .ant-timeline-item { padding-bottom: 10px; }
+.thinking-trace .ant-timeline-item:last-child { padding-bottom: 0; }
+
+/* 工具芯片 */
+.tool-chips { margin: 0; }
+.tool-chip { cursor: pointer; margin: 0; }
+.tool-detail-pre {
+  margin: 4px 0 0;
+  padding: 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tool-detail-result {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* 内联引用标记 */
+.citation-mark {
+  color: #1e40af;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.citation-mark:hover { color: #1d4ed8; text-decoration: underline; }
+
+/* 知识块卡片 */
+.context-cards { display: flex; flex-direction: column; gap: 8px; }
+.context-cards-header {
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.context-card { border-radius: 8px; }
+.context-card .ant-card-head { min-height: 34px; padding: 0 10px; }
+.context-card .ant-card-head-title { padding: 8px 0; font-size: 13px; }
+.context-card .ant-card-body { padding: 8px 10px; }
+.context-card-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.context-card-index { color: #1e40af; font-weight: 600; }
+
+.usage-footer { font-size: 12px; color: #94a3b8; padding-top: 2px; }
