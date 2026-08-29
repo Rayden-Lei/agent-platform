@@ -1,52 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
-from app.db.models import Conversation, Message, User
+from app.db.models import User
 from app.db.session import get_db
+from app.services import conversation_service
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 @router.get("")
 def list_conversations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    rows = (
-        db.query(Conversation)
-        .filter(Conversation.user_id == user.id)
-        .order_by(Conversation.updated_at.desc())
-        .all()
-    )
-    return [
-        {"id": c.id, "agent_id": c.agent_id, "title": c.title, "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat()}
-        for c in rows
-    ]
+    return conversation_service.list_conversations(db, user)
 
 
 @router.get("/{conversation_id}/messages")
 def list_messages(conversation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    conv = db.get(Conversation, conversation_id)
-    if conv is None or conv.user_id != user.id:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    rows = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
-    return [
-        {
-            "id": m.id,
-            "role": m.role,
-            "content": m.content,
-            "tool_calls": m.tool_calls,
-            "citations": m.citations,
-            "created_at": m.created_at.isoformat(),
-        }
-        for m in rows
-    ]
+    return conversation_service.list_messages(db, conversation_id, user)
 
 
 @router.delete("/{conversation_id}")
 def delete_conversation(conversation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    conv = db.get(Conversation, conversation_id)
-    if conv is None or conv.user_id != user.id:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    db.query(Message).filter(Message.conversation_id == conversation_id).delete()
-    db.delete(conv)
-    db.commit()
+    conversation_service.delete_conversation(db, conversation_id, user)
     return {"code": 0, "message": "ok"}
