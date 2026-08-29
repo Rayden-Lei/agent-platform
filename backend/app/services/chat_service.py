@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.core.exceptions import BizError
@@ -22,6 +22,62 @@ class ChatContext:
     history_messages: list
 
 
+def _history_to_messages(rows: list) -> list:
+    """DB 历史行 → langchain 消息列表（仅取 user/assistant）。"""
+    msgs = []
+    for h in rows:
+        if h.role == "user":
+            msgs.append(HumanMessage(content=h.content))
+        elif h.role == "assistant":
+            msgs.append(AIMessage(content=h.content))
+    return msgs
+
+
+def _summarize_history(llm: Any, older: list) -> str:
+    """用 LLM 把较早历史压缩为简短摘要；失败或为空时退回字符截断兜底。"""
+    text = "\n".join(f"{m.type}: {m.content}" for m in older)
+    prompt = (
+        "你是对话摘要助手。请把下面的历史对话压缩成一段不超过 150 字的摘要，"
+        "只保留用户目标、关键事实和已确认结论，不要编造信息：\n\n" + text
+    )
+    try:
+        resp = llm.invoke(prompt)
+        summary = (resp.content or "").strip() if resp else ""
+    except Exception:
+        summary = ""
+    # 兜底：摘要不可用时按字符截断，保证 token 仍是有界的
+    return summary or text[:2000]
+
+
+def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
+    """有界历史：保留最近 max_messages 条，更早的压缩为摘要后以 SystemMessage 注入。"""
+    if len(rows) <= max_messages:
+        return _history_to_messages(rows)
+    older = _history_to_messages(rows[:-max_messages])
+    recent = _history_to_messages(rows[-max_messages:])
+    summary = _summarize_history(llm, older)
+    return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
+
+
+def _generate_title(db: Session, agent: Agent, message: str) -> str:
+    """基于首条消息生成简洁标题；LLM 不可用或失败时退回 message 截断。"""
+    fallback = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"
+    try:
+        model = db.get(ModelConfig, agent.model_id)
+        if model is None or not model.is_enabled:
+            return fallback
+        llm = build_llm(model)
+        resp = llm.invoke(
+            "请为下面的用户消息生成一个不超过 15 字的会话标题，只输出标题本身，不加引号或标点：\n"
+            + message
+        )
+        title = (resp.content or "").strip().strip('"').strip("“”") if resp else ""
+        return title[:settings.CHAT_TITLE_MAX_LEN] or fallback
+    except Exception:
+        # 标题是尽力而为的增强，失败不阻断会话创建，退回截断标题
+        return fallback
+
+
 def get_published_agent(db: Session, agent_id: int) -> Agent:
     agent = db.get(Agent, agent_id)
     if agent is None:
@@ -33,14 +89,15 @@ def get_published_agent(db: Session, agent_id: int) -> Agent:
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None) -> tuple[int, int]:
     """校验智能体，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。"""
-    get_published_agent(db, agent_id)
+    agent = get_published_agent(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.user_id != user_id:
             raise BizError(404, "会话不存在")
     if conversation is None:
-        conversation = Conversation(agent_id=agent_id, user_id=user_id, title=message[:30])
+        title = _generate_title(db, agent, message)
+        conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title)
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
@@ -77,19 +134,14 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
-    lc_messages = []
-    for h in history:
-        if h.role == "user":
-            lc_messages.append(HumanMessage(content=h.content))
-        elif h.role == "assistant":
-            lc_messages.append(AIMessage(content=h.content))
+    lc_messages = _build_history_messages(llm, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
 
     return ChatContext(llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages)
 
 
-def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict) -> Message:
-    msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage)
+def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:
+    msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage, tool_calls=tool_calls or [])
     db.add(msg)
     db.commit()
     db.refresh(msg)

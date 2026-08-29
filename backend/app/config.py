@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "kb-docs"
     MODEL_HTTP_TIMEOUT: int = 120
     RAG_TOP_K: int = 4
+    CHAT_HISTORY_MAX_MESSAGES: int = 20
+    CHAT_TITLE_MAX_LEN: int = 30
     TOOL_CALL_MAX_ROUNDS: int = 8
     LOOP_MAX_ITERATIONS: int = 20
     EMBEDDING_API_BASE: str = ""
