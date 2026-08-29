@@ -8,7 +8,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
-from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm
 from app.rag.retriever import retrieve
 from app.tools.langchain_tools import build_tools
@@ -58,41 +57,6 @@ def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
     recent = _history_to_messages(rows[-max_messages:])
     summary = _summarize_history(llm, older)
     return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
-
-
-def _generate_title(db: Session, agent: Agent, message: str) -> str:
-    """基于首条消息生成简洁标题；LLM 不可用或失败时退回 message 截断。"""
-    fallback = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"
-    try:
-        model = db.get(ModelConfig, agent.model_id)
-        if model is None or not model.is_enabled:
-            return fallback
-        llm = build_llm(model)
-        resp = llm.invoke(
-            "请为下面的用户消息生成一个不超过 15 字的会话标题，只输出标题本身，不加引号或标点：\n"
-            + message
-        )
-        title = (resp.content or "").strip().strip('"').strip("“”") if resp else ""
-        return title[:settings.CHAT_TITLE_MAX_LEN] or fallback
-    except Exception:
-        # 标题是尽力而为的增强，失败不阻断会话创建，退回截断标题
-        return fallback
-
-
-def generate_and_update_title(conversation_id: int, agent_id: int, message: str) -> None:
-    """后台生成会话标题并落库（独立 session，不阻塞对话主流程）。"""
-    db = SessionLocal()
-    try:
-        agent = db.get(Agent, agent_id)
-        if agent is None:
-            return
-        title = _generate_title(db, agent, message)
-        conv = db.get(Conversation, conversation_id)
-        if conv is not None:
-            conv.title = title
-            db.commit()
-    finally:
-        db.close()
 
 
 def get_published_agent(db: Session, agent_id: int) -> Agent:
