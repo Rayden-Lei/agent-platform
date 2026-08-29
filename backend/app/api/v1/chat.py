@@ -1,4 +1,5 @@
 import json
+import threading
 import warnings
 
 from fastapi import APIRouter, Depends
@@ -33,6 +34,8 @@ def _sse(data: dict) -> str:
 async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     conversation_id, run_id = chat_service.prepare_chat(db, user.id, agent_id, data.message, data.conversation_id)
     message_text = data.message
+    if data.conversation_id is None:
+        threading.Thread(target=chat_service.generate_and_update_title, args=(conversation_id, agent_id, message_text), daemon=True).start()
 
     async def event_stream():
         db2 = SessionLocal()

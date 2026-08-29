@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
+from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm
 from app.rag.retriever import retrieve
 from app.tools.langchain_tools import build_tools
@@ -78,6 +79,22 @@ def _generate_title(db: Session, agent: Agent, message: str) -> str:
         return fallback
 
 
+def generate_and_update_title(conversation_id: int, agent_id: int, message: str) -> None:
+    """后台生成会话标题并落库（独立 session，不阻塞对话主流程）。"""
+    db = SessionLocal()
+    try:
+        agent = db.get(Agent, agent_id)
+        if agent is None:
+            return
+        title = _generate_title(db, agent, message)
+        conv = db.get(Conversation, conversation_id)
+        if conv is not None:
+            conv.title = title
+            db.commit()
+    finally:
+        db.close()
+
+
 def get_published_agent(db: Session, agent_id: int) -> Agent:
     agent = db.get(Agent, agent_id)
     if agent is None:
@@ -89,14 +106,14 @@ def get_published_agent(db: Session, agent_id: int) -> Agent:
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None) -> tuple[int, int]:
     """校验智能体，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。"""
-    agent = get_published_agent(db, agent_id)
+    get_published_agent(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
         if conversation is None or conversation.user_id != user_id:
             raise BizError(404, "会话不存在")
     if conversation is None:
-        title = _generate_title(db, agent, message)
+        title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 先落瞬时标题，后台异步生成
         conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title)
         db.add(conversation)
         db.commit()
