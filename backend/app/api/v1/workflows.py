@@ -41,7 +41,7 @@ def create_workflow(data: WorkflowIn, db: Session = Depends(get_db), user: User 
 
 @router.post("/test-run")
 async def test_run_workflow(data: TestRunIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return await workflow_service.test_run_workflow(data.graph, data.input)
+    return await workflow_service.test_run_workflow(data.graph, data.input, role=user.role)
 
 
 @router.get("/{workflow_id}")

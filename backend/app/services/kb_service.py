@@ -10,7 +10,7 @@ from app.rag.retriever import retrieve, retrieve_with_stats
 
 def list_kbs(db: Session) -> list[dict]:
     rows = db.query(KnowledgeBase).order_by(KnowledgeBase.id).all()
-    return [{"id": k.id, "name": k.name, "description": k.description, "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap} for k in rows]
+    return [{"id": k.id, "name": k.name, "description": k.description, "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap, "is_public": k.is_public, "visible_roles": k.visible_roles} for k in rows]
 
 
 def create_kb(db: Session, data, user) -> dict:
@@ -20,12 +20,14 @@ def create_kb(db: Session, data, user) -> dict:
         embedding_model=data.embedding_model,
         chunk_size=data.chunk_size,
         chunk_overlap=data.chunk_overlap,
+        is_public=data.is_public,
+        visible_roles=data.visible_roles or [],
         created_by=user.id,
     )
     db.add(kb)
     db.commit()
     db.refresh(kb)
-    return {"id": kb.id, "name": kb.name, "description": kb.description}
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "is_public": kb.is_public, "visible_roles": kb.visible_roles}
 
 
 def get_kb(db: Session, kb_id: int) -> KnowledgeBase:
@@ -37,7 +39,21 @@ def get_kb(db: Session, kb_id: int) -> KnowledgeBase:
 
 def get_kb_detail(db: Session, kb_id: int) -> dict:
     kb = get_kb(db, kb_id)
-    return {"id": kb.id, "name": kb.name, "description": kb.description, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap}
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap, "is_public": kb.is_public, "visible_roles": kb.visible_roles}
+
+
+def update_kb(db: Session, kb_id: int, data) -> dict:
+    kb = get_kb(db, kb_id)
+    kb.name = data.name
+    kb.description = data.description
+    new_roles = data.visible_roles or []
+    if data.is_public != kb.is_public or new_roles != (kb.visible_roles or []):
+        kb.policy_version = (kb.policy_version or 1) + 1  # 权限变更 → 版本号 +1，缓存失效
+    kb.is_public = data.is_public
+    kb.visible_roles = new_roles
+    db.commit()
+    db.refresh(kb)
+    return {"id": kb.id, "name": kb.name, "description": kb.description, "is_public": kb.is_public, "visible_roles": kb.visible_roles, "policy_version": kb.policy_version}
 
 
 def delete_kb(db: Session, kb_id: int) -> None:
@@ -101,8 +117,8 @@ def list_document_chunks(db: Session, kb_id: int, doc_id: int) -> dict:
     }
 
 
-def search_kb(db: Session, kb_id: int, query: str, top_k: int, debug: bool = False) -> dict:
+def search_kb(db: Session, kb_id: int, query: str, top_k: int, debug: bool = False, role: str = None) -> dict:
     get_kb(db, kb_id)
     if debug:
-        return retrieve_with_stats(kb_id, query, top_k)
-    return {"items": retrieve(kb_id, query, top_k)}
+        return retrieve_with_stats(kb_id, query, top_k, role=role)
+    return {"items": retrieve(kb_id, query, top_k, role=role)}

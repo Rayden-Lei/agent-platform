@@ -5,7 +5,7 @@ from langgraph.types import Command
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
-from app.db.models import Agent, Run, Workflow
+from app.db.models import Agent, Run, User, Workflow
 from app.workflow.engine import build_workflow
 
 
@@ -64,10 +64,10 @@ def _interrupt_value(result: dict):
     return None
 
 
-async def test_run_workflow(graph: dict, input_text: str) -> dict:
+async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> dict:
     """编辑器内测试运行：用当前图直接执行，不落库。"""
     try:
-        g = build_workflow(graph)
+        g = build_workflow(graph, role=role)
         thread_id = "test-" + uuid.uuid4().hex[:12]
         result = await asyncio.to_thread(g.invoke, {"input": input_text, "steps": []}, {"configurable": {"thread_id": thread_id}})
         iv = _interrupt_value(result)
@@ -86,7 +86,7 @@ async def run_workflow(db: Session, workflow_id: int, input_text: str, user) -> 
     db.refresh(run)
 
     try:
-        graph = build_workflow(w.graph, run_id=run.id)
+        graph = build_workflow(w.graph, run_id=run.id, role=user.role)
         result = await asyncio.to_thread(graph.invoke, {"input": input_text, "steps": []}, {"configurable": {"thread_id": str(run.id)}})
         iv = _interrupt_value(result)
         if iv is not None:
@@ -114,7 +114,8 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
         raise BizError(400, "该运行不在待审核状态")
 
     try:
-        graph = build_workflow(w.graph, run_id=run.id)
+        role = db.get(User, run.user_id).role if run.user_id else None
+        graph = build_workflow(w.graph, run_id=run.id, role=role)
         result = await asyncio.to_thread(graph.invoke, Command(resume=decision), {"configurable": {"thread_id": str(run_id)}})
         iv = _interrupt_value(result)
         if iv is not None:

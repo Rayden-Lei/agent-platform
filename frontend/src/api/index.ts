@@ -28,6 +28,7 @@ export const testTool = (id: number, data: any) => client.post(`/tools/${id}/tes
 
 export const listKBs = () => client.get('/knowledge-bases')
 export const createKB = (data: any) => client.post('/knowledge-bases', data)
+export const updateKB = (id: number, data: any) => client.put(`/knowledge-bases/${id}`, data)
 export const deleteKB = (id: number) => client.delete(`/knowledge-bases/${id}`)
 export const listDocs = (kbId: number) => client.get(`/knowledge-bases/${kbId}/documents`)
 export const uploadDoc = (kbId: number, file: File) => {

@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 
 from app.core.deps import get_current_user
 from app.core.exceptions import BizError
-from app.db.models import User
+from app.db.models import AuditLog, User
 from app.db.session import SessionLocal, get_db
 from app.services import chat_service
 
@@ -38,10 +38,17 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
         db2 = SessionLocal()
         try:
             try:
-                ctx = chat_service.build_chat_context(db2, agent_id, message_text, conversation_id)
+                ctx = chat_service.build_chat_context(db2, agent_id, message_text, conversation_id, role=user.role)
             except BizError as e:
                 yield _sse({"type": "error", "message": e.detail})
                 return
+
+            # 审计：记录检索鉴权（uid/query/召回 chunk_id/鉴权剔除数）
+            db2.add(AuditLog(
+                user_id=user.id, username=user.username, action="rag_retrieve", resource="agent", resource_id=agent_id,
+                detail={"query": message_text, "recalled_chunk_ids": [c["chunk_id"] for c in ctx.citations], "acl_rejected": ctx.acl_rejected},
+            ))
+            db2.commit()
 
             yield _sse({"type": "citations", "citations": ctx.citations})
 

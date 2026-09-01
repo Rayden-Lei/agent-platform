@@ -9,7 +9,7 @@ from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
 from app.model_gateway.gateway import build_llm
-from app.rag.retriever import retrieve
+from app.rag.retriever import retrieve, retrieve_with_stats
 from app.tools.langchain_tools import build_tools
 
 
@@ -20,6 +20,7 @@ class ChatContext:
     system_prompt: str
     citations: list
     history_messages: list
+    acl_rejected: int = 0
 
 
 def _history_to_messages(rows: list) -> list:
@@ -91,8 +92,8 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
     return conversation.id, run.id
 
 
-def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int) -> ChatContext:
-    """构建对话上下文：LLM、工具、系统提示（含 RAG 引用）与多轮历史消息。"""
+def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None) -> ChatContext:
+    """构建对话上下文：LLM、工具、系统提示（含 RAG 引用，带权限过滤 + 证据绑定）与多轮历史消息。"""
     agent = db.get(Agent, agent_id)
     model = db.get(ModelConfig, agent.model_id)
     if model is None or not model.is_enabled:
@@ -104,13 +105,19 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
 
     kb_context = ""
     citations = []
+    acl_rejected = 0
     if agent.kb_ids:
         for kb_id in agent.kb_ids:
-            for s in retrieve(kb_id, message_text, settings.RAG_TOP_K):
-                citations.append({"kb_id": kb_id, "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]})
+            stats = retrieve_with_stats(kb_id, message_text, settings.RAG_TOP_K, role=role)
+            acl_rejected += stats["stats"].get("acl_rejected", 0)
+            for s in stats["items"]:
+                citations.append({"kb_id": kb_id, "chunk_id": s["chunk_id"], "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]})
         if citations:
-            kb_context = "以下是与问题相关的知识，请优先参考：\n" + "\n".join(
-                f"[{i + 1}] {c['content']}" for i, c in enumerate(citations)
+            kb_context = (
+                "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
+                "不得做超出材料的推测或跨片段拼接推导：\n"
+                + "\n".join(f"[{i + 1}] {c['content']}" for i, c in enumerate(citations))
+                + "\n\n约束：参考片段未覆盖的内容，如实回答『知识库中没有相关信息』，禁止编造。"
             )
     system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
@@ -118,7 +125,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     lc_messages = _build_history_messages(llm, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
 
-    return ChatContext(llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages)
+    return ChatContext(llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages, acl_rejected=acl_rejected)
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:

@@ -80,6 +80,10 @@ class KnowledgeBase(Base, TimestampMixin):
     embedding_model = Column(String(128), nullable=False)
     chunk_size = Column(Integer, nullable=False, default=500)
     chunk_overlap = Column(Integer, nullable=False, default=50)
+    # 权限：is_public=True 所有角色可见；False 仅 visible_roles 内角色可见
+    is_public = Column(Boolean, nullable=False, default=True, index=True)
+    visible_roles = Column(JSONB, nullable=False, default=list)
+    policy_version = Column(Integer, nullable=False, default=1)
     created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 

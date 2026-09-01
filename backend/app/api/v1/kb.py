@@ -17,6 +17,8 @@ class KnowledgeBaseIn(BaseModel):
     embedding_model: str = "text-embedding-3-small"
     chunk_size: int = 500
     chunk_overlap: int = 50
+    is_public: bool = True
+    visible_roles: list[str] = []
 
 
 class SearchIn(BaseModel):
@@ -38,6 +40,11 @@ def create_kb(data: KnowledgeBaseIn, db: Session = Depends(get_db), user: User =
 @router.get("/{kb_id}")
 def get_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     return kb_service.get_kb_detail(db, kb_id)
+
+
+@router.put("/{kb_id}")
+def update_kb(kb_id: int, data: KnowledgeBaseIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return kb_service.update_kb(db, kb_id, data)
 
 
 @router.delete("/{kb_id}")
@@ -79,4 +86,4 @@ def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), user
 
 @router.post("/{kb_id}/search")
 def search(kb_id: int, data: SearchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return kb_service.search_kb(db, kb_id, data.query, data.top_k, debug=data.debug)
+    return kb_service.search_kb(db, kb_id, data.query, data.top_k, debug=data.debug, role=user.role)

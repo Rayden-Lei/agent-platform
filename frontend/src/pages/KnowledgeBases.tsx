@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Drawer, Upload, Tag, List, Divider, Descriptions, Empty, Typography, Card } from 'antd'
+import { Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Drawer, Upload, Tag, List, Divider, Descriptions, Empty, Typography, Card, Switch, Select } from 'antd'
 import { PlusOutlined, UploadOutlined, FolderOpenOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons'
-import { listKBs, createKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks } from '../api'
+import { listKBs, createKB, updateKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks } from '../api'
 
 const { Paragraph, Text } = Typography
 
@@ -19,6 +19,7 @@ export default function KnowledgeBases() {
   const [chunkDoc, setChunkDoc] = useState<any>(null)
   const [chunks, setChunks] = useState<any[]>([])
   const [chunksLoading, setChunksLoading] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [form] = Form.useForm()
 
   const load = async () => {
@@ -44,12 +45,18 @@ export default function KnowledgeBases() {
 
   const onSubmit = async (values: any) => {
     try {
-      await createKB(values)
-      message.success('创建成功')
+      if (editingId) {
+        await updateKB(editingId, values)
+        message.success('权限已保存')
+      } else {
+        await createKB(values)
+        message.success('创建成功')
+      }
       setOpen(false)
+      setEditingId(null)
       form.resetFields()
       load()
-    } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
+    } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
   const loadChunks = async (doc: any) => {
@@ -79,10 +86,12 @@ export default function KnowledgeBases() {
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '名称', dataIndex: 'name' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '权限', dataIndex: 'is_public', width: 140, render: (v: boolean, r: any) => v ? <Tag color="green">公开</Tag> : <Tag color="orange">受限 {((r.visible_roles || []).join('/')) || ''}</Tag> },
     { title: '切片大小', dataIndex: 'chunk_size', width: 100 },
     { title: '操作', render: (_: any, r: any) => (
       <Space>
         <Button size="small" icon={<FolderOpenOutlined />} onClick={() => openDocs(r)}>文档</Button>
+        <Button size="small" onClick={() => { form.setFieldsValue({ ...r, name: r.name, description: r.description, embedding_model: r.embedding_model || 'text-embedding-3-small', chunk_size: r.chunk_size, chunk_overlap: r.chunk_overlap, is_public: r.is_public, visible_roles: r.visible_roles || [] }); setEditingId(r.id); setOpen(true) }}>权限</Button>
         <Popconfirm title="确定删除？" onConfirm={async () => { await deleteKB(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
@@ -92,19 +101,28 @@ export default function KnowledgeBases() {
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
         <h2>知识库</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>新建知识库</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setEditingId(null); setOpen(true) }}>新建知识库</Button>
       </div>
       <div className="fixed-table-wrapper">
         <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
       </div>
 
-      <Modal title="新建知识库" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
-        <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ chunk_size: 500, chunk_overlap: 50, embedding_model: 'text-embedding-3-small' }}>
+      <Modal title={editingId ? '编辑知识库权限' : '新建知识库'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
+        <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ chunk_size: 500, chunk_overlap: 50, embedding_model: 'text-embedding-3-small', is_public: true, visible_roles: [] }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="描述"><Input /></Form.Item>
           <Form.Item name="embedding_model" label="向量模型"><Input /></Form.Item>
           <Form.Item name="chunk_size" label="切片大小"><InputNumber min={50} max={5000} /></Form.Item>
           <Form.Item name="chunk_overlap" label="切片重叠"><InputNumber min={0} max={1000} /></Form.Item>
+          <Divider style={{ margin: '12px 0' }}>访问权限</Divider>
+          <Form.Item name="is_public" label="公开（所有角色可见）" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.is_public !== cur.is_public}>
+            {({ getFieldValue }) => !getFieldValue('is_public') && (
+              <Form.Item name="visible_roles" label="可见角色（非公开时生效）">
+                <Select mode="multiple" placeholder="选择可访问的角色" options={[{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'caller', label: '调用者' }]} />
+              </Form.Item>
+            )}
+          </Form.Item>
         </Form>
       </Modal>
 

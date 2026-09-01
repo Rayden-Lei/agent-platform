@@ -228,7 +228,7 @@ def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_kb_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> Callable:
     kb_id = config.get("kb_id")
     top_k = config.get("top_k")
 
@@ -236,7 +236,7 @@ def _make_kb_node(config: dict, run_id: int, node_id: str) -> Callable:
         input_val = _get_node_input(state, config)
         rn_id = _start_node(run_id, node_id, "kb_retrieval", input_val)
         try:
-            results = retrieve(kb_id, str(input_val), top_k)
+            results = retrieve(kb_id, str(input_val), top_k, role=role)
             out = _finalize_node_output(state, node_id, results, config)
             out["steps"] = [*state.get("steps", []), f"kb_retrieval:{len(results)}"]
             _finish_node(rn_id, "success", json.dumps(out["output"], ensure_ascii=False))
@@ -368,7 +368,7 @@ NODE_BUILDERS = {
 }
 
 
-def build_workflow(graph_data: dict, run_id: int = None):
+def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
     """把数据库 graph JSON（nodes/edges）编译成 LangGraph 可执行图。"""
     nodes = graph_data.get("nodes") or []
     edges = graph_data.get("edges") or []
@@ -376,8 +376,13 @@ def build_workflow(graph_data: dict, run_id: int = None):
 
     g = StateGraph(WorkflowState)
     for n in nodes:
-        builder = NODE_BUILDERS.get(n.get("type"), _make_start_node)
-        g.add_node(n["id"], builder(n.get("config") or {}, run_id, n["id"]))
+        ntype = n.get("type")
+        if ntype == "kb_retrieval":
+            # 知识库检索节点需要携带触发者角色做权限过滤
+            g.add_node(n["id"], _make_kb_node(n.get("config") or {}, run_id, n["id"], role))
+        else:
+            builder = NODE_BUILDERS.get(ntype, _make_start_node)
+            g.add_node(n["id"], builder(n.get("config") or {}, run_id, n["id"]))
 
     start_ids = [n["id"] for n in nodes if n.get("type") == "start"]
     end_ids = [n["id"] for n in nodes if n.get("type") == "end"]

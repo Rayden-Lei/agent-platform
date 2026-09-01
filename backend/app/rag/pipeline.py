@@ -100,7 +100,16 @@ def process_document(doc_id: int) -> None:
                     kb_id=doc.kb_id,
                     content=chunk["content"],
                     embedding=emb,
-                    meta={**chunk["meta"], "index": i},
+                    meta={
+                        **chunk["meta"],
+                        "index": i,
+                        # chunk 级权限标签（冗余存权限真值快照，供检索过滤与审计）
+                        "kb_id": kb.id,
+                        "doc_id": doc.id,
+                        "is_public": kb.is_public,
+                        "visible_roles": list(kb.visible_roles or []),
+                        "policy_version": kb.policy_version or 1,
+                    },
                     token_count=max(1, len(chunk["content"])),
                 ))
 
