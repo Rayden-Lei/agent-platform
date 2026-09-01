@@ -88,6 +88,7 @@ def process_document(doc_id: int) -> None:
             if not chunks:
                 doc.status = "ready"
                 doc.chunk_count = 0
+                doc.error = None
                 db.commit()
                 return
 
@@ -105,6 +106,7 @@ def process_document(doc_id: int) -> None:
 
             doc.chunk_count = len(chunks)
             doc.status = "ready"
+            doc.error = None
             db.commit()
     except Exception as e:
         doc.status = "failed"
