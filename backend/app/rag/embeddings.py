@@ -15,6 +15,7 @@ def get_embeddings():
             api_key=settings.EMBEDDING_API_KEY or "dummy",
             base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
             dimensions=settings.EMBEDDING_DIM,
+            chunk_size=50,  # 智谱 embedding input 单次上限 64 条，分批 50 条
         )
     return _embeddings
 
