@@ -14,6 +14,7 @@ def get_embeddings():
             model=settings.EMBEDDING_MODEL,
             api_key=settings.EMBEDDING_API_KEY or "dummy",
             base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
+            dimensions=settings.EMBEDDING_DIM,
         )
     return _embeddings
 
