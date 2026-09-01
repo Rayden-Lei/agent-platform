@@ -15,7 +15,8 @@ def get_embeddings():
             api_key=settings.EMBEDDING_API_KEY or "dummy",
             base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
             dimensions=settings.EMBEDDING_DIM,
-            chunk_size=50,  # 智谱 embedding input 单次上限 64 条，分批 50 条
+            chunk_size=20,  # 阿里云百炼 embedding 单次上限 20 条
+            check_embedding_ctx_length=False,  # 直接传原始文本，不做 tokenize（阿里云不支持 token 数组）
         )
     return _embeddings
 
