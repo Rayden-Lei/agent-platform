@@ -63,15 +63,21 @@ def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
 def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
     """LLM 改写查询：生成多个利于检索的子查询（覆盖同义词/不同角度）。
 
-    失败或改写为空时退回原查询，保证检索总能执行。
+    带 10 秒超时，失败/超时/改写为空时退回原查询，保证检索总能快速执行、不卡对话。
     """
     prompt = (
         "你是检索查询改写助手。把用户问题改写成 3 个更利于向量检索的查询短语，"
         "每个一行，尽量覆盖同义词和不同角度，只输出查询短语本身，不要编号、不要解释：\n\n"
         + message_text
     )
+
+    def _invoke():
+        return llm.invoke(prompt)
+
+    from concurrent.futures import ThreadPoolExecutor
     try:
-        resp = llm.invoke(prompt)
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            resp = ex.submit(_invoke).result(timeout=10)
         lines = [l.strip() for l in (resp.content or "").split("\n") if l.strip()]
         queries = [q.lstrip("1234567890.-)（） ").strip() for q in lines[:3]]
         queries = [q for q in queries if q]
