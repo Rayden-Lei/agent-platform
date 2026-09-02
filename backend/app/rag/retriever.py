@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from sqlalchemy import func, or_, select
 
 from app.config import settings
@@ -5,6 +7,8 @@ from app.db.models import Document, DocumentChunk
 from app.db.session import SessionLocal
 from app.rag.embeddings import embed_query
 from app.rag.rerank import extract_keywords, rerank
+
+RRF_K = 60  # RRF 倒排融合常数
 
 
 def _acl_condition(role: str):
@@ -24,62 +28,113 @@ def _acl_condition(role: str):
 
 
 def _authorize(role: str, meta: dict) -> bool:
-    """逐条鉴权（第二道闸门）：即使检索层漏过，这里按 chunk 权限标签再校验一次。"""
+    """逐条鉴权（第二道闸门）：即使检索层漏过，这里按 chunk 权限标签再校验一次。
+
+    与 _acl_condition 保持一致：存量 chunk 无 is_public 标签时视为公开。
+    """
     if role == "admin":
         return True
     meta = meta or {}
-    if meta.get("is_public"):
+    if meta.get("is_public") is not False:  # 缺失(None)或 True 均视为公开
         return True
     roles = meta.get("visible_roles") or []
     return bool(role) and role in roles
 
 
+def _rrf_fuse(candidates: dict) -> None:
+    """RRF 倒排融合：向量排名 + 关键词排名 → RRF score（替代简单加权）。"""
+    for c in candidates.values():
+        rrf = 0.0
+        if c.get("vector_rank"):
+            rrf += 1.0 / (RRF_K + c["vector_rank"])
+        if c.get("keyword_rank"):
+            rrf += 1.0 / (RRF_K + c["keyword_rank"])
+        c["score"] = round(rrf, 6)
+
+
 def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role: str = None) -> list:
-    """召回候选池：向量相似度 + 关键词匹配，计算混合分（向量 0.7 + 关键词 0.3）。
+    """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
     权限过滤前置：先按 ACL 过滤，再做相似度召回，无权 chunk 根本不会被召回。
     """
     vec = embed_query(query)
-    candidates: dict = {}
     acl = _acl_condition(role)
+    candidates: dict = {}
 
-    def _kb_filter():
-        return (DocumentChunk.kb_id == kb_id,) if acl is None else (DocumentChunk.kb_id == kb_id, acl)
+    def _conds():
+        c = [DocumentChunk.kb_id == kb_id]
+        if acl is not None:
+            c.append(acl)
+        return c
 
-    # 1. 向量召回（权限过滤 + 相似度排序）
+    # 1. 向量召回（保留排名）
     dist = DocumentChunk.embedding.cosine_distance(vec)
-    stmt = select(DocumentChunk, dist).where(*_kb_filter()).order_by(dist).limit(top_k * 3)
-    for chunk, distance in db.execute(stmt).all():
-        vscore = 1 - float(distance)
+    stmt = select(DocumentChunk, dist).where(*_conds()).order_by(dist).limit(top_k * 3)
+    for rank, (chunk, distance) in enumerate(db.execute(stmt).all(), start=1):
         candidates[chunk.id] = {
             "chunk": chunk,
             "content": chunk.content,
-            "vector_score": vscore,
+            "vector_score": 1 - float(distance),
             "keyword_score": 0.0,
+            "vector_rank": rank,
+            "keyword_rank": 0,
+            "matched": set(),
         }
 
-    # 2. 关键词召回（同样带权限过滤）
-    if mode != "vector":
-        for kw in extract_keywords(query):
-            conds = [DocumentChunk.kb_id == kb_id, DocumentChunk.content.ilike(f"%{kw}%")]
-            if acl is not None:
-                conds.append(acl)
-            kw_stmt = select(DocumentChunk).where(*conds).limit(top_k * 2)
-            for chunk in db.execute(kw_stmt).scalars():
-                if chunk.id not in candidates:
-                    candidates[chunk.id] = {
-                        "chunk": chunk,
-                        "content": chunk.content,
-                        "vector_score": 0.0,
-                        "keyword_score": 1.0,
-                    }
-                else:
-                    candidates[chunk.id]["keyword_score"] += 1.0
+    # 2. 关键词召回（多关键词并发检索）
+    keywords = extract_keywords(query)
+    if mode != "vector" and keywords:
+        def _search(kw: str):
+            db2 = SessionLocal()
+            try:
+                conds = [DocumentChunk.kb_id == kb_id, DocumentChunk.content.ilike(f"%{kw}%")]
+                if acl is not None:
+                    conds.append(acl)
+                stmt = select(DocumentChunk).where(*conds).limit(top_k * 2)
+                return [(chunk.id, chunk, kw) for chunk in db2.execute(stmt).scalars()]
+            finally:
+                db2.close()
 
-    # 3. 混合打分
-    for c in candidates.values():
-        c["score"] = c["vector_score"] * 0.7 + c["keyword_score"] * 0.3
+        with ThreadPoolExecutor(max_workers=min(8, len(keywords))) as ex:
+            for hits in ex.map(_search, keywords):
+                for cid, chunk, kw in hits:
+                    if cid not in candidates:
+                        candidates[cid] = {
+                            "chunk": chunk,
+                            "content": chunk.content,
+                            "vector_score": 0.0,
+                            "keyword_score": 0.0,
+                            "vector_rank": 0,
+                            "keyword_rank": 0,
+                            "matched": set(),
+                        }
+                    candidates[cid]["matched"].add(kw)
+                    candidates[cid]["keyword_score"] = len(candidates[cid]["matched"])
+
+        # 关键词排名：按命中关键词数量降序
+        kw_sorted = sorted(candidates.values(), key=lambda c: -c["keyword_score"])
+        for rank, c in enumerate(kw_sorted, start=1):
+            if c["keyword_score"] > 0:
+                c["keyword_rank"] = rank
+
+    _rrf_fuse(candidates)
     return list(candidates.values())
+
+
+def _prune(ranked: list, min_score: float = 0.01, gap_ratio: float = 0.35) -> list:
+    """重排后淘汰无关块：低于绝对阈值，或与 top1 差距过大（相对阈值）的丢弃。
+
+    保证送入 LLM 的只有强相关块，无关内容不会污染大模型判断。
+    """
+    if not ranked:
+        return ranked
+    top = ranked[0].get("score", 0.0) or 0.0
+    kept = []
+    for c in ranked:
+        s = c.get("score", 0.0) or 0.0
+        if s >= min_score and (top <= 0 or s >= top * gap_ratio):
+            kept.append(c)
+    return kept
 
 
 def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
@@ -88,7 +143,7 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
         chunk = c["chunk"]
         doc = db.get(Document, chunk.doc_id)
         item = {
-            "content": chunk.content,
+            "content": chunk.content,  # 完整文本块，不截断
             "score": c["score"],
             "chunk_id": chunk.id,
             "doc_id": chunk.doc_id,
@@ -98,14 +153,15 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
         if enriched:
             item["vector_score"] = round(c.get("vector_score", 0.0), 4)
             item["keyword_score"] = round(c.get("keyword_score", 0.0), 4)
-            item["matched_keywords"] = c.get("matched_keywords", [])
+            item["matched_keywords"] = sorted(c.get("matched", set()))
         items.append(item)
     return items
 
 
 def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list = None) -> tuple[list, int]:
-    """重排 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。"""
+    """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。"""
     ranked = rerank(query, candidates, keywords=keywords)
+    ranked = _prune(ranked)
     kept, rejected = [], 0
     for c in ranked:
         if _authorize(role, c.get("chunk").meta):
@@ -116,7 +172,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list 
 
 
 def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> list:
-    """混合召回 + 重排 + 权限过滤，返回（content/score/doc_id/doc_name/meta）。"""
+    """RRF 融合召回 + 重排淘汰 + 权限过滤，返回完整文本块（content/score/doc_id/doc_name/meta）。"""
     top_k = top_k or settings.RAG_TOP_K
     db = SessionLocal()
     try:
@@ -128,7 +184,7 @@ def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", ro
 
 
 def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> dict:
-    """检索 + 召回质量统计（含权限过滤与鉴权剔除数），供评测/调试接口使用。"""
+    """检索 + 召回质量统计（含 RRF、淘汰、鉴权剔除数），供评测/调试接口使用。"""
     top_k = top_k or settings.RAG_TOP_K
     db = SessionLocal()
     try:

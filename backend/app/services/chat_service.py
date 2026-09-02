@@ -60,6 +60,26 @@ def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
     return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
 
 
+def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
+    """LLM 改写查询：生成多个利于检索的子查询（覆盖同义词/不同角度）。
+
+    失败或改写为空时退回原查询，保证检索总能执行。
+    """
+    prompt = (
+        "你是检索查询改写助手。把用户问题改写成 3 个更利于向量检索的查询短语，"
+        "每个一行，尽量覆盖同义词和不同角度，只输出查询短语本身，不要编号、不要解释：\n\n"
+        + message_text
+    )
+    try:
+        resp = llm.invoke(prompt)
+        lines = [l.strip() for l in (resp.content or "").split("\n") if l.strip()]
+        queries = [q.lstrip("1234567890.-)（） ").strip() for q in lines[:3]]
+        queries = [q for q in queries if q]
+    except Exception:
+        queries = []
+    return queries or [message_text]
+
+
 def get_published_agent(db: Session, agent_id: int) -> Agent:
     agent = db.get(Agent, agent_id)
     if agent is None:
@@ -107,11 +127,17 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     citations = []
     acl_rejected = 0
     if agent.kb_ids:
+        queries = _rewrite_queries(llm, message_text)
+        merged: dict = {}
         for kb_id in agent.kb_ids:
-            stats = retrieve_with_stats(kb_id, message_text, settings.RAG_TOP_K, role=role)
-            acl_rejected += stats["stats"].get("acl_rejected", 0)
-            for s in stats["items"]:
-                citations.append({"kb_id": kb_id, "chunk_id": s["chunk_id"], "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]})
+            for q in queries:
+                stats = retrieve_with_stats(kb_id, q, settings.RAG_TOP_K, role=role)
+                acl_rejected += stats["stats"].get("acl_rejected", 0)
+                for s in stats["items"]:
+                    key = (kb_id, s["chunk_id"])
+                    if key not in merged or s["score"] > merged[key]["score"]:
+                        merged[key] = {"kb_id": kb_id, "chunk_id": s["chunk_id"], "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]}
+        citations = sorted(merged.values(), key=lambda x: -x["score"])[: settings.RAG_TOP_K * len(agent.kb_ids)]
         if citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
