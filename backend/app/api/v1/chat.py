@@ -42,6 +42,9 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             except BizError as e:
                 yield _sse({"type": "error", "message": e.detail})
                 return
+            except Exception as e:
+                yield _sse({"type": "error", "message": "上下文构建失败: " + str(e)[:300]})
+                return
 
             # 审计：记录检索鉴权（uid/query/召回 chunk_id/鉴权剔除数）
             db2.add(AuditLog(

@@ -38,11 +38,18 @@ def _hash_embedding(text: str, dim: int) -> list:
 
 def embed_texts(texts: list) -> list:
     if settings.EMBEDDING_API_KEY:
-        return get_embeddings().embed_documents(texts)
+        try:
+            return get_embeddings().embed_documents(texts)
+        except Exception:
+            # API 失败（额度耗尽/超时/网络）时降级 hash，保证检索不中断
+            pass
     return [_hash_embedding(t, settings.EMBEDDING_DIM) for t in texts]
 
 
 def embed_query(text: str) -> list:
     if settings.EMBEDDING_API_KEY:
-        return get_embeddings().embed_query(text)
+        try:
+            return get_embeddings().embed_query(text)
+        except Exception:
+            pass
     return _hash_embedding(text, settings.EMBEDDING_DIM)
