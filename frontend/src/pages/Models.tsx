@@ -36,7 +36,7 @@ export default function Models() {
     {
       title: '操作', render: (_: any, record: any) => (
         <Space>
-          {/* 编辑时把 api_key 强制清空：密钥不明文回显，需要重新填写（表单 required 兜底），避免泄露 */}
+          {/* 编辑时把 api_key 强制清空（密钥不明文回显），留空提交则后端沿用原有 Key，不会误覆盖 */}
           <Button size="small" onClick={() => { setEditing(record); form.setFieldsValue({ ...record, api_key: '' }); setOpen(true) }}>编辑</Button>
           <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteModel(record.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}>
             <Button size="small" danger>删除</Button>
@@ -68,7 +68,7 @@ export default function Models() {
             ]} />
           </Form.Item>
           <Form.Item name="api_base" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]}><Input placeholder="https://xxx/v1" /></Form.Item>
-          <Form.Item name="api_key" label="API Key" rules={[{ required: true, message: '请输入 API Key' }]}><Input.Password placeholder="编辑时需重新填写" /></Form.Item>
+          <Form.Item name="api_key" label="API Key" rules={[{ required: !editing, message: '请输入 API Key' }]}><Input.Password placeholder={editing ? '留空则不修改' : '请输入 API Key'} /></Form.Item>
           <Form.Item name="model_name" label="模型名" rules={[{ required: true, message: '请输入模型名' }]}><Input placeholder="deepseek-v4-pro-0813" /></Form.Item>
           <Form.Item name="price_input" label="输入价格(元/百万token)"><InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="可选" /></Form.Item>
           <Form.Item name="price_output" label="输出价格(元/百万token)"><InputNumber min={0} step={0.1} style={{ width: '100%' }} placeholder="可选" /></Form.Item>

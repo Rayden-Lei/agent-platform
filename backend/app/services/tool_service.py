@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, paginate
-from app.db.models import Tool
+from app.db.models import Agent, Tool
 from app.tools.executor import execute_tool
 
 
@@ -48,8 +48,17 @@ def update_tool(db: Session, tool_id: int, data) -> dict:
 
 
 def delete_tool(db: Session, tool_id: int) -> None:
-    """删除工具；智能体侧 tool_ids 是 JSONB 列表而非外键，删除后不会级联清理引用。"""
+    """删除工具。
+
+    tools 与智能体的关联是 agents.tool_ids（JSONB 列表）而非外键，删除后不会级联清理，
+    这里主动把该 tool_id 从所有智能体的 tool_ids 里移除，避免留下悬空引用
+    （否则对话/工作流运行时会按已不存在的工具做无谓查询或报"工具不存在"）。
+    """
     t = get_tool(db, tool_id)
+    agents = db.query(Agent).filter(Agent.tool_ids.contains([tool_id])).all()
+    for a in agents:
+        if tool_id in a.tool_ids:
+            a.tool_ids = [x for x in a.tool_ids if x != tool_id]
     db.delete(t)
     db.commit()
 

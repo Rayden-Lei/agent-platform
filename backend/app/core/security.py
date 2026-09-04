@@ -4,10 +4,11 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from jose import jwt
 
 from app.config import settings
+from app.core.exceptions import BizError
 
 ALGORITHM = "HS256"  # JWT 签名算法，密钥取自 settings.SECRET_KEY
 
@@ -49,5 +50,13 @@ def encrypt_secret(plain: str) -> str:
 
 
 def decrypt_secret(enc: str) -> str:
-    """解密 encrypt_secret 的产物；密文损坏或密钥不匹配抛 InvalidToken。"""
-    return _fernet().decrypt(enc.encode("utf-8")).decode("utf-8")
+    """解密 encrypt_secret 的产物。
+
+    密钥由 settings.AES_KEY 派生：轮换 AES_KEY 后旧密文将无法解密（InvalidToken）。
+    此时把裸异常转成可读的 BizError，明确提示运维去重新录入受影响记录的明文，
+    避免模型加载时抛出不透明的 InvalidToken 直接 500。
+    """
+    try:
+        return _fernet().decrypt(enc.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        raise BizError(500, "无法解密已存档的密钥：settings.AES_KEY 与写入时不一致（已轮换或环境不同），请重新录入对应记录（如模型 API Key）的明文")

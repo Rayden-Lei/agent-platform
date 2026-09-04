@@ -47,7 +47,7 @@ class ModelIn(BaseModel):
     name: str
     provider: str
     api_base: str
-    api_key: str
+    api_key: str = ""  # 更新时留空表示沿用已有密钥；创建时非空（由 service 校验）
     model_name: str
     default_params: dict = Field(default_factory=dict)
     price_input: Optional[float] = None

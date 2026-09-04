@@ -28,6 +28,7 @@ def _run_scheduled_job(job_id: int) -> None:
     每次都在执行前抛错并被静默吞掉，留下大量永远 running 的记录。
     """
     db = SessionLocal()
+    run = None
     try:
         sj = db.get(ScheduledJob, job_id)
         if sj is None or not sj.is_enabled:
@@ -53,6 +54,13 @@ def _run_scheduled_job(job_id: int) -> None:
         logger.info("定时任务 %s 执行完成 run_id=%s status=%s", job_id, run.id, result.get("status"))
     except Exception:
         db.rollback()
+        # 兜底：若已创建运行记录却因后续异常未收尾（execute_workflow 正常路径不会抛，
+        # 但 last_run_at 提交等环节仍可能失败），把它置为 failed，避免遗留永久 running 的幽灵记录
+        if run is not None:
+            try:
+                run_service.finalize_run(db, run, "failed", error="定时任务执行异常")
+            except Exception:
+                logger.exception("定时任务 %s 异常后收尾运行记录失败 run_id=%s", job_id, run.id)
         logger.exception("定时任务 %s 执行异常", job_id)
     finally:
         db.close()

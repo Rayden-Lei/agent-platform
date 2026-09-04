@@ -95,17 +95,25 @@ function EditorInner() {
         setName(wf.name)
         const ns = (wf.graph?.nodes || []).map((n: any) => {
           const palette = PALETTE.find((p) => p.type === n.type)
-          return { id: n.id, type: 'flow', position: { x: n.position?.x ?? 80, y: n.position?.y ?? 80 }, data: { ...palette, nodeType: n.type, config: n.config || {}, detail: buildDetail(n.type, n.config || {}, [], []) } }
+          // 摘要先留空，避免用空 agents/tools 误显示"未选择智能体/工具"；
+          // 真正的摘要由下方 [agents, tools] 的 effect 在数据就绪后派生
+          return { id: n.id, type: 'flow', position: { x: n.position?.x ?? 80, y: n.position?.y ?? 80 }, data: { ...palette, nodeType: n.type, config: n.config || {}, detail: '' } }
         })
         // 边 label 对应后端连线的 when 字段（条件分支的值）
         const es = (wf.graph?.edges || []).map((e: any, i: number) => ({ id: 'e' + i, source: e.from, target: e.to, label: e.when || undefined }))
         setNodes(ns)
         setEdges(es)
-        // 摘要里智能体/工具名依赖 agents/tools 列表，等下拉数据就绪后重建一次 detail
-        setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, detail: buildDetail(n.data.nodeType, n.data.config, agents, tools) } })))
       })
     }
   }, [id])
+
+  // 摘要里智能体/工具名依赖 agents/tools 下拉数据，而工作流详情与这些数据是并行异步加载的，
+  // 不能在 getWorkflow 的 then 里重建（闭包拿到的还是空数组）。改为独立 effect：
+  // 等 agents/tools 就绪后，用最新的 config 重新派生所有节点的 detail 行。
+  useEffect(() => {
+    if (!agents.length && !tools.length) return
+    setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, detail: buildDetail(n.data.nodeType, n.data.config, agents, tools) } })))
+  }, [agents, tools])
 
   // 拖拽建节点：dragstart 时把节点类型写入 dataTransfer，drop 时按落点坐标创建
   const onDragStart = (event: any, type: string) => { event.dataTransfer.setData('application/reactflow', type); event.dataTransfer.effectAllowed = 'move' }

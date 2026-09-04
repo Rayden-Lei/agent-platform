@@ -24,6 +24,8 @@ def list_models(db: Session, params: PageParams, q: str = None) -> dict:
 
 def create_model(db: Session, data: ModelIn, user: User) -> ModelConfig:
     """新建模型配置：API Key 加密后落库（库中不存明文），并写审计。"""
+    if not data.api_key:
+        raise BizError(400, "新建模型必须填写 API Key")
     m = ModelConfig(
         name=data.name,
         provider=data.provider,
@@ -51,12 +53,13 @@ def get_model(db: Session, model_id: int) -> ModelConfig:
 
 
 def update_model(db: Session, model_id: int, data: ModelIn) -> ModelConfig:
-    """覆盖式更新模型配置；注意每次更新都会用新提交的 API Key 重新加密覆盖。"""
+    """覆盖式更新模型配置；api_key 为空表示沿用已有密钥，仅当提交了新的非空 Key 时才重新加密覆盖。"""
     m = get_model(db, model_id)
     m.name = data.name
     m.provider = data.provider
     m.api_base = data.api_base
-    m.api_key_enc = encrypt_secret(data.api_key)
+    if data.api_key:
+        m.api_key_enc = encrypt_secret(data.api_key)
     m.model_name = data.model_name
     m.default_params = data.default_params
     m.price_input = data.price_input
