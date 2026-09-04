@@ -16,6 +16,7 @@ services:
       EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
     ports:
       - "8000:8000"
     depends_on:

@@ -81,7 +81,7 @@ docker-compose up -d --build
 - 登录：admin / admin123
 - 数据持久化：pgdata / miniodata 两个数据卷
 
-配置项在根目录 .env（数据库密码、密钥等），首次部署按需修改。
+配置项在根目录 .env：先 `cp .env.example .env`，再按需修改数据库密码、密钥等。
 
 停止：docker-compose down
 停止并清空数据：docker-compose down -v
