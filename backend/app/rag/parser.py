@@ -1,5 +1,8 @@
 import csv
+import logging
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 def parse_document(file_path: str, file_type: str) -> list:
@@ -96,6 +99,13 @@ def parse_image(file_path: str) -> list:
             capture_output=True, text=True, timeout=120,
         )
         text = (r.stdout or "").strip()
-    except Exception:
+        if r.returncode != 0:
+            # tesseract 装了但识别失败（语言包缺失、图片损坏）：返回空文本，文档会被标记为无切片
+            logger.warning("OCR 识别失败 file=%s returncode=%s stderr=%s", file_path, r.returncode, (r.stderr or "")[:200])
+    except FileNotFoundError:
+        logger.warning("未安装 tesseract，图片 %s 无法 OCR，按空文本处理", file_path)
+        text = ""
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning("OCR 执行异常 file=%s error=%s", file_path, e)
         text = ""
     return [{"content": text, "meta": {"type": "image"}}]

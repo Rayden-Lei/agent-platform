@@ -113,7 +113,9 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                             if entry["args_str"]:
                                 try:
                                     args = json.loads(entry["args_str"])
-                                except Exception:
+                                except json.JSONDecodeError:
+                                    # 模型拼出的参数不是合法 JSON：原样透传给前端展示，不中断对话
+                                    logger.warning("工具调用参数不是合法 JSON run_id=%s tool=%s", run_id, entry["name"])
                                     args = {"_raw": entry["args_str"]}
                             yield _sse({"type": "tool_call", "name": tool_name, "arguments": args, "id": tc_id or entry["id"]})
                         result = str(chunk.content)[:200]

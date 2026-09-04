@@ -84,6 +84,8 @@ async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> d
             return {"status": "awaiting_review", "interrupt": iv, "steps": result.get("steps", [])}
         return {"status": "success", "output": result.get("output"), "steps": result.get("steps", [])}
     except Exception as e:
+        # 编辑器内测试不落库，失败只回给前端；日志是排查图配置错误的唯一线索
+        logger.exception("工作流测试运行失败")
         return {"status": "failed", "error": str(e)}
 
 

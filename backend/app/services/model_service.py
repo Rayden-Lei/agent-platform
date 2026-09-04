@@ -1,3 +1,5 @@
+import logging
+
 from langchain_core.messages import HumanMessage
 from sqlalchemy.orm import Session
 
@@ -8,6 +10,8 @@ from app.core.security import encrypt_secret
 from app.db.models import Agent, ModelConfig, User
 from app.model_gateway.gateway import build_llm
 from app.schemas import ModelIn
+
+logger = logging.getLogger(__name__)
 
 
 def list_models(db: Session, params: PageParams, q: str = None) -> dict:
@@ -75,4 +79,6 @@ async def test_model(db: Session, model_id: int) -> dict:
         resp = await llm.ainvoke([HumanMessage(content="ping")])
         return {"ok": True, "reply": (resp.content or "")[:100]}
     except Exception as e:
+        # 连通性测试的失败本身就是结果，返回给前端展示；同时留日志便于排查是网络还是鉴权
+        logger.warning("模型连通性测试失败 model_id=%s name=%s error=%s", model_id, m.name, e)
         return {"ok": False, "error": str(e)[:300]}

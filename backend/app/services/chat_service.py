@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,8 @@ from app.model_gateway.gateway import build_llm
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.services import run_service
 from app.tools.langchain_tools import build_tools
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,7 +48,9 @@ def _summarize_history(llm: Any, older: list) -> str:
     try:
         resp = llm.invoke(prompt)
         summary = (resp.content or "").strip() if resp else ""
-    except Exception:
+    except Exception as e:
+        # 摘要失败不影响对话，但历史会退化为字符截断，质量下降，必须能看见
+        logger.warning("历史摘要生成失败，退回字符截断：%s", e)
         summary = ""
     # 兜底：摘要不可用时按字符截断，保证 token 仍是有界的
     return summary or text[:2000]
@@ -61,10 +66,13 @@ def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
     return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
 
 
+REWRITE_TIMEOUT_SECONDS = 10
+
+
 def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
     """LLM 改写查询：生成多个利于检索的子查询（覆盖同义词/不同角度）。
 
-    带 10 秒超时，失败/超时/改写为空时退回原查询，保证检索总能快速执行、不卡对话。
+    超时或失败时退回原查询，保证检索总能快速执行、不卡对话。
     """
     prompt = (
         "你是检索查询改写助手。把用户问题改写成 3 个更利于向量检索的查询短语，"
@@ -76,14 +84,22 @@ def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
         return llm.invoke(prompt)
 
     from concurrent.futures import ThreadPoolExecutor
+
+    # 不能用 with：ThreadPoolExecutor 退出时会 shutdown(wait=True)，
+    # 超时后仍要等那次慢调用返回，超时保护形同虚设（实测把对话首字节拖到 55 秒）。
+    # 这里显式 shutdown(wait=False)，超时即放弃，慢调用在后台线程自行结束。
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as ex:
-            resp = ex.submit(_invoke).result(timeout=10)
+        resp = executor.submit(_invoke).result(timeout=REWRITE_TIMEOUT_SECONDS)
         lines = [l.strip() for l in (resp.content or "").split("\n") if l.strip()]
         queries = [q.lstrip("1234567890.-)（） ").strip() for q in lines[:3]]
         queries = [q for q in queries if q]
-    except Exception:
+    except Exception as e:
+        # 超时或模型故障：退回原查询，检索仍可用但召回面变窄
+        logger.warning("检索查询改写失败，使用原查询：%s: %s", type(e).__name__, e)
         queries = []
+    finally:
+        executor.shutdown(wait=False)
     return queries or [message_text]
 
 

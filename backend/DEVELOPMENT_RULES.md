@@ -4,10 +4,11 @@
 
 1. 改文件先读完整，再精确替换；禁止只读一段就整体写回。
 2. 改完必验：`.venv/bin/python -c "from app.main import app"` 与 `PYTHONPATH=. .venv/bin/python -m pytest tests/ -v`。
-3. 错误不吞：禁止 `except Exception: pass`；要么处理，要么 `logger.exception`。
-4. 运行记录只走 `run_service.create_run / finalize_run`。
-5. 路由不写业务，业务在 `services/`，服务层抛 `BizError(status, detail)`。
-6. 表结构变更必落 `scripts/migrations/` 幂等脚本并更新 `docs/03`。
-7. 接口变更同批改 `docs/04` 与 `frontend/src/api/index.ts`。
-8. 密钥不进仓库、不进日志；共享库上的破坏性操作先确认。
-9. 测试脚本写成 `.py` 文件，不用 shell 内联 JSON。
+3. 错误不吞：优先捕获具体异常类型；预期内的降级打 `logger.warning` 说明降到了什么，意外故障 `logger.exception` 留堆栈。禁止捕获后不留痕。
+4. 新增降级路径三件事：打 WARN、接进 `system_service.get_system_status`、把降级信息写进数据本身（见 `docs/06` 第 13 节）。
+5. 运行记录只走 `run_service.create_run / finalize_run`。
+6. 路由不写业务，业务在 `services/`，服务层抛 `BizError(status, detail)`。
+7. 表结构变更必落 `scripts/migrations/` 幂等脚本并更新 `docs/03`。
+8. 接口变更同批改 `docs/04` 与 `frontend/src/api/index.ts`。
+9. 密钥不进仓库、不进日志；共享库上的破坏性操作先确认。
+10. 测试脚本写成 `.py` 文件，不用 shell 内联 JSON。

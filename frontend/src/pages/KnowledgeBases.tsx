@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Drawer, Upload, Tag, List, Divider, Descriptions, Empty, Typography, Card, Switch, Select } from 'antd'
+import { useEffect, useState } from 'react'
+import { Alert, Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Drawer, Upload, Tag, List, Divider, Descriptions, Empty, Typography, Card, Switch, Select } from 'antd'
 import { PlusOutlined, UploadOutlined, FolderOpenOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons'
-import { listKBs, createKB, updateKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks, OPTIONS_PAGE } from '../api'
+import { listKBs, createKB, updateKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks, getSystemStatus, OPTIONS_PAGE, type EmbeddingStatus } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
 const { Paragraph, Text } = Typography
@@ -21,7 +21,18 @@ export default function KnowledgeBases() {
   const [chunkPage, setChunkPage] = useState({ page: 1, pageSize: 20, total: 0 })
   const [chunksLoading, setChunksLoading] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [embedStatus, setEmbedStatus] = useState<EmbeddingStatus | null>(null)
+  const [statusError, setStatusError] = useState('')
   const [form] = Form.useForm()
+
+  // 向量后端降级时检索质量会明显下降，必须在建库/上传的页面直接告诉使用者，而不是让他们猜
+  useEffect(() => {
+    let alive = true
+    getSystemStatus()
+      .then((s) => { if (alive) { setEmbedStatus(s.embedding); setStatusError('') } })
+      .catch((e: any) => { if (alive) { setEmbedStatus(null); setStatusError(e.response?.data?.detail || '无法获取向量后端状态') } })
+    return () => { alive = false }
+  }, [])
 
   const loadDocs = async (kbId: number) => {
     try { setDocs((await listDocs(kbId, OPTIONS_PAGE)).items) } catch (e: any) { message.error(e.response?.data?.detail || '加载文档失败') }
@@ -99,6 +110,24 @@ export default function KnowledgeBases() {
         <h2>知识库</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setEditingId(null); setOpen(true) }}>新建知识库</Button>
       </div>
+      {statusError && <Alert type="warning" showIcon style={{ flexShrink: 0 }} message={statusError} />}
+      {embedStatus?.mode === 'hash' && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ flexShrink: 0 }}
+          message="检索当前使用本地 hash 兜底向量，语义召回能力有限"
+          description={(
+            <div style={{ fontSize: 13 }}>
+              <div>{embedStatus.reason}</div>
+              {embedStatus.last_error && (
+                <div style={{ marginTop: 4 }}>最近一次失败：{embedStatus.last_error.at}　{embedStatus.last_error.error}</div>
+              )}
+              <div style={{ marginTop: 4 }}>恢复方式：配置 EMBEDDING_API_BASE 与 EMBEDDING_API_KEY 后重启后端，并重新上传已有文档以重建向量。</div>
+            </div>
+          )}
+        />
+      )}
       <div className="fixed-table-wrapper">
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
@@ -209,6 +238,9 @@ export default function KnowledgeBases() {
                 <Text strong>#{(chunkPage.page - 1) * chunkPage.pageSize + idx + 1}</Text>
                 <Space size={6} wrap>
                   <Tag color="blue">{c.token_count ?? 0} tokens</Tag>
+                  {/* 入库时的向量后端：hash 表示这批切片是降级入库的，换回真实模型后需要重新处理 */}
+                  {c.meta?.embedding_mode === 'hash' && <Tag color="orange">hash 向量</Tag>}
+                  {c.meta?.embedding_mode === 'model' && <Tag color="green">{c.meta.embedding_model}</Tag>}
                 </Space>
               </div>
               {c.meta && Object.keys(c.meta).length > 0 && (

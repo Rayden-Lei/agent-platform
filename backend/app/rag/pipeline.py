@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 
@@ -5,9 +6,11 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
-from app.rag.embeddings import embed_texts
+from app.rag.embeddings import embed_texts_detailed
 from app.rag.minio_client import download_file
 from app.rag.parser import parse_document
+
+logger = logging.getLogger(__name__)
 
 _CN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 
@@ -31,7 +34,9 @@ def chunk_segments(segments: list, file_type: str, chunk_size: int, chunk_overla
             try:
                 for mc in splitter.split_text(seg["content"]):
                     chunks.append({"content": mc.page_content, "meta": {**seg["meta"], "headings": mc.metadata}})
-            except Exception:
+            except Exception as e:
+                # 标题结构异常（如代码块里的 # 导致解析失败）时退回通用切片，不影响整篇入库
+                logger.warning("Markdown 按标题分片失败，退回通用切片：%s", e)
                 for sc in _text_splitter(chunk_size, chunk_overlap).split_text(seg["content"]):
                     chunks.append({"content": sc, "meta": seg["meta"]})
     elif ext == "pdf":
@@ -67,10 +72,12 @@ def chunk_segments(segments: list, file_type: str, chunk_size: int, chunk_overla
 
 
 def process_document(doc_id: int) -> None:
+    """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。"""
     db = SessionLocal()
     try:
         doc = db.get(Document, doc_id)
         if doc is None:
+            logger.warning("文档处理跳过：文档 %s 不存在", doc_id)
             return
         kb = db.get(KnowledgeBase, doc.kb_id)
         doc.status = "parsing"
@@ -90,11 +97,15 @@ def process_document(doc_id: int) -> None:
                 doc.chunk_count = 0
                 doc.error = None
                 db.commit()
+                logger.info("文档 %s 解析后无有效切片，标记为 ready", doc_id)
                 return
 
-            embeddings = embed_texts([c["content"] for c in chunks])
+            embedded = embed_texts_detailed([c["content"] for c in chunks])
+            if embedded.mode != "model":
+                # 降级入库的切片检索质量不如真实向量，meta 里记下来，排查"检索不准"时能立刻定位
+                logger.warning("文档 %s 使用 %s 向量入库（降级）", doc_id, embedded.model)
 
-            for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+            for i, (chunk, emb) in enumerate(zip(chunks, embedded.vectors)):
                 db.add(DocumentChunk(
                     doc_id=doc.id,
                     kb_id=doc.kb_id,
@@ -109,6 +120,10 @@ def process_document(doc_id: int) -> None:
                         "is_public": kb.is_public,
                         "visible_roles": list(kb.visible_roles or []),
                         "policy_version": kb.policy_version or 1,
+                        # 实际使用的向量后端快照：换模型或降级后，能区分哪些切片需要重建索引
+                        "embedding_mode": embedded.mode,
+                        "embedding_model": embedded.model,
+                        "embedding_dim": embedded.dim,
                     },
                     token_count=max(1, len(chunk["content"])),
                 ))
@@ -117,9 +132,15 @@ def process_document(doc_id: int) -> None:
             doc.status = "ready"
             doc.error = None
             db.commit()
+            logger.info("文档 %s 处理完成：%d 个切片，向量后端 %s", doc_id, len(chunks), embedded.model)
     except Exception as e:
-        doc.status = "failed"
-        doc.error = str(e)
-        db.commit()
+        logger.exception("文档 %s 处理失败", doc_id)
+        # 异常可能发生在 commit 中途，事务已不可用，必须先回滚再重新取一次文档写失败状态
+        db.rollback()
+        failed_doc = db.get(Document, doc_id)
+        if failed_doc is not None:
+            failed_doc.status = "failed"
+            failed_doc.error = str(e)[:1000]
+            db.commit()
     finally:
         db.close()

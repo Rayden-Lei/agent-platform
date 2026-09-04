@@ -1,10 +1,12 @@
 import asyncio
 import json
+import logging
 from typing import Any, Callable, TypedDict
 
 import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
@@ -13,6 +15,8 @@ from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm
 from app.rag.retriever import retrieve
 from app.tools.executor import execute_tool
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowState(TypedDict, total=False):
@@ -45,7 +49,9 @@ def _eval_condition(expr: str, state: WorkflowState) -> bool:
     }
     try:
         return bool(eval(expr, {"__builtins__": {}}, ns))  # noqa: S307 内部表达式，受限命名空间
-    except Exception:
+    except Exception as e:
+        # 表达式写错时按 false 走，但必须留日志：否则条件分支永远走 false 分支且无人知道原因
+        logger.warning("条件表达式求值失败，按 false 处理：expr=%r error=%s", expr, e)
         return False
 
 
@@ -85,6 +91,16 @@ def _finish_node(rn_id: int, status: str, output: Any = None, error: str = None)
         db.close()
 
 
+def _node_failed(rn_id: int, run_id: int, node_id: str, node_type: str, exc: Exception) -> None:
+    """节点失败的统一收尾：写 failed 节点日志 + 带堆栈的错误日志。
+
+    调用后必须 raise，让 workflow_service 把整条运行记录置为 failed；
+    只写节点日志不抛异常会得到"节点失败但运行成功"的自相矛盾记录。
+    """
+    _finish_node(rn_id, "failed", error=str(exc))
+    logger.exception("工作流节点执行失败 run_id=%s node_id=%s type=%s", run_id, node_id, node_type)
+
+
 def _extract_field(value: Any, field: str) -> Any:
     """按点路径从输出中提取字段，支持 dict/list/JSON 字符串。"""
     if not field:
@@ -102,7 +118,8 @@ def _extract_field(value: Any, field: str) -> Any:
         elif isinstance(value, str):
             try:
                 parsed = json.loads(value)
-            except Exception:
+            except json.JSONDecodeError:
+                # 上游输出不是 JSON，取不到字段属预期内情况（如取纯文本的 .code），不打日志避免刷屏
                 return None
             value = _extract_field(parsed, p)
         else:
@@ -174,7 +191,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
-            _finish_node(rn_id, "failed", error=str(e))
+            _node_failed(rn_id, run_id, node_id, "agent", e)
             raise
         finally:
             db.close()
@@ -206,7 +223,7 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
-            _finish_node(rn_id, "failed", error=str(e))
+            _node_failed(rn_id, run_id, node_id, "tool", e)
             raise
         finally:
             db.close()
@@ -242,7 +259,7 @@ def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> 
             _finish_node(rn_id, "success", json.dumps(out["output"], ensure_ascii=False))
             return out
         except Exception as e:
-            _finish_node(rn_id, "failed", error=str(e))
+            _node_failed(rn_id, run_id, node_id, "kb_retrieval", e)
             raise
 
     return run
@@ -263,7 +280,7 @@ def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
-            _finish_node(rn_id, "failed", error=str(e))
+            _node_failed(rn_id, run_id, node_id, "code", e)
             raise
 
     return run
@@ -289,7 +306,7 @@ def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
-            _finish_node(rn_id, "failed", error=str(e))
+            _node_failed(rn_id, run_id, node_id, "http", e)
             raise
 
     return run
@@ -322,9 +339,13 @@ def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
                 "instruction": instruction,
                 "data": input_val,
             })
-        except Exception:
-            # interrupt 暂停：把 running 日志标记为等待审核，resume 时会另起一条成功日志
+        except GraphInterrupt:
+            # 暂停不是失败：把 running 日志标记为等待审核，resume 时会另起一条成功日志。
+            # 只捕获 GraphInterrupt，其他异常走下面的失败分支，否则真故障会被伪装成"等待审核"。
             _finish_node(rn_id, "awaiting_review", input_val)
+            raise
+        except Exception as e:
+            _node_failed(rn_id, run_id, node_id, "human_review", e)
             raise
         decision_str = json.dumps(decision, ensure_ascii=False, default=str)
         out = _finalize_node_output(state, node_id, decision, config)

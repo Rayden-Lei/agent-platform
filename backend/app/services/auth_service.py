@@ -1,3 +1,5 @@
+import logging
+
 import redis
 from sqlalchemy.orm import Session
 
@@ -8,18 +10,37 @@ from app.core.security import create_access_token, verify_password
 from app.db.models import User
 from app.schemas import TokenOut, UserOut
 
+logger = logging.getLogger(__name__)
+
 MAX_LOGIN_FAIL = 5
 LOCK_SECONDS = 600  # 10 分钟
 
+# Redis 不可用时登录限流会静默失效（暴力破解无保护），因此每次故障都记 WARN，
+# 并把最近一次故障原因留在 _redis_error 里，由 login_guard_status() 暴露给系统状态接口。
 _redis = None
+_redis_error: str | None = None
 try:
     _redis = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
-except Exception:
-    _redis = None
+except (redis.RedisError, ValueError) as e:
+    _redis_error = f"Redis 客户端初始化失败：{e}"
+    logger.warning("%s，登录限流已关闭", _redis_error)
 
 
 def _fail_key(username: str) -> str:
     return f"login_fail:{username}"
+
+
+def _mark_down(operation: str, exc: Exception) -> None:
+    global _redis_error
+    _redis_error = f"{operation}失败：{exc}"
+    logger.warning("Redis %s，登录限流本次未生效", _redis_error)
+
+
+def _mark_up() -> None:
+    global _redis_error
+    if _redis_error is not None:
+        logger.info("Redis 已恢复，登录限流重新生效")
+    _redis_error = None
 
 
 def _fail_count(username: str) -> int:
@@ -27,8 +48,11 @@ def _fail_count(username: str) -> int:
         return 0
     try:
         v = _redis.get(_fail_key(username))
+        _mark_up()
         return int(v) if v else 0
-    except Exception:
+    except (redis.RedisError, ValueError) as e:
+        # 读不到计数就放行本次登录（可用性优先），但状态要被记录下来
+        _mark_down("读取登录失败次数", e)
         return 0
 
 
@@ -39,8 +63,9 @@ def _incr_fail(username: str) -> None:
         key = _fail_key(username)
         _redis.incr(key)
         _redis.expire(key, LOCK_SECONDS)
-    except Exception:
-        pass
+        _mark_up()
+    except redis.RedisError as e:
+        _mark_down("累加登录失败次数", e)
 
 
 def _clear_fail(username: str) -> None:
@@ -48,8 +73,21 @@ def _clear_fail(username: str) -> None:
         return
     try:
         _redis.delete(_fail_key(username))
-    except Exception:
-        pass
+        _mark_up()
+    except redis.RedisError as e:
+        _mark_down("清除登录失败次数", e)
+
+
+def login_guard_status() -> dict:
+    """登录限流状态。enabled=False 表示当前没有暴力破解保护，需要有人处理。"""
+    base = {"max_fail": MAX_LOGIN_FAIL, "lock_seconds": LOCK_SECONDS}
+    if _redis is None:
+        return {**base, "enabled": False, "reason": _redis_error or "Redis 未配置"}
+    try:
+        _redis.ping()
+    except redis.RedisError as e:
+        return {**base, "enabled": False, "reason": f"Redis 不可用：{e}"}
+    return {**base, "enabled": True, "reason": None}
 
 
 def login(db: Session, username: str, password: str) -> TokenOut:

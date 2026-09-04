@@ -1,11 +1,16 @@
+import logging
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_token
 from app.db.models import User
 from app.db.session import get_db
 from app.services import api_key_service
+
+logger = logging.getLogger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -30,7 +35,9 @@ def get_current_user(
     try:
         payload = decode_token(token)
         user_id = int(payload["sub"])
-    except Exception:
+    except (JWTError, KeyError, TypeError, ValueError) as e:
+        # 只记异常类型与原因，绝不记 token 本身
+        logger.info("JWT 校验失败：%s: %s", type(e).__name__, e)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
     user = db.get(User, user_id)
     if user is None or not user.is_active:

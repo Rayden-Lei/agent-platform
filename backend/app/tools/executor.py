@@ -1,11 +1,14 @@
 import ast
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
 import httpx
 
 from app.db.models import Tool
+
+logger = logging.getLogger(__name__)
 
 
 async def execute_tool(tool: Tool, arguments: dict) -> dict:
@@ -24,6 +27,8 @@ async def _execute_builtin(name: str, args: dict) -> dict:
             result = _safe_eval(expr)
             return {"result": result}
         except Exception as e:
+            # 表达式非法或除零属调用方输入问题，返回错误即可，但要留痕以便发现模型总是传错格式
+            logger.warning("计算器工具执行失败：expr=%r error=%s", expr, e)
             return {"error": str(e)}
     return {"error": f"unknown builtin tool: {name}"}
 
@@ -54,7 +59,12 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
             resp.raise_for_status()
             try:
                 return resp.json()
-            except Exception:
+            except ValueError:
+                # 对方返回的不是 JSON（纯文本/HTML），按文本返回是预期行为
                 return {"result": resp.text}
+    except httpx.HTTPError as e:
+        logger.warning("HTTP 工具调用失败 tool=%s method=%s url=%s error=%s", tool.name, method, url, e)
+        return {"error": str(e)}
     except Exception as e:
+        logger.exception("HTTP 工具执行异常 tool=%s method=%s url=%s", tool.name, method, url)
         return {"error": str(e)}

@@ -90,6 +90,25 @@ export const createSchedule = (data: any) => client.post('/schedules', data)
 export const toggleSchedule = (id: number) => client.post(`/schedules/${id}/toggle`)
 export const deleteSchedule = (id: number) => client.delete(`/schedules/${id}`)
 
+// ===== 系统运行状态（降级可见）=====
+export interface EmbeddingStatus {
+  mode: 'model' | 'hash'   // hash = 检索正在用本地兜底向量，语义召回能力有限
+  model: string
+  dim: number
+  configured: boolean
+  reason: string | null
+  last_error: { at: string; error: string } | null
+}
+export interface SystemStatus {
+  app: string
+  database: { ok: boolean; reason: string | null }
+  embedding: EmbeddingStatus
+  login_guard: { enabled: boolean; reason: string | null; max_fail: number; lock_seconds: number }
+  scheduler: { running: boolean; registered_jobs: number; enabled_jobs: number }
+  degraded: { item: string; message: string }[]
+}
+export const getSystemStatus = () => get<SystemStatus>('/system/status')
+
 // 下拉选项用：取第一页最多 100 条。超过 100 条时应改为带 q 的服务端搜索，见 docs/09
 export const OPTIONS_PAGE: PageQuery = { page: 1, page_size: 100 }
 
