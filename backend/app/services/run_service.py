@@ -80,6 +80,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _run_dict(r: Run, cost) -> dict:
+    """运行记录 → 对外字典（含折算成本）。"""
     return {
         "id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id,
         "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
@@ -90,6 +91,8 @@ def _run_dict(r: Run, cost) -> dict:
 
 def list_runs(db: Session, params: PageParams, run_type: str = None, status: str = None,
               agent_id: int = None, workflow_id: int = None) -> dict:
+    """分页查询运行记录：run_type / status / agent_id / workflow_id 均为可选精确过滤；
+    返回前为一页数据批量装配成本（智能体、模型各查一次，不在循环内查库）。"""
     query = db.query(Run)
     if run_type:
         query = query.filter(Run.run_type == run_type)
@@ -129,6 +132,7 @@ def summarize_runs(db: Session) -> dict:
 
 
 def get_run(db: Session, run_id: int) -> dict:
+    """取单条运行详情：含输入、折算成本与各节点执行结果，不存在抛 BizError(404)。"""
     r = db.get(Run, run_id)
     if r is None:
         raise BizError(404, "运行记录不存在")

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _database_status(db: Session) -> dict:
+    """探测数据库连通性；失败只记日志并返回降级状态，不让健康检查本身抛错。"""
     try:
         db.execute(text("SELECT 1"))
         return {"ok": True, "reason": None}

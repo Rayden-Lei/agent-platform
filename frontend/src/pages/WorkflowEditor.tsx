@@ -6,6 +6,9 @@ import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutline
 import { useNavigate, useParams } from 'react-router-dom'
 import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow, OPTIONS_PAGE } from '../api'
 
+// 工作流画布编辑器（基于 @xyflow/react）：左侧节点库（PALETTE）拖拽建节点，
+// 中间画布连线编排，右侧为节点/连线配置面板；支持测试运行与保存（新建/更新）。
+// 画布数据与后端契约的映射：节点 {id, type, config, position}，连线 {from, to, when}。
 const PALETTE = [
   { type: 'start', label: '开始', color: '#15803d', icon: <PlayCircleOutlined />, description: '流程入口' },
   { type: 'end', label: '结束', color: '#b91c1c', icon: <CheckCircleOutlined />, description: '流程出口' },
@@ -19,6 +22,8 @@ const PALETTE = [
   { type: 'human_review', label: '人工审核', color: '#d97706', icon: <AuditOutlined />, description: '暂停等待人工确认' },
 ]
 
+// 自定义节点渲染：左侧类型色块图标 + 标签/摘要，左右各一个连接点（Handle）；
+// 选中时加粗边框并加阴影。所有节点类型共用这一种外观，靠 data.color 区分。
 function FlowNode({ data, selected }: any) {
   return (
     <div style={{ background: '#fff', border: selected ? '2px solid ' + data.color : '1px solid #e5e7eb', borderRadius: 10, boxShadow: selected ? '0 6px 20px rgba(15,23,42,0.16)' : '0 2px 6px rgba(15,23,42,0.06)', minWidth: 150, cursor: 'pointer', overflow: 'hidden' }}>
@@ -37,6 +42,8 @@ function FlowNode({ data, selected }: any) {
 
 const nodeTypes = { flow: FlowNode }
 
+// 生成节点摘要文案：根据节点类型与已保存的 config 提炼一行说明（如智能体名/URL/循环次数），
+// 让画布上不开配置面板也能看出每个节点在干什么
 function buildDetail(nodeType: string, config: any, agents: any[], tools: any[]) {
   if (nodeType === 'agent') { const a = agents.find((x: any) => x.id === config.agent_id); return a ? a.name : '未选择智能体' }
   if (nodeType === 'tool') return config.tool_name || '未选择工具'
@@ -52,15 +59,20 @@ function buildDetail(nodeType: string, config: any, agents: any[], tools: any[])
 function EditorInner() {
   const navigate = useNavigate()
   const { id } = useParams()
+  // isNew：路由无 id 即为新建模式（保存走 create），有 id 为编辑模式（走 update）
   const isNew = !id
   const [name, setName] = useState('未命名工作流')
+  // ReactFlow 的节点/边状态：nodes 的 data 里挂 nodeType/config/detail 等业务数据
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  // 配置面板下拉的数据源（智能体/工具/知识库各取前 100 条）
   const [agents, setAgents] = useState<any[]>([])
   const [tools, setTools] = useState<any[]>([])
   const [kbs, setKBs] = useState<any[]>([])
+  // 当前选中的节点/连线：两者互斥，决定右侧配置面板展示什么
   const [selectedNode, setSelectedNode] = useState<any>(null)
   const [selectedEdge, setSelectedEdge] = useState<any>(null)
+  // 测试运行状态：输入文本 / 结果 / 请求中标记
   const [testInput, setTestInput] = useState('')
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
@@ -72,42 +84,55 @@ function EditorInner() {
   const isMobile = !screens.md
 
   useEffect(() => {
+    // 并行加载配置面板下拉数据；编辑模式再拉取工作流详情
     Promise.all([listAgents(OPTIONS_PAGE), listTools(OPTIONS_PAGE), listKBs(OPTIONS_PAGE)])
       .then(([a, t, k]) => { setAgents(a.items); setTools(t.items); setKBs(k.items) })
       .catch((e: any) => message.error(e.response?.data?.detail || '加载选项失败'))
     if (!isNew && id) {
+      // 把后端存的工作流 graph 映射成 ReactFlow 结构：
+      // 节点按 type 从 PALETTE 取外观（图标/颜色），config 挂在 data 上供配置面板回填
       getWorkflow(Number(id)).then((wf: any) => {
         setName(wf.name)
         const ns = (wf.graph?.nodes || []).map((n: any) => {
           const palette = PALETTE.find((p) => p.type === n.type)
           return { id: n.id, type: 'flow', position: { x: n.position?.x ?? 80, y: n.position?.y ?? 80 }, data: { ...palette, nodeType: n.type, config: n.config || {}, detail: buildDetail(n.type, n.config || {}, [], []) } }
         })
+        // 边 label 对应后端连线的 when 字段（条件分支的值）
         const es = (wf.graph?.edges || []).map((e: any, i: number) => ({ id: 'e' + i, source: e.from, target: e.to, label: e.when || undefined }))
         setNodes(ns)
         setEdges(es)
+        // 摘要里智能体/工具名依赖 agents/tools 列表，等下拉数据就绪后重建一次 detail
         setNodes((prev) => prev.map((n) => ({ ...n, data: { ...n.data, detail: buildDetail(n.data.nodeType, n.data.config, agents, tools) } })))
       })
     }
   }, [id])
 
+  // 拖拽建节点：dragstart 时把节点类型写入 dataTransfer，drop 时按落点坐标创建
   const onDragStart = (event: any, type: string) => { event.dataTransfer.setData('application/reactflow', type); event.dataTransfer.effectAllowed = 'move' }
   const onDrop = (event: any) => {
     event.preventDefault()
     const type = event.dataTransfer.getData('application/reactflow')
     const palette = PALETTE.find((p) => p.type === type)
     if (!palette) return
+    // 把鼠标在页面上的坐标换算成画布坐标系，作为新节点的初始位置
     const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     setNodes((nds) => nds.concat({ id: 'node_' + Date.now(), type: 'flow', position: pos, data: { ...palette, nodeType: type, config: {}, detail: '' } }))
   }
+  // 从节点拖线到另一节点：默认新建一条连线
   const onConnect = useCallback((conn: any) => setEdges((eds) => addEdge(conn, eds)), [setEdges])
 
+  // 点击节点：记录选中并关闭连线选中，把已存 config 回填到右侧表单
+  // （args 等对象字段序列化成 JSON 文本，方便用户直接改）
   const onNodeClick = (_: any, node: any) => {
     setSelectedNode(node); setSelectedEdge(null)
     nodeForm.setFieldsValue({ agent_id: node.data.config?.agent_id, tool_name: node.data.config?.tool_name, expression: node.data.config?.expression, prompt: node.data.config?.prompt, argsStr: node.data.config?.args ? JSON.stringify(node.data.config.args) : '', kb_id: node.data.config?.kb_id, top_k: node.data.config?.top_k || 4, code: node.data.config?.code, url: node.data.config?.url, method: node.data.config?.method || 'POST', count: node.data.config?.count || 1, instruction: node.data.config?.instruction, input_ref: node.data.config?.input_ref, output_field: node.data.config?.output_field })
   }
+  // 点击连线：编辑分支值（label）；点击空白处取消所有选中
   const onEdgeClick = (_: any, edge: any) => { setSelectedEdge(edge); setSelectedNode(null); setEdgeLabel(edge.label || '') }
   const onPaneClick = () => { setSelectedNode(null); setSelectedEdge(null) }
 
+  // 保存节点配置：按节点类型把表单字段收集成 config（各类型字段不同），
+  // JSON 文本字段先解析校验；随后更新节点 data 并重建摘要
   const saveNode = () => {
     if (!selectedNode) return
     const vals = nodeForm.getFieldsValue()
@@ -129,8 +154,10 @@ function EditorInner() {
     message.success('配置已应用')
   }
 
+  // 保存连线：把输入的分支值写为边 label（条件分支为 true/false，循环分支为 loop/exit）
   const saveEdge = () => { if (!selectedEdge) return; setEdges((eds) => eds.map((e) => (e.id === selectedEdge.id ? { ...e, label: edgeLabel || undefined } : e))); message.success('分支已更新') }
 
+  // 删除当前选中：删节点时一并清理挂在该节点上的入/出连线
   const deleteSelected = () => {
     if (selectedNode) {
       const nid = selectedNode.id
@@ -143,12 +170,15 @@ function EditorInner() {
     }
   }
 
+  // 测试运行：把当前画布序列化成与保存一致的 graph，提交给后端试跑（不落库），
+  // 结果分成功/待审核/失败三种状态展示
   const doTest = async () => {
     const graph = { nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, config: n.data.config, position: n.position })), edges: edges.map((e) => ({ from: e.source, to: e.target, when: e.label || undefined })) }
     setTesting(true); setTestResult(null)
     try { setTestResult(await testRunWorkflow({ graph, input: testInput }) as any) } catch (e: any) { message.error(e.response?.data?.detail || '测试失败') } finally { setTesting(false) }
   }
 
+  // 保存：同样序列化 graph；新建走 create，编辑走 update，成功后回列表页
   const onSave = async () => {
     if (!name.trim()) { message.error('请输入工作流名称'); return }
     const graph = { nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, config: n.data.config, position: n.position })), edges: edges.map((e) => ({ from: e.source, to: e.target, when: e.label || undefined })) }
@@ -159,6 +189,7 @@ function EditorInner() {
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
+  // 连线的来源节点类型：决定连线配置面板的文案（条件分支 vs 循环分支）
   const edgeSourceType = selectedEdge ? nodes.find((n) => n.id === selectedEdge.source)?.data?.nodeType : null
 
   const paletteContent = (
@@ -238,6 +269,7 @@ function EditorInner() {
         )}
       </div>
       <Divider style={{ margin: '16px 0' }} />
+      {/* 测试运行区：输入工作流入参后试跑，不保存到工作流定义 */}
       <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><PlayCircleOutlined /> 测试运行</div>
       <Input.TextArea size="small" value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={2} placeholder='{"expression": "2+3*4"}' />
       <Button type="primary" size="small" block style={{ marginTop: 8 }} icon={<PlayCircleOutlined />} loading={testing} onClick={doTest}>运行</Button>
@@ -260,6 +292,7 @@ function EditorInner() {
 
   const canvas = (
     <div style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#f8fafc', minWidth: 0, minHeight: 0 }}>
+      {/* 空画布提示拖入节点；ReactFlow 挂载拖拽落点/点击/连线等交互 */}
       {nodes.length === 0 ? <Empty style={{ marginTop: 80 }} description="从节点库拖入节点开始编排" /> : (
         <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
           onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick} onDrop={onDrop}
@@ -311,6 +344,7 @@ function EditorInner() {
   )
 }
 
+// 外层用 ReactFlowProvider 包裹：EditorInner 里 useReactFlow 的坐标换算等能力依赖它
 export default function WorkflowEditor() {
   return <ReactFlowProvider><EditorInner /></ReactFlowProvider>
 }

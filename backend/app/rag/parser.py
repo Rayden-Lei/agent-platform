@@ -24,18 +24,21 @@ def parse_document(file_path: str, file_type: str) -> list:
 
 
 def parse_text(file_path: str) -> list:
+    """纯文本：整篇作为一个片段返回，meta 标记 type=text。"""
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
     return [{"content": text, "meta": {"type": "text"}}]
 
 
 def parse_markdown(file_path: str) -> list:
+    """Markdown：整篇作为一个片段返回（分片阶段再按标题切分），meta 标记 type=markdown。"""
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
     return [{"content": text, "meta": {"type": "markdown"}}]
 
 
 def parse_pdf(file_path: str) -> list:
+    """PDF：按页提取文本，每页一个片段并记录 page（1 起）；空白页跳过。"""
     from pypdf import PdfReader
 
     reader = PdfReader(file_path)
@@ -48,6 +51,7 @@ def parse_pdf(file_path: str) -> list:
 
 
 def parse_docx(file_path: str) -> list:
+    """Word(docx)：按段落切片段，记录所在 heading（最近的标题文本）与 style，供分片保留上下文。"""
     import docx
 
     d = docx.Document(file_path)
@@ -65,6 +69,10 @@ def parse_docx(file_path: str) -> list:
 
 
 def parse_table(file_path: str, ext: str) -> list:
+    """表格(csv/xlsx/xls)：首行作列名，每行拼成 "列名: 值 | ..." 片段并记录行号 row（从 2 起）。
+
+    csv 用 utf-8-sig 读取以兼容带 BOM 的文件；xlsx 用 read_only 模式降低内存占用。
+    """
     if ext == "csv":
         with open(file_path, "r", encoding="utf-8-sig") as f:
             reader = csv.reader(f)
@@ -93,6 +101,11 @@ def parse_table(file_path: str, ext: str) -> list:
 
 
 def parse_image(file_path: str) -> list:
+    """图片：调用 tesseract OCR（chi_sim+eng）识别文字。
+
+    tesseract 未安装、执行异常或识别失败都不会让文档处理失败：
+    返回空文本片段，由流水线标记文档为"无有效切片"并记 WARN 日志。
+    """
     try:
         r = subprocess.run(
             ["tesseract", file_path, "stdout", "-l", "chi_sim+eng", "--psm", "6"],

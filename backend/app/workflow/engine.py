@@ -29,6 +29,7 @@ class WorkflowState(TypedDict, total=False):
     steps: list
 
 
+# 条件表达式可用的内置函数白名单：收窄 eval 的能力面，杜绝 import/open 等危险内置
 _SAFE_BUILTINS = {
     "str": str, "len": len, "int": int, "float": float, "bool": bool,
     "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
@@ -167,6 +168,11 @@ def _finalize_node_output(state: WorkflowState, node_id: str, raw_output: Any, c
 
 
 def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """Agent 节点工厂：按 config.agent_id 查智能体，用其 system_prompt（可被 config.prompt 覆盖）调 LLM。
+
+    节点函数签名 (state) -> dict；agent 不存在时写 failed 节点日志并返回错误文案，
+    其他异常经 _node_failed 记录后重新抛出，由上层把整条运行置为 failed。
+    """
     agent_id = config.get("agent_id")
     prompt_override = config.get("prompt")
 
@@ -200,6 +206,11 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """工具节点工厂：按 config.tool_name 查工具；配了固定 args 用固定参数，否则把输入按 JSON 解析为参数。
+
+    工具执行是异步的（execute_tool），而 LangGraph 节点是同步函数，这里用 asyncio.run 桥接；
+    当前调用路径是同步 invoke，若未来在已有事件循环里运行本图会报错，需换桥接方式。
+    """
     tool_name = config.get("tool_name")
     fixed_args = config.get("args")
 
@@ -232,6 +243,11 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """条件节点工厂：对 config.expression 求值，结果写进 state.condition_result 供条件边路由。
+
+    表达式异常按 false 处理（见 _eval_condition），因此上游字段拼写错误时，
+    条件分支会静默走 false 分支，排查时靠 warning 日志定位。
+    """
     expr = config.get("expression", "")
 
     def run(state: WorkflowState) -> dict:
@@ -246,6 +262,11 @@ def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> Callable:
+    """知识库检索节点工厂：按 config.kb_id/top_k 调用 retrieve，检索结果作为节点输出。
+
+    role 用于检索层的权限过滤（与 retriever 的 ACL 两道闸门一致），
+    由 build_workflow 在编译时从运行上下文带入，保证非 admin 触发者只能召回可见 chunk。
+    """
     kb_id = config.get("kb_id")
     top_k = config.get("top_k")
 
@@ -266,6 +287,11 @@ def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> 
 
 
 def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """代码节点工厂：在受限命名空间里 exec 用户配置的代码，取 result（缺省用 output）作为节点输出。
+
+    注意：这里放行完整 __builtins__（区别于条件表达式的白名单），属设计内的高风险能力，
+    只应授权给可信工作流使用；异常统一走失败分支并留堆栈。
+    """
     code = config.get("code", "")
 
     def run(state: WorkflowState) -> dict:
@@ -287,6 +313,11 @@ def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """HTTP 节点工厂：按 config.url/method 调用外部接口（GET 参数走 query，其余走 JSON body）。
+
+    30 秒超时；非 2xx 响应 raise_for_status 抛异常走失败分支；响应按纯文本返回，
+    需要结构化取数时配合节点的 output_field 提取。
+    """
     url = config.get("url")
     method = config.get("method", "POST")
 
@@ -358,6 +389,8 @@ def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_start_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """开始节点工厂：透传 input 并落一条 start 节点日志。"""
+
     def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "start", state.get("input"))
         _finish_node(rn_id, "success", state.get("input"))
@@ -367,6 +400,8 @@ def _make_start_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_end_node(config: dict, run_id: int, node_id: str) -> Callable:
+    """结束节点工厂：透传 output 并落一条 end 节点日志。"""
+
     def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "end", state.get("output"))
         _finish_node(rn_id, "success", state.get("output"))
@@ -375,6 +410,7 @@ def _make_end_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
+# 节点类型 → 工厂函数映射；未知节点类型回退到 start 工厂，保证任何图都能编译
 NODE_BUILDERS = {
     "start": _make_start_node,
     "end": _make_end_node,
@@ -410,25 +446,31 @@ def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
     cond_ids = {n["id"] for n in nodes if n.get("type") == "condition"}
     loop_ids = {n["id"] for n in nodes if n.get("type") == "loop"}
 
+    # 先把条件/循环节点的出边按 when 收集成路由映射；这两类节点的边不直接连，见下方条件边/循环边
     cond_routes: dict[str, dict[str, str]] = {}
     loop_routes: dict[str, dict[str, str]] = {}
     for e in edges:
         src, dst = e.get("from"), e.get("to")
         if src in cond_ids:
+            # 条件边的 when 取值：true / false
             cond_routes.setdefault(src, {})[e.get("when", "true")] = dst
         elif src in loop_ids:
+            # 循环边的 when 取值：loop（回环）/ exit（退出）
             loop_routes.setdefault(src, {})[e.get("when", "loop")] = dst
 
     for e in edges:
         src, dst = e.get("from"), e.get("to")
         if src in cond_ids or src in loop_ids:
+            # 条件/循环节点的边已在上面收集，跳过以免重复连接
             continue
         g.add_edge(src, dst)
 
     for cid, routes in cond_routes.items():
+        # 条件边：按 state.condition_result 路由 true/false；映射里指向不存在节点的出口被过滤掉
         mapping = {k: v for k, v in routes.items() if v in by_id}
         g.add_conditional_edges(
             cid,
+            # 用默认参数绑定 mapping：lambda 闭包延迟绑定，不绑的话所有条件边会共用最后一份 mapping
             lambda s, _m=mapping: "true" if s.get("condition_result") else "false",
             mapping,
         )
@@ -440,12 +482,15 @@ def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
         mapping = {k: v for k, v in routes.items() if v in by_id}
 
         def _route(state: WorkflowState, _expr=expr, _count=count) -> str:
+            # 循环边：配了 expression 按表达式决定回环/退出（表达式异常按 false 走 exit），
+            # 否则按 loop_index 是否达到 count 决定；默认参数绑定同上，避免共享最后一次循环配置
             if _expr:
                 return "loop" if _eval_condition(_expr, state) else "exit"
             return "loop" if (state.get("loop_index") or 0) < _count else "exit"
 
         g.add_conditional_edges(lid, _route, mapping)
 
+    # 把 start/end 节点接到图的入口与出口；同类型多个时全部接入
     for sid in start_ids:
         g.add_edge(START, sid)
     for eid in end_ids:

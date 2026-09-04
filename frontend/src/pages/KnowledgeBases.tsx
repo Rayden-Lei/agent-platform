@@ -6,9 +6,13 @@ import { usePagedList } from '../hooks/usePagedList'
 
 const { Paragraph, Text } = Typography
 
+// 知识库页：库的增删改（含公开/角色可见权限）+ 抽屉内的文档上传与列表、
+// 检索评测（带 debug 统计）与切片查看。向量后端降级时页头给出醒目警告，
+// 避免使用者误判检索质量。
 export default function KnowledgeBases() {
   const { tableProps, reload } = usePagedList(listKBs)
   const [open, setOpen] = useState(false)
+  // drawerKb 为当前打开文档抽屉的知识库；editingId 非空表示编辑权限弹窗（否则为新建）
   const [drawerKb, setDrawerKb] = useState<any>(null)
   const [docs, setDocs] = useState<any[]>([])
   const [query, setQuery] = useState('')
@@ -34,10 +38,12 @@ export default function KnowledgeBases() {
     return () => { alive = false }
   }, [])
 
+  // 加载指定知识库的文档列表（分页取前 100 条）
   const loadDocs = async (kbId: number) => {
     try { setDocs((await listDocs(kbId, OPTIONS_PAGE)).items) } catch (e: any) { message.error(e.response?.data?.detail || '加载文档失败') }
   }
 
+  // 打开文档抽屉：重置检索/切片状态后拉取文档列表
   const openDocs = (kb: any) => {
     setDrawerKb(kb)
     setDocs([])
@@ -49,6 +55,7 @@ export default function KnowledgeBases() {
     loadDocs(kb.id)
   }
 
+  // 新增/编辑共用提交：editingId 非空为编辑（改名称/切片参数/权限），否则为新建
   const onSubmit = async (values: any) => {
     try {
       if (editingId) {
@@ -65,6 +72,7 @@ export default function KnowledgeBases() {
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
+  // 按文档分页加载切片；切片抽屉自管分页（chunkPage），不走 usePagedList
   const loadChunks = async (doc: any, page = 1, pageSize = 20) => {
     setChunkDoc(doc)
     setChunks([])
@@ -77,6 +85,7 @@ export default function KnowledgeBases() {
     } catch (e: any) { message.error(e.response?.data?.detail || '加载切片失败') } finally { setChunksLoading(false) }
   }
 
+  // 检索评测：带 debug 标记请求，返回候选数/词法命中/分数等统计，便于评估检索质量
   const doSearch = async () => {
     if (!query.trim()) return
     setSearching(true)
@@ -93,6 +102,7 @@ export default function KnowledgeBases() {
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '名称', dataIndex: 'name' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
+    // 权限列：公开直接显示，受限时展示可见角色列表
     { title: '权限', dataIndex: 'is_public', width: 140, render: (v: boolean, r: any) => v ? <Tag color="green">公开</Tag> : <Tag color="orange">受限 {((r.visible_roles || []).join('/')) || ''}</Tag> },
     { title: '切片大小', dataIndex: 'chunk_size', width: 100 },
     { title: '操作', render: (_: any, r: any) => (
@@ -153,6 +163,7 @@ export default function KnowledgeBases() {
 
       <Drawer title={'知识库：' + (drawerKb?.name || '')} open={!!drawerKb} onClose={() => setDrawerKb(null)} width={720}>
         <Upload showUploadList={false} customRequest={async ({ file, onSuccess }) => {
+          // 上传成功后后端异步解析入库，延时 1.5s 再刷新列表，给解析留缓冲
           try { await uploadDoc(drawerKb.id, file as File); message.success('上传成功，后台处理中'); setTimeout(() => loadDocs(drawerKb.id), 1500) } catch (e: any) { message.error('上传失败') }
           onSuccess?.({})
         }}>

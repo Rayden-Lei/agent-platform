@@ -4,14 +4,19 @@ import { PlusOutlined, KeyOutlined } from '@ant-design/icons'
 import { listApiKeys, createApiKey, toggleApiKey, deleteApiKey } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// API Key 管理页：生成调用方密钥（明文仅创建时返回一次）、启用/禁用、删除。
+// 列表展示配额与已用量，key 本身只显示前缀，防止泄露完整密钥。
 export default function ApiKeys() {
   const { tableProps, reload } = usePagedList(listApiKeys)
   const [open, setOpen] = useState(false)
+  // 创建成功后服务端返回的明文 Key，展示后用户复制保存，刷新即不可再见
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [form] = Form.useForm()
 
+  // 新增/编辑共用提交：editing 非空走更新接口，否则走创建接口；成功后关弹窗并刷新列表
   const onSubmit = async (values: any) => {
     try {
+      // 创建接口返回一次明文 key，存入 createdKey 供"仅显示一次"弹窗展示
       const res: any = await createApiKey(values)
       setCreatedKey(res.key)
       setOpen(false)
@@ -20,6 +25,7 @@ export default function ApiKeys() {
     } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
   }
 
+  // 通用操作包装：执行一次写操作（启用/禁用/删除）→ 成功后刷新列表，失败统一取后端 detail 提示
   const act = async (fn: () => Promise<unknown>, errorText: string) => {
     try { await fn(); reload() } catch (e: any) { message.error(e.response?.data?.detail || errorText) }
   }

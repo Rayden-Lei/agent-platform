@@ -18,12 +18,12 @@ export function usePagedList<T = any>(
   options: UsePagedListOptions = {},
 ) {
   const { pageSize: initialPageSize = 20, filters, errorText = '加载失败' } = options
-  const [items, setItems] = useState<T[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(initialPageSize)
-  const [loading, setLoading] = useState(false)
-  const seq = useRef(0)
+  const [items, setItems] = useState<T[]>([]) // 当前页数据
+  const [total, setTotal] = useState(0) // 服务端返回的总条数
+  const [page, setPage] = useState(1) // 当前页码
+  const [pageSize, setPageSize] = useState(initialPageSize) // 每页条数
+  const [loading, setLoading] = useState(false) // 请求中标记
+  const seq = useRef(0) // 请求序号，用于丢弃过期响应
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
   const filtersKey = JSON.stringify(filters ?? {})
@@ -33,7 +33,7 @@ export function usePagedList<T = any>(
     setLoading(true)
     try {
       const res = await fetcherRef.current({ page: p, page_size: ps, ...(filters ?? {}) })
-      if (mine !== seq.current) return
+      if (mine !== seq.current) return // 已有更新的请求发出，本次为过期响应，直接丢弃
       setItems(res.items)
       setTotal(res.total)
       setPage(res.page)
@@ -50,8 +50,10 @@ export function usePagedList<T = any>(
 
   useEffect(() => { load(1, pageSize) }, [load]) // 首次与筛选变化：回到第 1 页
 
+  // 手动刷新：沿用当前页码与每页条数重新请求
   const reload = useCallback(() => load(page, pageSize), [load, page, pageSize])
 
+  // 可直接展开到 antd <Table> 的属性：数据源、加载态与分页配置（翻页即触发 load）
   const tableProps = {
     dataSource: items,
     loading,
@@ -66,5 +68,6 @@ export function usePagedList<T = any>(
     },
   }
 
+  // items 当前页数据 / total 总条数 / load 指定页码加载 / reload 原地刷新
   return { items, total, page, pageSize, loading, load, reload, tableProps }
 }

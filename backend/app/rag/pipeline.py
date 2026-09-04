@@ -1,3 +1,7 @@
+"""文档入库流水线：下载 → 解析 → 分片 → 向量化 → 写切片（含权限标签与向量后端快照）。
+
+单篇文档的完整处理链在 process_document 中串起，任一阶段失败统一落 doc.error 并置 failed。
+"""
 import logging
 import os
 import tempfile
@@ -16,6 +20,7 @@ _CN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 
 
 def _text_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
+    """通用递归分片器：分隔符按中文习惯配置（段落/句/逗号优先级，见 _CN_SEPARATORS）。"""
     return RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap, separators=_CN_SEPARATORS)
 
 

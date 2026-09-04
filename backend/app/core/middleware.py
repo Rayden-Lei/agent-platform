@@ -30,6 +30,11 @@ class RequestContextMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        """请求链路：取/生成 request_id → 写入 contextvar 与 scope → 包装 send 回写响应头 → 记访问日志。
+
+        异常向上传播交给外层 ServerErrorMiddleware（本中间件不吞异常）；
+        finally 中必须 reset contextvar，否则同线程的后续任务会串用上一个请求的 ID。
+        """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

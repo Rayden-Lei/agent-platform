@@ -10,10 +10,12 @@ from app.rag.retriever import retrieve, retrieve_with_stats
 
 
 def _kb_dict(k: KnowledgeBase) -> dict:
+    """知识库行 → 列表项字典（含权限相关字段）。"""
     return {"id": k.id, "name": k.name, "description": k.description, "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap, "is_public": k.is_public, "visible_roles": k.visible_roles}
 
 
 def list_kbs(db: Session, params: PageParams, q: str = None) -> dict:
+    """分页列出知识库，q 对名称模糊匹配。"""
     query = db.query(KnowledgeBase)
     if q:
         query = query.filter(KnowledgeBase.name.ilike(f"%{q}%"))
@@ -21,6 +23,7 @@ def list_kbs(db: Session, params: PageParams, q: str = None) -> dict:
 
 
 def create_kb(db: Session, data, user) -> dict:
+    """新建知识库，记录创建人；权限字段决定后续检索可见性。"""
     kb = KnowledgeBase(
         name=data.name,
         description=data.description,
@@ -38,6 +41,7 @@ def create_kb(db: Session, data, user) -> dict:
 
 
 def get_kb(db: Session, kb_id: int) -> KnowledgeBase:
+    """按 ID 取知识库，不存在抛 BizError(404)。"""
     kb = db.get(KnowledgeBase, kb_id)
     if kb is None:
         raise BizError(404, "知识库不存在")
@@ -45,11 +49,13 @@ def get_kb(db: Session, kb_id: int) -> KnowledgeBase:
 
 
 def get_kb_detail(db: Session, kb_id: int) -> dict:
+    """取知识库详情（含权限字段），不存在抛 BizError(404)。"""
     kb = get_kb(db, kb_id)
     return {"id": kb.id, "name": kb.name, "description": kb.description, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap, "is_public": kb.is_public, "visible_roles": kb.visible_roles}
 
 
 def update_kb(db: Session, kb_id: int, data) -> dict:
+    """更新知识库：权限变更时 policy_version +1 使检索侧权限缓存失效。"""
     kb = get_kb(db, kb_id)
     kb.name = data.name
     kb.description = data.description
@@ -64,6 +70,7 @@ def update_kb(db: Session, kb_id: int, data) -> dict:
 
 
 def delete_kb(db: Session, kb_id: int) -> None:
+    """删除知识库，文档与切片由数据库外键 CASCADE 级联删除。"""
     kb = get_kb(db, kb_id)
     # documents / document_chunks 由数据库外键 CASCADE 级联删除
     db.delete(kb)
@@ -71,6 +78,7 @@ def delete_kb(db: Session, kb_id: int) -> None:
 
 
 def create_document(db: Session, kb_id: int, filename: str, content: bytes, content_type: str) -> Document:
+    """上传文档：先落 MinIO（对象名带 uuid 前缀防重名），库记录初始为 uploading，由异步解析管道置 ready/failed。"""
     get_kb(db, kb_id)
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
     object_name = f"{uuid.uuid4().hex}_{filename}"
@@ -84,6 +92,7 @@ def create_document(db: Session, kb_id: int, filename: str, content: bytes, cont
 
 
 def list_documents(db: Session, kb_id: int, params: PageParams, status: str = None) -> dict:
+    """分页列出知识库内文档，可按解析状态过滤。"""
     get_kb(db, kb_id)
     query = db.query(Document).filter(Document.kb_id == kb_id)
     if status:
@@ -94,6 +103,7 @@ def list_documents(db: Session, kb_id: int, params: PageParams, status: str = No
 
 
 def delete_document(db: Session, kb_id: int, doc_id: int) -> None:
+    """删除文档（切片级联删除）；文档必须属于该知识库，否则按不存在处理。"""
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
         raise BizError(404, "文档不存在")
@@ -102,6 +112,7 @@ def delete_document(db: Session, kb_id: int, doc_id: int) -> None:
 
 
 def list_document_chunks(db: Session, kb_id: int, doc_id: int, params: PageParams) -> dict:
+    """分页列出文档切片，附带 doc_id / doc_name 供前端详情展示。"""
     get_kb(db, kb_id)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
@@ -113,6 +124,7 @@ def list_document_chunks(db: Session, kb_id: int, doc_id: int, params: PageParam
 
 
 def search_kb(db: Session, kb_id: int, query: str, top_k: int, debug: bool = False, role: str = None) -> dict:
+    """检索知识库：debug=True 返回检索统计（命中数/权限拦截数），否则只返回命中片段。"""
     get_kb(db, kb_id)
     if debug:
         return retrieve_with_stats(kb_id, query, top_k, role=role)

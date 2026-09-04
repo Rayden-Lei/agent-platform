@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 async def execute_tool(tool: Tool, arguments: dict) -> dict:
+    """工具执行入口：按类型分发。
+
+    - builtin：走内置实现（current_time / calculator）
+    - 其他（http）：按 tool.config 调用外部 HTTP 接口
+    返回统一 dict（{"result": ...} 或 {"error": ...}），调用方不感知底层差异；本函数为 async。
+    """
     if tool.type == "builtin":
         return await _execute_builtin(tool.name, arguments)
     return await _execute_http(tool, arguments)
@@ -34,6 +40,10 @@ async def _execute_builtin(name: str, args: dict) -> dict:
 
 
 def _safe_eval(expr: str) -> Any:
+    """AST 白名单求值：只允许数字常量与 + - * / ** 运算，拒绝任意代码执行。
+
+    逐节点校验语法树类型，白名单之外一律抛 ValueError；随后在空命名空间里 eval。
+    """
     tree = ast.parse(expr, mode="eval")
     allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd)
     for node in ast.walk(tree):
@@ -43,6 +53,12 @@ def _safe_eval(expr: str) -> Any:
 
 
 async def _execute_http(tool: Tool, args: dict) -> dict:
+    """按工具配置调用外部 HTTP 接口。
+
+    - method=GET：参数走 query；其他方法：参数作为 JSON body
+    - 响应优先按 JSON 解析返回；非 JSON（纯文本/HTML）按 {"result": 文本} 返回
+    - 网络/HTTP 错误不抛出，返回 {"error": ...} 并记日志，交由上层（工作流/Agent）继续处理
+    """
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")

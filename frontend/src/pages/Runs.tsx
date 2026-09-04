@@ -4,6 +4,8 @@ import { EyeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
 import { listRuns, getRun, resumeWorkflow, getRunsSummary, RunsSummary } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 运行记录页：对话/工作流两类运行明细。顶部为汇总统计卡片，表格支持按类型/状态筛选；
+// 详情弹窗展示输入输出与节点日志；处于 awaiting_review（待审核）的运行可在此通过/拒绝。
 const runTypeLabel: Record<string, string> = { chat: '对话', workflow: '工作流' }
 const statusOptions = [
   { value: 'running', label: '运行中' }, { value: 'success', label: '成功' }, { value: 'failed', label: '失败' },
@@ -13,9 +15,11 @@ const statusOptions = [
 const statusColor = (v: string) => v === 'success' ? 'green' : v === 'running' ? 'blue' : v === 'awaiting_review' ? 'orange' : v === 'failed' ? 'red' : 'default'
 
 export default function Runs() {
+  // 筛选条件：状态与类型变化时，usePagedList 会带这两个参数重新请求列表
   const [status, setStatus] = useState<string | undefined>()
   const [runType, setRunType] = useState<string | undefined>()
   const { tableProps, reload } = usePagedList(listRuns, { filters: { status, run_type: runType } })
+  // 汇总统计独立于列表加载；detail 为当前查看的运行详情；resuming 标记审核提交中
   const [summary, setSummary] = useState<RunsSummary | null>(null)
   const [detail, setDetail] = useState<any>(null)
   const [resuming, setResuming] = useState(false)
@@ -25,6 +29,7 @@ export default function Runs() {
   }
   useEffect(() => { loadSummary() }, [])
 
+  // 人工审核：把 approved/rejected 决策提交给后端，恢复被中断的工作流继续执行
   const doResume = async (decision: any) => {
     if (!detail?.workflow_id) return
     setResuming(true)
@@ -44,6 +49,7 @@ export default function Runs() {
     } catch (e: any) { message.error(e.response?.data?.detail || '加载详情失败') }
   }
 
+  // 表格列：token 取自嵌套字段 token_usage.total_tokens（dataIndex 数组路径写法）
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     { title: '类型', dataIndex: 'run_type', width: 90, render: (v: string) => runTypeLabel[v] || v },
@@ -97,6 +103,7 @@ export default function Runs() {
             <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.output, null, 2)}</pre>
             {detail.status === 'awaiting_review' && (
               <>
+                {/* 待审核：展示中断原因（output.interrupt），并给出通过/拒绝按钮 */}
                 <Typography.Text strong type="warning">等待人工审核：</Typography.Text>
                 <pre style={{ background: '#fffbeb', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12, color: '#92400e' }}>{JSON.stringify(detail.output?.interrupt, null, 2)}</pre>
                 <Space style={{ marginTop: 8 }}>
@@ -113,6 +120,7 @@ export default function Runs() {
             )}
             {detail.nodes && detail.nodes.length > 0 && (
               <>
+                {/* 节点级执行日志：工作流运行才可能有；key 用 node_id+status 拼接 */}
                 <Typography.Text strong>节点日志：</Typography.Text>
                 <Table
                   size="small"

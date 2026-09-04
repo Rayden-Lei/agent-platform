@@ -55,6 +55,7 @@ def _rrf_fuse(candidates: dict) -> None:
 def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role: str = None) -> list:
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
+    mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
     权限过滤前置：先按 ACL 过滤，再做相似度召回，无权 chunk 根本不会被召回。
     """
     vec = embed_query(query)
@@ -138,6 +139,10 @@ def _prune(ranked: list, min_score: float = 0.01, gap_ratio: float = 0.35) -> li
 
 
 def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
+    """把重排后的候选组装成对外返回结构（content/score/chunk_id/doc_id/doc_name/meta）。
+
+    enriched=True 时附加向量分/关键词分与命中关键词，供评测与调试接口使用。
+    """
     items = []
     for c in ranked[:top_k]:
         chunk = c["chunk"]

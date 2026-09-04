@@ -7,6 +7,7 @@ from app.tools.executor import execute_tool
 
 
 def list_tools(db: Session, params: PageParams, q: str = None) -> dict:
+    """分页列出工具，q 对名称模糊匹配。"""
     query = db.query(Tool)
     if q:
         query = query.filter(Tool.name.ilike(f"%{q}%"))
@@ -17,6 +18,7 @@ def list_tools(db: Session, params: PageParams, q: str = None) -> dict:
 
 
 def create_tool(db: Session, data) -> dict:
+    """新建工具（type 决定执行方式，config 为各类型工具的参数配置）。"""
     t = Tool(name=data.name, description=data.description, type=data.type, config=data.config, timeout=data.timeout)
     db.add(t)
     db.commit()
@@ -25,6 +27,7 @@ def create_tool(db: Session, data) -> dict:
 
 
 def get_tool(db: Session, tool_id: int) -> Tool:
+    """按 ID 取工具，不存在抛 BizError(404)。"""
     t = db.get(Tool, tool_id)
     if t is None:
         raise BizError(404, "工具不存在")
@@ -32,6 +35,7 @@ def get_tool(db: Session, tool_id: int) -> Tool:
 
 
 def update_tool(db: Session, tool_id: int, data) -> dict:
+    """覆盖式更新工具配置。"""
     t = get_tool(db, tool_id)
     t.name = data.name
     t.description = data.description
@@ -44,11 +48,13 @@ def update_tool(db: Session, tool_id: int, data) -> dict:
 
 
 def delete_tool(db: Session, tool_id: int) -> None:
+    """删除工具；智能体侧 tool_ids 是 JSONB 列表而非外键，删除后不会级联清理引用。"""
     t = get_tool(db, tool_id)
     db.delete(t)
     db.commit()
 
 
 async def test_tool(db: Session, tool_id: int, args: dict) -> dict:
+    """用给定参数实际执行一次工具，供前端测试配置是否可用。"""
     t = get_tool(db, tool_id)
     return await execute_tool(t, args)

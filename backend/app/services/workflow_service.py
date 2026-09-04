@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def list_workflows(db: Session, params: PageParams, q: str = None) -> dict:
+    """分页列出工作流，q 对名称模糊匹配。"""
     query = db.query(Workflow)
     if q:
         query = query.filter(Workflow.name.ilike(f"%{q}%"))
@@ -24,6 +25,7 @@ def list_workflows(db: Session, params: PageParams, q: str = None) -> dict:
 
 
 def create_workflow(db: Session, data, user) -> dict:
+    """新建工作流（graph 为图定义 JSON），记录创建人。"""
     w = Workflow(name=data.name, description=data.description, graph=data.graph, created_by=user.id)
     db.add(w)
     db.commit()
@@ -32,6 +34,7 @@ def create_workflow(db: Session, data, user) -> dict:
 
 
 def get_workflow(db: Session, workflow_id: int) -> Workflow:
+    """按 ID 取工作流，不存在抛 BizError(404)。"""
     w = db.get(Workflow, workflow_id)
     if w is None:
         raise BizError(404, "工作流不存在")
@@ -39,11 +42,13 @@ def get_workflow(db: Session, workflow_id: int) -> Workflow:
 
 
 def get_workflow_detail(db: Session, workflow_id: int) -> dict:
+    """取工作流详情（含 graph 定义与版本号），供编辑器加载。"""
     w = get_workflow(db, workflow_id)
     return {"id": w.id, "name": w.name, "description": w.description, "graph": w.graph, "status": w.status, "version": w.version}
 
 
 def update_workflow(db: Session, workflow_id: int, data) -> dict:
+    """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。"""
     w = get_workflow(db, workflow_id)
     w.name = data.name
     w.description = data.description
@@ -55,6 +60,7 @@ def update_workflow(db: Session, workflow_id: int, data) -> dict:
 
 
 def delete_workflow(db: Session, workflow_id: int) -> None:
+    """删除工作流：先检查智能体引用（RESTRICT），其余关联数据由外键 CASCADE 级联删除。"""
     w = get_workflow(db, workflow_id)
     # agents.workflow_id 为 RESTRICT，删除前给出友好提示
     ref_count = db.query(Agent).filter(Agent.workflow_id == workflow_id).count()
@@ -66,6 +72,7 @@ def delete_workflow(db: Session, workflow_id: int) -> None:
 
 
 def _interrupt_value(result: dict):
+    """从 langgraph 结果中提取中断值：__interrupt__ 里第一个元素的 value（或元素本身）。"""
     iv = result.get("__interrupt__")
     if iv:
         first = iv[0]
@@ -117,12 +124,14 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
 
 
 async def run_workflow(db: Session, workflow_id: int, input_text: str, user) -> dict:
+    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。"""
     w = get_workflow(db, workflow_id)
     run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text})
     return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
 
 
 async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict) -> dict:
+    """人工审核通过/驳回后续跑：仅允许 awaiting_review 状态的运行记录被 resume。"""
     w = get_workflow(db, workflow_id)
     run = db.get(Run, run_id)
     if run is None or run.workflow_id != workflow_id:
@@ -134,6 +143,7 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
 
 
 def list_workflow_runs(db: Session, workflow_id: int, params: PageParams, status: str = None) -> dict:
+    """分页列出某工作流的运行记录，可按状态过滤。"""
     get_workflow(db, workflow_id)
     query = db.query(Run).filter(Run.workflow_id == workflow_id)
     if status:

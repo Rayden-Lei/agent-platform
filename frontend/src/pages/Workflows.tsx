@@ -5,13 +5,17 @@ import { useNavigate } from 'react-router-dom'
 import { listWorkflows, deleteWorkflow, runWorkflow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 工作流列表页：展示已保存的工作流；编辑跳转到画布编辑器，运行弹窗可立即执行一次
+// （输入 JSON/文本），删除需二次确认。
 export default function Workflows() {
   const { tableProps, reload } = usePagedList(listWorkflows)
+  // 运行弹窗状态：目标工作流 / 输入文本 / 本次运行结果
   const [runWf, setRunWf] = useState<any>(null)
   const [runInput, setRunInput] = useState('')
   const [runResult, setRunResult] = useState<any>(null)
   const navigate = useNavigate()
 
+  // 手动触发一次运行：入参是文本（可直接是 JSON 字符串），结果在弹窗内展示状态/输出/错误
   const doRun = async () => {
     try {
       const res: any = await runWorkflow(runWf.id, { input: runInput })
@@ -28,6 +32,7 @@ export default function Workflows() {
     { title: '操作', render: (_: any, r: any) => (
       <Space>
         <Button size="small" icon={<EditOutlined />} onClick={() => navigate('/workflows/' + r.id + '/edit')}>编辑</Button>
+        {/* 打开运行弹窗并重置输入与上次结果 */}
         <Button size="small" icon={<PlayCircleOutlined />} onClick={() => { setRunWf(r); setRunInput(''); setRunResult(null) }}>运行</Button>
         <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteWorkflow(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>

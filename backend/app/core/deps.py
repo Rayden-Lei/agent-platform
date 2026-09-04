@@ -12,6 +12,7 @@ from app.services import api_key_service
 
 logger = logging.getLogger(__name__)
 
+# auto_error=False：凭据缺失/格式错误时不自动 401，统一由 get_current_user 给出中文错误信息
 bearer_scheme = HTTPBearer(auto_error=False)
 
 # API Key 与 JWT 共用 Authorization: Bearer 头，按明文前缀分流；调用方不需要学第二种请求头
@@ -23,7 +24,11 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """任何已登录身份：JWT 用户，或 API Key 的归属用户。鉴权来源记在 request.state.auth_via。"""
+    """任何已登录身份：JWT 用户，或 API Key 的归属用户。鉴权来源记在 request.state.auth_via。
+
+    同时把 API Key 的 id 记到 request.state.api_key_id（供审计/配额等场景使用）；
+    凭证缺失、JWT 无效/过期抛 401，用户不存在或停用抛 403。
+    """
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未认证")
     token = credentials.credentials
@@ -47,6 +52,7 @@ def get_current_user(
 
 
 def is_api_key_request(request: Request) -> bool:
+    """本次请求是否通过 API Key 鉴权（由 get_current_user 写入 request.state.auth_via）。"""
     return getattr(request.state, "auth_via", None) == "api_key"
 
 

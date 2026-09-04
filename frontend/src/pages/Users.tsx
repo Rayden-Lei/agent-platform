@@ -4,12 +4,16 @@ import { PlusOutlined } from '@ant-design/icons'
 import { listUsers, createUser, updateUser, deleteUser } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 用户管理页：账号的增删改与角色分配（admin/developer/caller）。
+// 注意：编辑模式只允许改角色与启用状态，不提供修改用户名/密码的入口（新增时才填写）。
 export default function Users() {
   const { tableProps, reload } = usePagedList(listUsers)
   const [open, setOpen] = useState(false)
+  // editing 非空表示当前弹窗处于编辑模式（提交时走 update），否则为新增（走 create）
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
 
+  // 新增/编辑共用提交：编辑时只提交角色与启用状态（不回传用户名/密码），否则走创建
   const onSubmit = async (values: any) => {
     try {
       if (editing) await updateUser(editing.id, { role: values.role, is_active: values.is_active })
@@ -44,6 +48,7 @@ export default function Users() {
       </div>
       <Modal title={editing ? '编辑用户' : '新增用户'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ role: 'caller', is_active: true }}>
+          {/* 仅新增模式显示用户名/密码输入；编辑模式不提供，避免误改登录凭据 */}
           {!editing && <Form.Item name="username" label="用户名" rules={[{ required: true }]}><Input /></Form.Item>}
           {!editing && <Form.Item name="password" label="密码" rules={[{ required: true }]}><Input.Password /></Form.Item>}
           <Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'caller', label: '调用者' }]} /></Form.Item>

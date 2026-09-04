@@ -54,6 +54,7 @@ def _init_db() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    """应用启动/关闭钩子：初始化数据库 → 检查向量后端是否降级（降级则告警）→ 启动定时调度器。"""
     _init_db()
     status = embedding_status()
     if status["mode"] != "model":
@@ -83,6 +84,8 @@ def _configure_logging() -> None:
 _configure_logging()
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+# 跨域：allow_origins=* 与 allow_credentials=True 并存时浏览器不允许通配符+凭据，
+# Starlette 会回显请求方 Origin 使其可用；正式环境建议收敛为明确白名单
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -106,7 +109,10 @@ def _trace_id(request) -> str:
 
 @app.exception_handler(BizError)
 async def biz_error_handler(request, exc: BizError):
-    # 业务失败是预期内的（校验不通过、状态不允许），记 INFO 不记堆栈；只有故障才值得 ERROR
+    """业务异常 → 统一错误响应 {"detail": ..., "trace_id": ...}。
+
+    业务失败是预期内的（校验不通过、状态不允许），记 INFO 不记堆栈；只有故障才值得 ERROR。
+    """
     logger.info("业务异常 %s %s status=%s detail=%s", request.method, request.url.path, exc.status_code, exc.detail)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "trace_id": _trace_id(request)})
 

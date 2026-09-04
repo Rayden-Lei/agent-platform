@@ -10,6 +10,7 @@ from app.db.models import ApiKey, User
 
 
 def hash_key(key: str) -> str:
+    """对明文 Key 做 SHA-256 单向哈希：库中只存哈希，明文无法还原。"""
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -39,6 +40,7 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey]:
 
 
 def list_api_keys(db: Session, params: PageParams) -> dict:
+    """分页列出当前用户的 Key 元信息（只含前缀，永不返回明文）。"""
     return paginate(db.query(ApiKey).order_by(ApiKey.id.desc()), params, lambda k: {
         "id": k.id, "name": k.name, "key_prefix": k.key_prefix, "quota": k.quota, "used": k.used,
         "is_enabled": k.is_enabled, "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
@@ -47,6 +49,7 @@ def list_api_keys(db: Session, params: PageParams) -> dict:
 
 
 def create_api_key(db: Session, data, user: User) -> dict:
+    """生成新 Key：明文只在此次响应返回一次，之后无法找回（落库仅存哈希与前缀）。"""
     raw = "ak_" + secrets.token_hex(16)
     ak = ApiKey(
         user_id=user.id,
@@ -65,6 +68,7 @@ def create_api_key(db: Session, data, user: User) -> dict:
 
 
 def toggle_api_key(db: Session, key_id: int) -> dict:
+    """启用/停用某个 Key（停用后 authenticate 会直接拒绝）。"""
     k = db.get(ApiKey, key_id)
     if k is None:
         raise BizError(404, "API Key 不存在")
@@ -74,6 +78,7 @@ def toggle_api_key(db: Session, key_id: int) -> dict:
 
 
 def delete_api_key(db: Session, key_id: int) -> None:
+    """删除 Key（立即失效），不存在抛 BizError(404)。"""
     k = db.get(ApiKey, key_id)
     if k is None:
         raise BizError(404, "API Key 不存在")

@@ -1,3 +1,8 @@
+"""v1 路由聚合：把各业务模块的 router 统一挂载到 api_router 下。
+
+每个模块内部自带 prefix 与 tags，这里只负责组合，不声明路径。
+"""
+
 from fastapi import APIRouter
 
 from app.api.v1 import agents, api_keys, audit, auth, chat, conversations, kb, models, runs, schedules, system, tools, users, workflows

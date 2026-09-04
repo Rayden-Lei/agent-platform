@@ -4,16 +4,22 @@ import { PlusOutlined, ExperimentOutlined } from '@ant-design/icons'
 import { listTools, createTool, updateTool, deleteTool, testTool } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 工具管理页：内置工具与 HTTP 接口工具的增删改。HTTP 工具的请求细节
+// （method/url/headers 等）以 JSON 形式写在 config 里，可用参数实测调用结果。
 export default function Tools() {
   const { tableProps, reload } = usePagedList(listTools)
   const [open, setOpen] = useState(false)
+  // editing 非空表示当前弹窗处于编辑模式（提交时走 update），否则为新增（走 create）
   const [editing, setEditing] = useState<any>(null)
+  // 测试弹窗状态：目标工具 / 参数 JSON 文本 / 后端返回结果 / 请求中标记
   const [testTarget, setTestTarget] = useState<any>(null)
   const [testArgs, setTestArgs] = useState('{}')
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
   const [form] = Form.useForm()
 
+  // 新增/编辑共用提交：type 为 http 时把表单里的 configStr（JSON 文本）解析成 config 提交；
+  // builtin 类型 config 恒为空对象。JSON 不合法直接拦截。
   const onSubmit = async (values: any) => {
     try {
       let config = {}
@@ -31,12 +37,14 @@ export default function Tools() {
   }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setOpen(true) }
+  // 编辑：把已存 config 对象序列化回文本域，方便用户直接改 JSON
   const openEdit = (r: any) => {
     setEditing(r)
     form.setFieldsValue({ name: r.name, description: r.description, type: r.type, timeout: r.timeout, configStr: JSON.stringify(r.config || {}, null, 2) })
     setOpen(true)
   }
 
+  // 实测工具：把参数 JSON 文本解析后交给后端真实执行，结果展示在弹窗里
   const doTest = async () => {
     if (!testTarget) return
     setTesting(true)
@@ -57,6 +65,7 @@ export default function Tools() {
     {
       title: '操作', render: (_: any, r: any) => (
         <Space>
+          {/* 打开测试弹窗：重置参数与上次结果 */}
           <Button size="small" icon={<ExperimentOutlined />} onClick={() => { setTestTarget(r); setTestArgs('{}'); setTestResult(null) }}>测试</Button>
           <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
           <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteTool(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
@@ -80,6 +89,7 @@ export default function Tools() {
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="描述" rules={[{ required: true }]}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="type" label="类型"><Select options={[{ value: 'builtin', label: '内置' }, { value: 'http', label: 'HTTP 接口' }]} /></Form.Item>
+          {/* 仅 HTTP 类型显示配置项；切换类型时联动显隐 */}
           <Form.Item noStyle shouldUpdate={(a, b) => a.type !== b.type}>
             {({ getFieldValue }) => getFieldValue('type') === 'http' && (
               <Form.Item name="configStr" label="HTTP 配置(JSON)">

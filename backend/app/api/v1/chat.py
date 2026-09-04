@@ -1,3 +1,8 @@
+"""智能体对话路由：以 SSE 流式返回模型生成内容、工具调用过程与运行结果。
+
+需要登录鉴权（JWT 或 API Key），鉴权来源由 get_current_user 统一处理。
+"""
+
 import json
 import logging
 import warnings
@@ -24,16 +29,24 @@ router = APIRouter(tags=["chat"])
 
 
 class ChatIn(BaseModel):
+    """对话请求体：message 为用户消息；conversation_id 为空表示开启新对话。"""
+
     message: str
     conversation_id: int | None = None
 
 
 def _sse(data: dict) -> str:
+    """把数据包装成 SSE 的 data 帧（UTF-8，JSON 序列化）。"""
     return "data: " + json.dumps(data, ensure_ascii=False) + "\n\n"
 
 
 @router.post("/agents/{agent_id}/chat")
 async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """发起对话。
+
+    返回 SSE 事件流，事件类型包括 citations / delta / tool_call / tool_result / done / error；
+    客户端中断（停止按钮 / 断网）时生成器被关闭，由 event_stream 的 finally 收尾。
+    """
     conversation_id, run_id = chat_service.prepare_chat(db, user.id, agent_id, data.message, data.conversation_id)
     message_text = data.message
 

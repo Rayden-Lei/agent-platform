@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom'
 import { login } from '../api'
 import { useAuth } from '../store/auth'
 
+// 登录页：提交用户名/密码到 /auth/login，成功后把 token 与用户信息写入全局 auth store
+// （store 内部会持久化到 localStorage），再跳转首页；失败统一提示后端 detail。
 export default function Login() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
@@ -14,6 +16,7 @@ export default function Login() {
     setLoading(true)
     try {
       const res: any = await login(values)
+      // setAuth 写入全局登录态；token 同时由 client 拦截器从 localStorage 读取注入请求头
       setAuth(res.token, res.user)
       message.success('登录成功')
       navigate('/')

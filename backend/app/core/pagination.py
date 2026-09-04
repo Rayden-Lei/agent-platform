@@ -14,11 +14,14 @@ PAGE_SIZE_MAX = 100
 
 @dataclass(frozen=True)
 class PageParams:
+    """分页参数值对象（不可变）：page 从 1 起，offset 由两者计算得出。"""
+
     page: int
     page_size: int
 
     @property
     def offset(self) -> int:
+        """跳过前 (page-1)*page_size 行，作为 SQL offset。"""
         return (self.page - 1) * self.page_size
 
 
@@ -26,6 +29,7 @@ def page_params(
     page: int = Query(1, ge=1, description="页码，从 1 起"),
     page_size: int = Query(PAGE_SIZE_DEFAULT, ge=1, description=f"每页条数，上限 {PAGE_SIZE_MAX}"),
 ) -> PageParams:
+    """FastAPI 依赖：解析查询参数并夹紧 page_size（超过上限按上限截断，不报错）。"""
     return PageParams(page=page, page_size=min(page_size, PAGE_SIZE_MAX))
 
 

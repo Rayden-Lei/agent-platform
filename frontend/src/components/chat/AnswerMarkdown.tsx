@@ -1,3 +1,4 @@
+// 助手回答的 Markdown 渲染组件：把正文里的 [n] 引用标记转换成可悬浮查看来源详情的角标链接
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -8,6 +9,7 @@ import type { Citation } from './types'
 // 仅当存在 citations 时才开启转换，避免无来源时误改正文。
 const CITE_PATTERN = /(?<!\])\[(\d+(?:\s*,\s*\d+)*)\](?!\()/g
 
+// 把正文里的 [1]、[1, 2] 等引用标记替换为 citation:// 协议链接，交给下方 a 渲染分支转成角标
 function toCitationLinks(content: string): string {
   return content.replace(CITE_PATTERN, (_match, nums: string) => {
     const idx = nums.replace(/\s+/g, '')
@@ -15,6 +17,7 @@ function toCitationLinks(content: string): string {
   })
 }
 
+// 引用角标的悬浮卡片：展示来源文档名、相关度得分与内容片段（超长截断）
 function CitationPopover({ citation, index }: { citation?: Citation; index: number }) {
   const text = citation?.content ? String(citation.content) : ''
   const clipped = text.length > 240 ? text.slice(0, 240) + '…' : text
@@ -31,6 +34,7 @@ function CitationPopover({ citation, index }: { citation?: Citation; index: numb
   )
 }
 
+// 一组引用角标：按编号从 1 开始取 citations 中对应来源，逐个包上 Popover
 function CitationMark({ indices, citations }: { indices: number[]; citations: Citation[] }) {
   return (
     <>
@@ -51,6 +55,8 @@ function CitationMark({ indices, citations }: { indices: number[]; citations: Ci
   )
 }
 
+// 主组件：仅在存在 citations 时把 [n] 转成引用链接，避免污染无来源的正文；
+// 通过 react-markdown 渲染 GFM 语法，并自定义 a 渲染器拦截 citation:// 链接
 export default function AnswerMarkdown({ content, citations }: { content: string; citations?: Citation[] }) {
   const hasCitations = Array.isArray(citations) && citations.length > 0
   const transformed = useMemo(() => {
@@ -64,6 +70,7 @@ export default function AnswerMarkdown({ content, citations }: { content: string
         remarkPlugins={[remarkGfm]}
         components={{
           a({ href, children }) {
+            // 拦截 citation:// 链接：拆出编号列表渲染成引用角标；普通链接照常新窗口打开
             if (typeof href === 'string' && href.startsWith('citation://')) {
               const indices = href
                 .slice('citation://'.length)

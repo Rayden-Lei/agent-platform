@@ -4,12 +4,16 @@ import { PlusOutlined } from '@ant-design/icons'
 import { listModels, createModel, updateModel, deleteModel } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 模型管理页：维护 LLM 接入配置（OpenAI 兼容 / DeepSeek / 通义等）的增删改。
+// api_base + api_key 构成一个可调用的模型端点，价格字段用于成本统计。
 export default function Models() {
   const { tableProps, reload } = usePagedList(listModels)
   const [open, setOpen] = useState(false)
+  // editing 非空表示当前弹窗处于编辑模式（提交时走 update），否则为新增（走 create）
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
 
+  // 新增/编辑共用提交：editing 非空走更新接口，否则走创建接口；成功后关弹窗并刷新列表
   const onSubmit = async (values: any) => {
     try {
       if (editing) await updateModel(editing.id, values)
@@ -32,6 +36,7 @@ export default function Models() {
     {
       title: '操作', render: (_: any, record: any) => (
         <Space>
+          {/* 编辑时把 api_key 强制清空：密钥不明文回显，需要重新填写（表单 required 兜底），避免泄露 */}
           <Button size="small" onClick={() => { setEditing(record); form.setFieldsValue({ ...record, api_key: '' }); setOpen(true) }}>编辑</Button>
           <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteModel(record.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}>
             <Button size="small" danger>删除</Button>

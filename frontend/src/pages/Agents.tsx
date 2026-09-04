@@ -5,9 +5,13 @@ import { useNavigate } from 'react-router-dom'
 import { listAgents, createAgent, updateAgent, deleteAgent, publishAgent, getAgentVersions, rollbackAgent, listModels, listTools, listKBs, OPTIONS_PAGE } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 智能体管理页：表格分页展示智能体；支持新增/编辑（绑定模型、工具、知识库）、
+// 发布、查看版本历史并回滚，以及跳转到 Chat 页与该智能体对话。
+// 列表/分页复用 usePagedList 的 tableProps，操作成功后统一调 reload 刷新。
 export default function Agents() {
   const { tableProps, reload } = usePagedList(listAgents)
   const [open, setOpen] = useState(false)
+  // editing 非空表示当前弹窗处于编辑模式（提交时走 update），否则为新增（走 create）
   const [editing, setEditing] = useState<any>(null)
   const [versionOpen, setVersionOpen] = useState(false)
   const [versions, setVersions] = useState<any[]>([])
@@ -25,6 +29,7 @@ export default function Agents() {
       .catch((e: any) => message.error(e.response?.data?.detail || '加载选项失败'))
   }, [])
 
+  // 新增/编辑共用提交：editing 非空走更新接口，否则走创建接口；成功后关弹窗并刷新列表
   const onSubmit = async (values: any) => {
     try {
       if (editing) await updateAgent(editing.id, values)
@@ -37,10 +42,12 @@ export default function Agents() {
     }
   }
 
+  // 通用操作包装：执行一次写操作（发布/删除/回滚等）→ 成功后刷新列表，失败统一取后端 detail 提示
   const act = async (fn: () => Promise<unknown>, errorText: string) => {
     try { await fn(); reload() } catch (e: any) { message.error(e.response?.data?.detail || errorText) }
   }
 
+  // 打开版本历史弹窗：拉取该智能体的历史发布版本列表（分页取前 100 条）
   const openVersions = async (record: any) => {
     try {
       setVersionAgent(record)
@@ -59,6 +66,7 @@ export default function Agents() {
       title: '操作', render: (_: any, record: any) => (
         <Space>
           <Button size="small" icon={<MessageOutlined />} onClick={() => navigate('/chat', { state: { agentId: record.id } })}>对话</Button>
+          {/* 仅草稿态可发布；已发布版本不可重复发布 */}
           {record.status !== 'published' && <Button size="small" type="primary" onClick={() => act(() => publishAgent(record.id), '发布失败')}>发布</Button>}
           <Button size="small" icon={<HistoryOutlined />} onClick={() => openVersions(record)}>版本</Button>
           <Button size="small" onClick={() => { setEditing(record); form.setFieldsValue(record); setOpen(true) }}>编辑</Button>
@@ -107,6 +115,7 @@ export default function Agents() {
               { title: '版本', dataIndex: 'version', width: 80, render: (v: number) => 'v' + v },
               { title: '发布时间', dataIndex: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
               { title: '操作', width: 100, render: (_: any, rec: any) => (
+                // 回滚会把当前版本切回历史版本（Popconfirm 二次确认）
                 <Popconfirm title={'回滚到 v' + rec.version + '？'} onConfirm={async () => { try { await rollbackAgent(versionAgent.id, rec.id); message.success('已回滚'); setVersionOpen(false); reload() } catch (e: any) { message.error(e.response?.data?.detail || '回滚失败') } }}>
                   <Button size="small">回滚</Button>
                 </Popconfirm>

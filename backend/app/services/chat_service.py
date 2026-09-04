@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ChatContext:
+    """一次对话的完整上下文：LLM、工具、系统提示（含 RAG 引用）、多轮历史消息。"""
+
     llm: Any
     tools: list
     system_prompt: str
@@ -104,6 +106,7 @@ def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
 
 
 def get_published_agent(db: Session, agent_id: int) -> Agent:
+    """取已发布（published）的智能体；不存在抛 404，未发布抛 403。"""
     agent = db.get(Agent, agent_id)
     if agent is None:
         raise BizError(404, "智能体不存在")
@@ -175,6 +178,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:
+    """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。"""
     msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage, tool_calls=tool_calls or [])
     db.add(msg)
     db.commit()
@@ -183,6 +187,7 @@ def save_assistant_message(db: Session, conversation_id: int, content: str, cita
 
 
 def finalize_run(db: Session, run_id: int, status: str, content: str = None, usage: dict = None, error: str = None) -> None:
+    """对话结束收尾运行记录（委托 run_service.finalize_run，幂等：终态不会被二次覆盖）。"""
     run = db.get(Run, run_id)
     if run:
         output = {"content": content} if content is not None else None

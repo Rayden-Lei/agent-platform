@@ -1,3 +1,8 @@
+"""定时任务调度：基于 APScheduler 的 BackgroundScheduler，把 DB 中启用的 ScheduledJob 注册为 cron 触发。
+
+调度任务运行在调度器的独立后台线程中，线程内用 SessionLocal 自建数据库会话，
+与请求线程的会话隔离，也没有请求上下文（request_id 为 "-"）。
+"""
 import logging
 from datetime import datetime, timezone
 
@@ -11,6 +16,7 @@ from app.services import run_service, workflow_service
 
 logger = logging.getLogger(__name__)
 
+# 懒加载单例：首次 get_scheduler() 才创建并启动调度线程，避免模块导入即拉起线程
 _scheduler = None
 
 
@@ -63,6 +69,9 @@ def _add_job(sched: BackgroundScheduler, sj: ScheduledJob) -> None:
 
 
 def get_scheduler() -> BackgroundScheduler:
+    """获取全局调度器（懒启动）：首次调用创建并启动 BackgroundScheduler，
+    并把 DB 中所有启用中的定时任务注册进去；后续调用直接返回同一实例。
+    注意：本函数会启动独立后台线程，应在应用启动阶段调用。"""
     global _scheduler
     if _scheduler is None:
         _scheduler = BackgroundScheduler()
@@ -78,10 +87,15 @@ def get_scheduler() -> BackgroundScheduler:
 
 
 def add_schedule_job(sj: ScheduledJob) -> None:
+    """新增/更新定时任务后调用：把任务注册进调度器。
+
+    cron 表达式非法时只记日志不抛异常，避免单条坏数据影响调度器启动与其余任务。
+    """
     _add_job(get_scheduler(), sj)
 
 
 def remove_schedule_job(job_id: int) -> None:
+    """停用/删除定时任务时调用：从调度器移除任务；任务本就未注册时静默通过（幂等删除）。"""
     try:
         get_scheduler().remove_job(str(job_id))
     except JobLookupError:

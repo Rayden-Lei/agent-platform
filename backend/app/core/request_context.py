@@ -23,6 +23,7 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 
 
 def new_request_id() -> str:
+    """生成 16 位十六进制追踪 ID（本机生成，无外部输入，天然安全）。"""
     return uuid.uuid4().hex[:16]
 
 
@@ -35,6 +36,7 @@ def sanitize_request_id(value: str | None) -> str | None:
 
 
 def get_request_id() -> str:
+    """当前上下文的 request_id；无请求上下文时（启动阶段/调度线程/后台任务）为 NO_REQUEST_ID("-")。"""
     return _request_id.get()
 
 
@@ -44,6 +46,7 @@ def set_request_id(value: str):
 
 
 def reset_request_id(token) -> None:
+    """用 set_request_id 返回的 token 还原 contextvar，防止污染同线程的后续任务。"""
     _request_id.reset(token)
 
 

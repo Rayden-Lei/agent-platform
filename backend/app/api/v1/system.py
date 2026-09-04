@@ -1,3 +1,5 @@
+"""系统管理路由：运行状态查询。本模块仅允许 admin / developer 角色访问。"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 

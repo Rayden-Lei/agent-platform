@@ -3,6 +3,8 @@ import { AuditOutlined } from '@ant-design/icons'
 import { listAuditLogs } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 审计日志页：只读表格，无增删改。记录登录、增删改、发布/回滚、RAG 检索等操作轨迹，
+// 按操作类型着色；detail 是对象，直接 JSON 序列化展示。
 const actionColor: Record<string, string> = {
   login: 'green', login_failed: 'red', create: 'blue', delete: 'red',
   publish: 'orange', update: 'orange', rollback: 'orange', rag_retrieve: 'cyan',

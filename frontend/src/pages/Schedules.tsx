@@ -4,8 +4,11 @@ import { PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { listSchedules, createSchedule, toggleSchedule, deleteSchedule, listWorkflows, OPTIONS_PAGE } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 
+// 定时任务页：绑定工作流 + cron 表达式，按计划触发执行；支持启用/禁用与删除。
+// 创建时输入 JSON 作为工作流的固定入参；表里只存 workflow_id，展示时反查名称。
 export default function Schedules() {
   const { tableProps, reload } = usePagedList(listSchedules)
+  // 工作流下拉选项：取前 100 条，同时供表格列反查名称
   const [workflows, setWorkflows] = useState<any[]>([])
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
@@ -14,6 +17,7 @@ export default function Schedules() {
     listWorkflows(OPTIONS_PAGE).then((r) => setWorkflows(r.items)).catch((e: any) => message.error(e.response?.data?.detail || '加载工作流失败'))
   }, [])
 
+  // 创建：输入框里的 JSON 字符串先解析成对象再提交；JSON 不合法直接拦截，不发请求
   const onSubmit = async (values: any) => {
     try {
       let input = {}
@@ -39,6 +43,7 @@ export default function Schedules() {
     { title: '最后运行', dataIndex: 'last_run_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
     { title: '操作', render: (_: any, r: any) => (
       <Space>
+        {/* 同一按钮做启用/禁用切换（toggle 接口） */}
         <Button size="small" onClick={() => act(() => toggleSchedule(r.id), '操作失败')}>{r.is_enabled ? '禁用' : '启用'}</Button>
         <Popconfirm title="确定删除？" onConfirm={() => act(() => deleteSchedule(r.id), '删除失败')}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>

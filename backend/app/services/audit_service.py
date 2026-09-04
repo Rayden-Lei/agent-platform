@@ -5,6 +5,7 @@ from app.db.models import AuditLog
 
 
 def list_audit_logs(db: Session, params: PageParams, action: str = None, resource: str = None, username: str = None) -> dict:
+    """分页查询审计日志：action / resource 精确过滤，username 模糊匹配，按时间倒序。"""
     query = db.query(AuditLog)
     if action:
         query = query.filter(AuditLog.action == action)

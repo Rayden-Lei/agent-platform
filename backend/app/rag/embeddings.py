@@ -66,6 +66,10 @@ def _clear_failure() -> None:
 
 
 def _hash_embedding(text: str, dim: int) -> list:
+    """本地 hash 向量：词袋（单词+双字）按 md5 散列到 dim 维并归一化。
+
+    只保证"有向量可用"不保证语义相似性——这是向量模型不可用时的降级路径。
+    """
     vec = [0.0] * dim
     for token in text.lower().split():
         h = int(hashlib.md5(token.encode()).hexdigest(), 16)
@@ -103,6 +107,7 @@ def embed_texts_detailed(texts: list) -> EmbeddingResult:
 
 
 def embed_texts(texts: list) -> list:
+    """批量向量化的便捷封装：只返回向量列表（降级信息需用 embed_texts_detailed 获取）。"""
     return embed_texts_detailed(texts).vectors
 
 

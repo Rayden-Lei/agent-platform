@@ -27,16 +27,19 @@ except (redis.RedisError, ValueError) as e:
 
 
 def _fail_key(username: str) -> str:
+    """某用户名对应的失败计数 Redis key。"""
     return f"login_fail:{username}"
 
 
 def _mark_down(operation: str, exc: Exception) -> None:
+    """记录一次 Redis 故障（限流本次未生效），供系统状态接口暴露。"""
     global _redis_error
     _redis_error = f"{operation}失败：{exc}"
     logger.warning("Redis %s，登录限流本次未生效", _redis_error)
 
 
 def _mark_up() -> None:
+    """Redis 恢复后清除故障记录，并打一条恢复日志。"""
     global _redis_error
     if _redis_error is not None:
         logger.info("Redis 已恢复，登录限流重新生效")
@@ -44,6 +47,7 @@ def _mark_up() -> None:
 
 
 def _fail_count(username: str) -> int:
+    """读取某用户名的连续失败次数；Redis 不可用时返回 0（放行本次登录，可用性优先）。"""
     if _redis is None:
         return 0
     try:
@@ -57,6 +61,7 @@ def _fail_count(username: str) -> int:
 
 
 def _incr_fail(username: str) -> None:
+    """失败次数 +1 并重置锁定窗口（10 分钟过期）；Redis 不可用时静默跳过。"""
     if _redis is None:
         return
     try:
@@ -69,6 +74,7 @@ def _incr_fail(username: str) -> None:
 
 
 def _clear_fail(username: str) -> None:
+    """登录成功后清除失败计数，避免历史失败累积导致误锁。"""
     if _redis is None:
         return
     try:

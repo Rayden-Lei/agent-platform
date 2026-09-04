@@ -5,13 +5,15 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth'
 import { listAgents, listModels, listWorkflows, listKBs } from '../api'
 
+// 首页仪表盘：欢迎横幅 + 四类核心资源的数量统计卡片 + 快捷操作入口。
+// 统计只展示各资源总数，不承载业务操作，纯跳转导航。
 export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [stats, setStats] = useState({ agents: 0, models: 0, workflows: 0, kbs: 0 })
 
   useEffect(() => {
-    // 只要 total，不拉列表本体
+    // 只要 total，不拉列表本体；page_size=1 让后端只回一条数据，四类资源并发各取总数
     const one = { page: 1, page_size: 1 }
     Promise.all([listAgents(one), listModels(one), listWorkflows(one), listKBs(one)])
       .then(([a, m, w, k]) => setStats({ agents: a.total, models: m.total, workflows: w.total, kbs: k.total }))

@@ -1,3 +1,5 @@
+"""审计日志查询路由。仅 admin 角色可访问，按操作 / 资源 / 用户名过滤。"""
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -19,4 +21,5 @@ def list_audit_logs(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin")),
 ):
+    """审计日志列表（分页），支持按操作类型、资源、用户名过滤。"""
     return audit_service.list_audit_logs(db, params, action, resource, username)

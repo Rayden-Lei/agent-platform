@@ -28,6 +28,11 @@ def calculator(expression: str) -> str:
 
 
 def _build_http_tool(t: Tool):
+    """把 DB 中的 HTTP 工具转成 LangChain StructuredTool。
+
+    LangChain 工具函数接收字符串参数，这里先 json.loads 再交给 executor；
+    模型传参不是合法 JSON 时降级为空参数调用并记日志，避免工具静默失败。
+    """
     async def _run(arguments: str) -> str:
         try:
             args = json.loads(arguments or "{}")
@@ -46,6 +51,7 @@ def _build_http_tool(t: Tool):
 
 
 def build_tools(tool_dbs: list) -> list:
+    """组装 Agent 可用的工具列表：内置工具（current_time/calculator）恒有，DB 中 http 类型工具追加进来。"""
     tools = [current_time, calculator]
     for t in tool_dbs:
         if t.type == "http":
