@@ -17,7 +17,7 @@ def _bearer(key: str) -> dict:
 
 
 def _key_row(client, auth_headers, key_id: int) -> dict:
-    return next(k for k in client.get("/api/v1/api-keys", headers=auth_headers).json() if k["id"] == key_id)
+    return next(k for k in client.get("/api/v1/api-keys", headers=auth_headers).json()["items"] if k["id"] == key_id)
 
 
 def test_api_key_acts_as_owner_and_counts_usage(client, auth_headers):
@@ -31,7 +31,7 @@ def test_api_key_acts_as_owner_and_counts_usage(client, auth_headers):
 
         conv = client.get("/api/v1/conversations", headers=_bearer(k["key"]))
         assert conv.status_code == 200, conv.text
-        assert isinstance(conv.json(), list)
+        assert isinstance(conv.json()["items"], list)
 
         row = _key_row(client, auth_headers, k["id"])
         assert row["used"] == 2

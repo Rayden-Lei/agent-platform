@@ -1,22 +1,15 @@
-import { useEffect, useState } from 'react'
-import { Table, Tag, message } from 'antd'
+import { Table, Tag } from 'antd'
 import { AuditOutlined } from '@ant-design/icons'
 import { listAuditLogs } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 const actionColor: Record<string, string> = {
   login: 'green', login_failed: 'red', create: 'blue', delete: 'red',
-  publish: 'purple', update: 'orange', rollback: 'orange',
+  publish: 'orange', update: 'orange', rollback: 'orange', rag_retrieve: 'cyan',
 }
 
 export default function AuditLogs() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listAuditLogs() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
+  const { tableProps } = usePagedList(listAuditLogs)
 
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 70 },
@@ -35,7 +28,7 @@ export default function AuditLogs() {
         <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><AuditOutlined /> 审计日志</h2>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
     </div>
   )

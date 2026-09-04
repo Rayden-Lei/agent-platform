@@ -1,13 +1,17 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.core.security import hash_password
 from app.db.models import Agent, KnowledgeBase, ModelConfig, User, Workflow
 from app.schemas import UserCreate, UserUpdate
 
 
-def list_users(db: Session) -> list[User]:
-    return db.query(User).order_by(User.id).all()
+def list_users(db: Session, params: PageParams, q: str = None) -> dict:
+    query = db.query(User)
+    if q:
+        query = query.filter(User.username.ilike(f"%{q}%"))
+    return paginate(query.order_by(User.id), params)
 
 
 def create_user(db: Session, data: UserCreate) -> User:

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import schedule_service
@@ -18,8 +19,8 @@ class ScheduleIn(BaseModel):
 
 
 @router.get("")
-def list_schedules(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return schedule_service.list_schedules(db)
+def list_schedules(params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return schedule_service.list_schedules(db, params)
 
 
 @router.post("")

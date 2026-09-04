@@ -1,8 +1,11 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.rag.pipeline import process_document
@@ -28,8 +31,13 @@ class SearchIn(BaseModel):
 
 
 @router.get("")
-def list_kbs(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return kb_service.list_kbs(db)
+def list_kbs(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return kb_service.list_kbs(db, params, q)
 
 
 @router.post("")
@@ -69,13 +77,19 @@ async def upload_document(
 
 
 @router.get("/{kb_id}/documents")
-def list_documents(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return kb_service.list_documents(db, kb_id)
+def list_documents(
+    kb_id: int,
+    params: PageParams = Depends(page_params),
+    status: Literal["uploading", "parsing", "chunking", "ready", "failed"] | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return kb_service.list_documents(db, kb_id, params, status)
 
 
 @router.get("/{kb_id}/documents/{doc_id}/chunks")
-def list_chunks(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return kb_service.list_document_chunks(db, kb_id, doc_id)
+def list_chunks(kb_id: int, doc_id: int, params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return kb_service.list_document_chunks(db, kb_id, doc_id, params)
 
 
 @router.delete("/{kb_id}/documents/{doc_id}")

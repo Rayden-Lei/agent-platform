@@ -1,20 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag, Switch } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { listUsers, createUser, updateUser, deleteUser } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function Users() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listUsers)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
-
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listUsers() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
 
   const onSubmit = async (values: any) => {
     try {
@@ -22,7 +16,7 @@ export default function Users() {
       else await createUser(values)
       message.success('保存成功')
       setOpen(false)
-      load()
+      reload()
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
@@ -34,7 +28,7 @@ export default function Users() {
     { title: '操作', render: (_: any, r: any) => (
       <Space>
         <Button size="small" onClick={() => { setEditing(r); form.setFieldsValue({ role: r.role, is_active: r.is_active }); setOpen(true) }}>编辑</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { await deleteUser(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+        <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteUser(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
   ]
@@ -46,7 +40,7 @@ export default function Users() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setOpen(true) }}>新增用户</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
       <Modal title={editing ? '编辑用户' : '新增用户'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ role: 'caller', is_active: true }}>

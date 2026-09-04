@@ -23,9 +23,10 @@ def test_agent_crud_publish_rollback(client, auth_headers):
 
     v = client.get(f"/api/v1/agents/{aid}/versions", headers=auth_headers)
     assert v.status_code == 200
-    assert len(v.json()) >= 1
+    versions = v.json()["items"]
+    assert len(versions) >= 1
 
-    rb = client.post(f"/api/v1/agents/{aid}/rollback/{v.json()[0]['id']}", headers=auth_headers)
+    rb = client.post(f"/api/v1/agents/{aid}/rollback/{versions[0]['id']}", headers=auth_headers)
     assert rb.status_code == 200
 
     d = client.delete(f"/api/v1/agents/{aid}", headers=auth_headers)

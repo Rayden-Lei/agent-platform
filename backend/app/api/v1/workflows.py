@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import workflow_service
@@ -30,8 +33,13 @@ class ResumeIn(BaseModel):
 
 
 @router.get("")
-def list_workflows(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return workflow_service.list_workflows(db)
+def list_workflows(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return workflow_service.list_workflows(db, params, q)
 
 
 @router.post("")
@@ -71,5 +79,11 @@ async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, db: Ses
 
 
 @router.get("/{workflow_id}/runs")
-def list_runs(workflow_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return workflow_service.list_workflow_runs(db, workflow_id)
+def list_runs(
+    workflow_id: int,
+    params: PageParams = Depends(page_params),
+    status: Literal["running", "success", "failed", "cancelled", "awaiting_review"] | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return workflow_service.list_workflow_runs(db, workflow_id, params, status)

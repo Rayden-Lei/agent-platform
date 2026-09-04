@@ -1,18 +1,27 @@
-from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import AgentIn, AgentOut
+from app.schemas import AgentIn, AgentOut, Page
 from app.services import agent_service
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-@router.get("", response_model=list[AgentOut])
-def list_agents(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return agent_service.list_agents(db)
+@router.get("", response_model=Page[AgentOut])
+def list_agents(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    status: Literal["draft", "published"] | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return agent_service.list_agents(db, params, q, status)
 
 
 @router.post("", response_model=AgentOut)
@@ -42,8 +51,8 @@ def publish_agent(agent_id: int, db: Session = Depends(get_db), user: User = Dep
 
 
 @router.get("/{agent_id}/versions")
-def list_versions(agent_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return agent_service.list_versions(db, agent_id)
+def list_versions(agent_id: int, params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return agent_service.list_versions(db, agent_id, params)
 
 
 @router.post("/{agent_id}/rollback/{version_id}")

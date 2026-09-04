@@ -1,23 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag } from 'antd'
 import { PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { listSchedules, createSchedule, toggleSchedule, deleteSchedule, listWorkflows } from '../api'
+import { listSchedules, createSchedule, toggleSchedule, deleteSchedule, listWorkflows, OPTIONS_PAGE } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function Schedules() {
-  const [data, setData] = useState<any[]>([])
+  const { tableProps, reload } = usePagedList(listSchedules)
   const [workflows, setWorkflows] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const [form] = Form.useForm()
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      setData(await listSchedules() as any)
-      setWorkflows(await listWorkflows() as any)
-    } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    listWorkflows(OPTIONS_PAGE).then((r) => setWorkflows(r.items)).catch((e: any) => message.error(e.response?.data?.detail || '加载工作流失败'))
+  }, [])
 
   const onSubmit = async (values: any) => {
     try {
@@ -27,21 +22,25 @@ export default function Schedules() {
       message.success('创建成功')
       setOpen(false)
       form.resetFields()
-      load()
+      reload()
     } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
+  }
+
+  const act = async (fn: () => Promise<unknown>, errorText: string) => {
+    try { await fn(); reload() } catch (e: any) { message.error(e.response?.data?.detail || errorText) }
   }
 
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '名称', dataIndex: 'name' },
-    { title: '工作流', dataIndex: 'workflow_id', render: (v: number) => workflows.find(w => w.id === v)?.name || v },
+    { title: '工作流', dataIndex: 'workflow_id', render: (v: number) => workflows.find((w) => w.id === v)?.name || v },
     { title: 'Cron', dataIndex: 'cron', render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
     { title: '状态', dataIndex: 'is_enabled', width: 90, render: (v: boolean) => <Tag color={v ? 'green' : 'red'}>{v ? '启用' : '禁用'}</Tag> },
     { title: '最后运行', dataIndex: 'last_run_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
     { title: '操作', render: (_: any, r: any) => (
       <Space>
-        <Button size="small" onClick={async () => { await toggleSchedule(r.id); load() }}>{r.is_enabled ? '禁用' : '启用'}</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { await deleteSchedule(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+        <Button size="small" onClick={() => act(() => toggleSchedule(r.id), '操作失败')}>{r.is_enabled ? '禁用' : '启用'}</Button>
+        <Popconfirm title="确定删除？" onConfirm={() => act(() => deleteSchedule(r.id), '删除失败')}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
   ]
@@ -53,14 +52,14 @@ export default function Schedules() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>新建定时任务</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title="新建定时任务" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="workflow_id" label="工作流" rules={[{ required: true }]}>
-            <Select options={workflows.map((w: any) => ({ value: w.id, label: w.name }))} />
+            <Select showSearch optionFilterProp="label" options={workflows.map((w: any) => ({ value: w.id, label: w.name }))} />
           </Form.Item>
           <Form.Item name="cron" label="Cron 表达式" rules={[{ required: true }]} tooltip="分 时 日 月 周，如 */5 * * * * 表示每5分钟">
             <Input placeholder="*/5 * * * *" />

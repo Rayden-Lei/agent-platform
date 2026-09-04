@@ -1,6 +1,17 @@
-from typing import Optional
+from typing import Generic, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+T = TypeVar("T")
+
+
+class Page(BaseModel, Generic[T]):
+    """分页响应信封，与 core.pagination.paginate 的返回结构一致。"""
+
+    items: list[T]
+    total: int
+    page: int
+    page_size: int
 
 
 class LoginIn(BaseModel):

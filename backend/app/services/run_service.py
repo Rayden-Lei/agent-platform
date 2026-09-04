@@ -1,12 +1,15 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import BigInteger, cast, func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, ModelConfig, Run, RunNode
 
 # 运行记录的终态。awaiting_review 不是终态：它不写 finished_at，等待 resume 后再收尾。
 FINAL_STATUSES = ("success", "failed", "cancelled")
+RUN_STATUSES = ("running", "success", "failed", "cancelled", "awaiting_review")
 
 
 def _now() -> datetime:
@@ -50,46 +53,90 @@ def finalize_run(db: Session, run: Run, status: str, output: dict = None, error:
     return True
 
 
-def _calc_cost(db: Session, run: Run):
-    if not run.agent_id or not run.token_usage:
+def _cost(token_usage: dict, model: ModelConfig | None):
+    """按模型单价（元 / 百万 token）折算成本；无用量、无模型或未配单价时为 None。"""
+    if not token_usage or model is None or (model.price_input is None and model.price_output is None):
         return None
-    agent = db.get(Agent, run.agent_id)
-    if not agent:
-        return None
-    model = db.get(ModelConfig, agent.model_id)
-    if not model or (model.price_input is None and model.price_output is None):
-        return None
-    tu = run.token_usage or {}
-    prompt = tu.get("prompt_tokens") or 0
-    completion = tu.get("completion_tokens") or 0
-    cost = prompt / 1000000 * (model.price_input or 0) + completion / 1000000 * (model.price_output or 0)
-    return round(cost, 6)
+    prompt = token_usage.get("prompt_tokens") or 0
+    completion = token_usage.get("completion_tokens") or 0
+    return round(prompt / 1000000 * (model.price_input or 0) + completion / 1000000 * (model.price_output or 0), 6)
+
+
+def _cost_by_run(db: Session, runs: list) -> dict:
+    """一页运行记录的成本：智能体、模型各批量查一次，内存装配；不逐行查库。"""
+    agent_ids = {r.agent_id for r in runs if r.agent_id}
+    agents = {a.id: a for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).all()} if agent_ids else {}
+    model_ids = {a.model_id for a in agents.values()}
+    models = {m.id: m for m in db.query(ModelConfig).filter(ModelConfig.id.in_(model_ids)).all()} if model_ids else {}
+    costs = {}
+    for r in runs:
+        agent = agents.get(r.agent_id) if r.agent_id else None
+        costs[r.id] = _cost(r.token_usage, models.get(agent.model_id) if agent else None)
+    return costs
 
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def list_runs(db: Session) -> list[dict]:
-    rows = db.query(Run).order_by(Run.id.desc()).limit(200).all()
-    return [
-        {"id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id,
-         "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
-         "token_usage": r.token_usage, "cost": _calc_cost(db, r),
-         "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at)}
-        for r in rows
-    ]
+def _run_dict(r: Run, cost) -> dict:
+    return {
+        "id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id,
+        "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
+        "token_usage": r.token_usage, "cost": cost,
+        "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),
+    }
+
+
+def list_runs(db: Session, params: PageParams, run_type: str = None, status: str = None,
+              agent_id: int = None, workflow_id: int = None) -> dict:
+    query = db.query(Run)
+    if run_type:
+        query = query.filter(Run.run_type == run_type)
+    if status:
+        query = query.filter(Run.status == status)
+    if agent_id:
+        query = query.filter(Run.agent_id == agent_id)
+    if workflow_id:
+        query = query.filter(Run.workflow_id == workflow_id)
+    page = paginate(query.order_by(Run.id.desc()), params)
+    costs = _cost_by_run(db, page["items"])
+    page["items"] = [_run_dict(r, costs[r.id]) for r in page["items"]]
+    return page
+
+
+def summarize_runs(db: Session) -> dict:
+    """运行记录页顶部统计：各状态数量、总 token、总成本，全部在数据库聚合。"""
+    by_status = dict(db.query(Run.status, func.count(Run.id)).group_by(Run.status).all())
+    total_tokens = db.query(
+        func.coalesce(func.sum(func.coalesce(cast(Run.token_usage["total_tokens"].astext, BigInteger), 0)), 0)
+    ).scalar()
+    prompt = func.coalesce(cast(Run.token_usage["prompt_tokens"].astext, BigInteger), 0)
+    completion = func.coalesce(cast(Run.token_usage["completion_tokens"].astext, BigInteger), 0)
+    cost_expr = (prompt * func.coalesce(ModelConfig.price_input, 0.0) + completion * func.coalesce(ModelConfig.price_output, 0.0)) / 1000000.0
+    total_cost = (
+        db.query(func.coalesce(func.sum(cost_expr), 0.0))
+        .select_from(Run)
+        .join(Agent, Agent.id == Run.agent_id)
+        .join(ModelConfig, ModelConfig.id == Agent.model_id)
+        .scalar()
+    )
+    summary = {s: int(by_status.get(s, 0)) for s in RUN_STATUSES}
+    summary["total"] = sum(summary.values())
+    summary["total_tokens"] = int(total_tokens or 0)
+    summary["total_cost"] = round(float(total_cost or 0.0), 6)
+    return summary
 
 
 def get_run(db: Session, run_id: int) -> dict:
     r = db.get(Run, run_id)
     if r is None:
         raise BizError(404, "运行记录不存在")
+    agent = db.get(Agent, r.agent_id) if r.agent_id else None
+    model = db.get(ModelConfig, agent.model_id) if agent else None
     nodes = db.query(RunNode).filter(RunNode.run_id == run_id).order_by(RunNode.id).all()
     return {
-        "id": r.id, "run_type": r.run_type, "workflow_id": r.workflow_id, "agent_id": r.agent_id, "status": r.status,
-        "input": r.input, "output": r.output, "error": r.error, "token_usage": r.token_usage,
-        "cost": _calc_cost(db, r), "latency_ms": r.latency_ms,
-        "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),
+        **_run_dict(r, _cost(r.token_usage, model)),
+        "input": r.input,
         "nodes": [{"node_id": n.node_id, "node_type": n.node_type, "status": n.status, "error": n.error} for n in nodes],
     }

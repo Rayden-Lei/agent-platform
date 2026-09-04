@@ -1,17 +1,19 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Tool
 from app.tools.executor import execute_tool
 
 
-def list_tools(db: Session) -> list[dict]:
-    rows = db.query(Tool).order_by(Tool.id).all()
-    return [
-        {"id": t.id, "name": t.name, "description": t.description, "type": t.type,
-         "config": t.config, "timeout": t.timeout, "is_enabled": t.is_enabled}
-        for t in rows
-    ]
+def list_tools(db: Session, params: PageParams, q: str = None) -> dict:
+    query = db.query(Tool)
+    if q:
+        query = query.filter(Tool.name.ilike(f"%{q}%"))
+    return paginate(query.order_by(Tool.id), params, lambda t: {
+        "id": t.id, "name": t.name, "description": t.description, "type": t.type,
+        "config": t.config, "timeout": t.timeout, "is_enabled": t.is_enabled,
+    })
 
 
 def create_tool(db: Session, data) -> dict:

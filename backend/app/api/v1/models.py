@@ -1,18 +1,24 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import ModelIn, ModelOut
+from app.schemas import ModelIn, ModelOut, Page
 from app.services import model_service
 
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-@router.get("", response_model=list[ModelOut])
-def list_models(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return model_service.list_models(db)
+@router.get("", response_model=Page[ModelOut])
+def list_models(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    return model_service.list_models(db, params, q)
 
 
 @router.post("", response_model=ModelOut)

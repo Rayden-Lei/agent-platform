@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Conversation, Message, User
 
 
@@ -11,18 +12,15 @@ def _get_owned_conversation(db: Session, conversation_id: int, user: User) -> Co
     return conv
 
 
-def list_conversations(db: Session, user: User) -> list[dict]:
-    rows = (
-        db.query(Conversation)
-        .filter(Conversation.user_id == user.id)
-        .order_by(Conversation.updated_at.desc())
-        .all()
-    )
-    return [
-        {"id": c.id, "agent_id": c.agent_id, "title": c.title,
-         "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat()}
-        for c in rows
-    ]
+def list_conversations(db: Session, user: User, params: PageParams, agent_id: int = None) -> dict:
+    query = db.query(Conversation).filter(Conversation.user_id == user.id)
+    if agent_id:
+        query = query.filter(Conversation.agent_id == agent_id)
+    query = query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+    return paginate(query, params, lambda c: {
+        "id": c.id, "agent_id": c.agent_id, "title": c.title,
+        "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat(),
+    })
 
 
 def list_messages(db: Session, conversation_id: int, user: User) -> list[dict]:

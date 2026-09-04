@@ -7,7 +7,7 @@ def test_kb_crud(client, auth_headers):
 
     l = client.get("/api/v1/knowledge-bases", headers=auth_headers)
     assert l.status_code == 200
-    assert any(x["id"] == kid for x in l.json())
+    assert any(x["id"] == kid for x in l.json()["items"])
 
     d = client.delete(f"/api/v1/knowledge-bases/{kid}", headers=auth_headers)
     assert d.status_code == 200

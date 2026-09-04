@@ -3,14 +3,21 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.rag.minio_client import upload_file
 from app.rag.retriever import retrieve, retrieve_with_stats
 
 
-def list_kbs(db: Session) -> list[dict]:
-    rows = db.query(KnowledgeBase).order_by(KnowledgeBase.id).all()
-    return [{"id": k.id, "name": k.name, "description": k.description, "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap, "is_public": k.is_public, "visible_roles": k.visible_roles} for k in rows]
+def _kb_dict(k: KnowledgeBase) -> dict:
+    return {"id": k.id, "name": k.name, "description": k.description, "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap, "is_public": k.is_public, "visible_roles": k.visible_roles}
+
+
+def list_kbs(db: Session, params: PageParams, q: str = None) -> dict:
+    query = db.query(KnowledgeBase)
+    if q:
+        query = query.filter(KnowledgeBase.name.ilike(f"%{q}%"))
+    return paginate(query.order_by(KnowledgeBase.id), params, _kb_dict)
 
 
 def create_kb(db: Session, data, user) -> dict:
@@ -76,10 +83,14 @@ def create_document(db: Session, kb_id: int, filename: str, content: bytes, cont
     return doc
 
 
-def list_documents(db: Session, kb_id: int) -> list[dict]:
+def list_documents(db: Session, kb_id: int, params: PageParams, status: str = None) -> dict:
     get_kb(db, kb_id)
-    rows = db.query(Document).filter(Document.kb_id == kb_id).order_by(Document.id.desc()).all()
-    return [{"id": d.id, "name": d.name, "file_type": d.file_type, "status": d.status, "chunk_count": d.chunk_count, "error": d.error} for d in rows]
+    query = db.query(Document).filter(Document.kb_id == kb_id)
+    if status:
+        query = query.filter(Document.status == status)
+    return paginate(query.order_by(Document.id.desc()), params, lambda d: {
+        "id": d.id, "name": d.name, "file_type": d.file_type, "status": d.status, "chunk_count": d.chunk_count, "error": d.error,
+    })
 
 
 def delete_document(db: Session, kb_id: int, doc_id: int) -> None:
@@ -90,31 +101,15 @@ def delete_document(db: Session, kb_id: int, doc_id: int) -> None:
     db.commit()
 
 
-def list_document_chunks(db: Session, kb_id: int, doc_id: int) -> dict:
+def list_document_chunks(db: Session, kb_id: int, doc_id: int, params: PageParams) -> dict:
     get_kb(db, kb_id)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
         raise BizError(404, "文档不存在")
-    rows = (
-        db.query(DocumentChunk)
-        .filter(DocumentChunk.doc_id == doc_id)
-        .order_by(DocumentChunk.id)
-        .all()
-    )
-    return {
-        "doc_id": doc.id,
-        "doc_name": doc.name,
-        "chunk_count": len(rows),
-        "items": [
-            {
-                "id": c.id,
-                "content": c.content,
-                "meta": c.meta or {},
-                "token_count": c.token_count,
-            }
-            for c in rows
-        ],
-    }
+    query = db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).order_by(DocumentChunk.id)
+    page = paginate(query, params, lambda c: {"id": c.id, "content": c.content, "meta": c.meta or {}, "token_count": c.token_count})
+    # 分页信封之外附带文档信息，前端抽屉标题要用；total 即切片总数
+    return {**page, "doc_id": doc.id, "doc_name": doc.name}
 
 
 def search_kb(db: Session, kb_id: int, query: str, top_k: int, debug: bool = False, role: str = None) -> dict:

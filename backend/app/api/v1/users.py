@@ -1,18 +1,24 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import UserCreate, UserOut, UserUpdate
+from app.schemas import Page, UserCreate, UserOut, UserUpdate
 from app.services import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("", response_model=list[UserOut])
-def list_users(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    return user_service.list_users(db)
+@router.get("", response_model=Page[UserOut])
+def list_users(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="用户名模糊匹配"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin")),
+):
+    return user_service.list_users(db, params, q)
 
 
 @router.post("", response_model=UserOut)

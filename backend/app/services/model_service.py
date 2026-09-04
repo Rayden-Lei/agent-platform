@@ -3,14 +3,18 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.core.security import encrypt_secret
 from app.db.models import Agent, ModelConfig, User
 from app.model_gateway.gateway import build_llm
 from app.schemas import ModelIn
 
 
-def list_models(db: Session) -> list[ModelConfig]:
-    return db.query(ModelConfig).order_by(ModelConfig.id).all()
+def list_models(db: Session, params: PageParams, q: str = None) -> dict:
+    query = db.query(ModelConfig)
+    if q:
+        query = query.filter(ModelConfig.name.ilike(f"%{q}%"))
+    return paginate(query.order_by(ModelConfig.id), params)
 
 
 def create_model(db: Session, data: ModelIn, user: User) -> ModelConfig:

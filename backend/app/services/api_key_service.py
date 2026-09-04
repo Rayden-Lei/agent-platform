@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import ApiKey, User
 
 
@@ -37,14 +38,12 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey]:
     return user, ak
 
 
-def list_api_keys(db: Session) -> list[dict]:
-    rows = db.query(ApiKey).order_by(ApiKey.id.desc()).all()
-    return [
-        {"id": k.id, "name": k.name, "key_prefix": k.key_prefix, "quota": k.quota, "used": k.used,
-         "is_enabled": k.is_enabled, "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
-         "created_at": k.created_at.isoformat() if k.created_at else None}
-        for k in rows
-    ]
+def list_api_keys(db: Session, params: PageParams) -> dict:
+    return paginate(db.query(ApiKey).order_by(ApiKey.id.desc()), params, lambda k: {
+        "id": k.id, "name": k.name, "key_prefix": k.key_prefix, "quota": k.quota, "used": k.used,
+        "is_enabled": k.is_enabled, "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+        "created_at": k.created_at.isoformat() if k.created_at else None,
+    })
 
 
 def create_api_key(db: Session, data, user: User) -> dict:

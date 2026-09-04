@@ -1,20 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Tag } from 'antd'
 import { PlusOutlined, KeyOutlined } from '@ant-design/icons'
 import { listApiKeys, createApiKey, toggleApiKey, deleteApiKey } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function ApiKeys() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listApiKeys)
   const [open, setOpen] = useState(false)
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [form] = Form.useForm()
-
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listApiKeys() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
 
   const onSubmit = async (values: any) => {
     try {
@@ -22,8 +16,12 @@ export default function ApiKeys() {
       setCreatedKey(res.key)
       setOpen(false)
       form.resetFields()
-      load()
+      reload()
     } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
+  }
+
+  const act = async (fn: () => Promise<unknown>, errorText: string) => {
+    try { await fn(); reload() } catch (e: any) { message.error(e.response?.data?.detail || errorText) }
   }
 
   const columns = [
@@ -36,8 +34,8 @@ export default function ApiKeys() {
     { title: '最后使用', dataIndex: 'last_used_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
     { title: '操作', render: (_: any, r: any) => (
       <Space>
-        <Button size="small" onClick={async () => { await toggleApiKey(r.id); load() }}>{r.is_enabled ? '禁用' : '启用'}</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { await deleteApiKey(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+        <Button size="small" onClick={() => act(() => toggleApiKey(r.id), '操作失败')}>{r.is_enabled ? '禁用' : '启用'}</Button>
+        <Popconfirm title="确定删除？" onConfirm={() => act(() => deleteApiKey(r.id), '删除失败')}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
   ]
@@ -49,7 +47,7 @@ export default function ApiKeys() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>生成 Key</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title="生成 API Key" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>

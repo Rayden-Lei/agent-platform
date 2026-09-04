@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Select, Input, Button, message, List, Empty, Popconfirm, Grid } from 'antd'
 import { SendOutlined, PlusOutlined, DeleteOutlined, StopOutlined, ReloadOutlined, MessageOutlined } from '@ant-design/icons'
 import { useLocation } from 'react-router-dom'
-import { listAgents, listConversations, listMessages, deleteConversation, chatAgentStream } from '../api'
+import { listAgents, listConversations, listMessages, deleteConversation, chatAgentStream, OPTIONS_PAGE } from '../api'
 import AssistantMessage from '../components/chat/AssistantMessage'
 import type { Msg, ToolStep } from '../components/chat/types'
 
@@ -25,13 +25,13 @@ export default function Chat() {
 
   const loadAgents = async () => {
     try {
-      const list = (await listAgents() as any).filter((a: any) => a.status === 'published')
+      const list = (await listAgents({ status: 'published', ...OPTIONS_PAGE })).items
       setAgents(list)
       if (list.length > 0) setAgentId((prev) => prev ?? list[0].id)
-    } catch {}
+    } catch (e: any) { message.error(e.response?.data?.detail || '加载智能体失败') }
   }
   const loadConversations = async () => {
-    try { setConversations(await listConversations() as any) } catch {}
+    try { setConversations((await listConversations(OPTIONS_PAGE)).items) } catch (e: any) { message.error(e.response?.data?.detail || '加载会话失败') }
   }
   useEffect(() => { loadAgents(); loadConversations() }, [])
 

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import api_key_service
@@ -16,8 +17,8 @@ class ApiKeyIn(BaseModel):
 
 
 @router.get("")
-def list_api_keys(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    return api_key_service.list_api_keys(db)
+def list_api_keys(params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    return api_key_service.list_api_keys(db, params)
 
 
 @router.post("")

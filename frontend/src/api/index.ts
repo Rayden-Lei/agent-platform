@@ -1,70 +1,97 @@
 import client from './client'
 
+// ===== 分页契约（docs/04-接口设计.md 2.3）=====
+export interface Page<T = any> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+export type PageQuery = { page?: number; page_size?: number } & Record<string, string | number | boolean | undefined>
+
+// 拦截器已把响应解包成 res.data，这里只是把类型收窄，避免每个页面各写一遍 as any
+const get = <T = any>(url: string, params?: object) => client.get(url, { params }) as unknown as Promise<T>
+
 export const login = (data: { username: string; password: string }) => client.post('/auth/login', data)
 export const me = () => client.get('/auth/me')
 
-export const listModels = () => client.get('/models')
+export const listModels = (params?: PageQuery) => get<Page>('/models', params)
 export const createModel = (data: any) => client.post('/models', data)
 export const updateModel = (id: number, data: any) => client.put(`/models/${id}`, data)
 export const deleteModel = (id: number) => client.delete(`/models/${id}`)
 
-export const listAgents = () => client.get('/agents')
+export const listAgents = (params?: PageQuery) => get<Page>('/agents', params)
 export const createAgent = (data: any) => client.post('/agents', data)
 export const updateAgent = (id: number, data: any) => client.put(`/agents/${id}`, data)
 export const deleteAgent = (id: number) => client.delete(`/agents/${id}`)
 export const publishAgent = (id: number) => client.post(`/agents/${id}/publish`)
-export const getAgentVersions = (id: number) => client.get(`/agents/${id}/versions`)
+export const getAgentVersions = (id: number, params?: PageQuery) => get<Page>(`/agents/${id}/versions`, params)
 export const rollbackAgent = (id: number, versionId: number) => client.post(`/agents/${id}/rollback/${versionId}`)
 
-export const listConversations = () => client.get('/conversations')
+export const listConversations = (params?: PageQuery) => get<Page>('/conversations', params)
 export const listMessages = (id: number) => client.get(`/conversations/${id}/messages`)
 export const deleteConversation = (id: number) => client.delete(`/conversations/${id}`)
 
-export const listTools = () => client.get('/tools')
+export const listTools = (params?: PageQuery) => get<Page>('/tools', params)
 export const createTool = (data: any) => client.post('/tools', data)
 export const updateTool = (id: number, data: any) => client.put(`/tools/${id}`, data)
 export const deleteTool = (id: number) => client.delete(`/tools/${id}`)
 export const testTool = (id: number, data: any) => client.post(`/tools/${id}/test`, data)
 
-export const listKBs = () => client.get('/knowledge-bases')
+export const listKBs = (params?: PageQuery) => get<Page>('/knowledge-bases', params)
 export const createKB = (data: any) => client.post('/knowledge-bases', data)
 export const updateKB = (id: number, data: any) => client.put(`/knowledge-bases/${id}`, data)
 export const deleteKB = (id: number) => client.delete(`/knowledge-bases/${id}`)
-export const listDocs = (kbId: number) => client.get(`/knowledge-bases/${kbId}/documents`)
+export const listDocs = (kbId: number, params?: PageQuery) => get<Page>(`/knowledge-bases/${kbId}/documents`, params)
 export const uploadDoc = (kbId: number, file: File) => {
   const fd = new FormData()
   fd.append('file', file)
   return client.post(`/knowledge-bases/${kbId}/documents`, fd)
 }
 export const searchKB = (kbId: number, data: any) => client.post(`/knowledge-bases/${kbId}/search`, data)
-export const listDocChunks = (kbId: number, docId: number) => client.get(`/knowledge-bases/${kbId}/documents/${docId}/chunks`)
+export const listDocChunks = (kbId: number, docId: number, params?: PageQuery) =>
+  get<Page & { doc_id: number; doc_name: string }>(`/knowledge-bases/${kbId}/documents/${docId}/chunks`, params)
 
-export const listWorkflows = () => client.get('/workflows')
+export const listWorkflows = (params?: PageQuery) => get<Page>('/workflows', params)
 export const getWorkflow = (id: number) => client.get(`/workflows/${id}`)
 export const createWorkflow = (data: any) => client.post('/workflows', data)
 export const updateWorkflow = (id: number, data: any) => client.put(`/workflows/${id}`, data)
 export const deleteWorkflow = (id: number) => client.delete(`/workflows/${id}`)
 export const runWorkflow = (id: number, data: any) => client.post(`/workflows/${id}/run`, data)
 export const testRunWorkflow = (data: any) => client.post('/workflows/test-run', data)
-export const listWorkflowRuns = (id: number) => client.get(`/workflows/${id}/runs`)
+export const listWorkflowRuns = (id: number, params?: PageQuery) => get<Page>(`/workflows/${id}/runs`, params)
 export const resumeWorkflow = (workflowId: number, runId: number, decision: any) => client.post(`/workflows/${workflowId}/runs/${runId}/resume`, { decision })
 
-export const listRuns = () => client.get('/runs')
+export const listRuns = (params?: PageQuery) => get<Page>('/runs', params)
+export interface RunsSummary {
+  total: number
+  running: number
+  success: number
+  failed: number
+  cancelled: number
+  awaiting_review: number
+  total_tokens: number
+  total_cost: number
+}
+export const getRunsSummary = () => get<RunsSummary>('/runs/summary')
 export const getRun = (id: number) => client.get(`/runs/${id}`)
 
-export const listUsers = () => client.get('/users')
+export const listUsers = (params?: PageQuery) => get<Page>('/users', params)
 export const createUser = (data: any) => client.post('/users', data)
 export const updateUser = (id: number, data: any) => client.put(`/users/${id}`, data)
 export const deleteUser = (id: number) => client.delete(`/users/${id}`)
-export const listAuditLogs = () => client.get('/audit-logs')
-export const listApiKeys = () => client.get('/api-keys')
+export const listAuditLogs = (params?: PageQuery) => get<Page>('/audit-logs', params)
+export const listApiKeys = (params?: PageQuery) => get<Page>('/api-keys', params)
 export const createApiKey = (data: any) => client.post('/api-keys', data)
 export const toggleApiKey = (id: number) => client.post(`/api-keys/${id}/toggle`)
 export const deleteApiKey = (id: number) => client.delete(`/api-keys/${id}`)
-export const listSchedules = () => client.get('/schedules')
+export const listSchedules = (params?: PageQuery) => get<Page>('/schedules', params)
 export const createSchedule = (data: any) => client.post('/schedules', data)
 export const toggleSchedule = (id: number) => client.post(`/schedules/${id}/toggle`)
 export const deleteSchedule = (id: number) => client.delete(`/schedules/${id}`)
+
+// 下拉选项用：取第一页最多 100 条。超过 100 条时应改为带 q 的服务端搜索，见 docs/09
+export const OPTIONS_PAGE: PageQuery = { page: 1, page_size: 100 }
 
 // ===== 对话流式接口（SSE）=====
 // axios 不支持浏览器端 SSE 流式读取，此处用 fetch 直连；凭据读取方式与 client 拦截器保持一致。

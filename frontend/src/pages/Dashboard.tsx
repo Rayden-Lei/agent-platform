@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Col, Row, Statistic, Typography, Button, Space } from 'antd'
+import { Card, Col, Row, Statistic, Typography, Button, Space, message } from 'antd'
 import { RobotOutlined, ThunderboltOutlined, PartitionOutlined, DatabaseOutlined, PlusOutlined, MessageOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth'
@@ -11,9 +11,11 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ agents: 0, models: 0, workflows: 0, kbs: 0 })
 
   useEffect(() => {
-    Promise.all([listAgents(), listModels(), listWorkflows(), listKBs()])
-      .then(([a, m, w, k]: any) => setStats({ agents: a.length, models: m.length, workflows: w.length, kbs: k.length }))
-      .catch(() => {})
+    // 只要 total，不拉列表本体
+    const one = { page: 1, page_size: 1 }
+    Promise.all([listAgents(one), listModels(one), listWorkflows(one), listKBs(one)])
+      .then(([a, m, w, k]) => setStats({ agents: a.total, models: m.total, workflows: w.total, kbs: k.total }))
+      .catch((e: any) => message.error(e.response?.data?.detail || '加载统计失败'))
   }, [])
 
   const cards = [

@@ -1,23 +1,29 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, message, Card, Col, Row, Statistic, Modal, Descriptions, Button, Space, Typography } from 'antd'
+import { Table, Tag, message, Card, Col, Row, Statistic, Modal, Descriptions, Button, Space, Typography, Select } from 'antd'
 import { EyeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
-import { listRuns, getRun, resumeWorkflow } from '../api'
+import { listRuns, getRun, resumeWorkflow, getRunsSummary, RunsSummary } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 const runTypeLabel: Record<string, string> = { chat: '对话', workflow: '工作流' }
+const statusOptions = [
+  { value: 'running', label: '运行中' }, { value: 'success', label: '成功' }, { value: 'failed', label: '失败' },
+  { value: 'cancelled', label: '已取消' }, { value: 'awaiting_review', label: '待审核' },
+]
 
 const statusColor = (v: string) => v === 'success' ? 'green' : v === 'running' ? 'blue' : v === 'awaiting_review' ? 'orange' : v === 'failed' ? 'red' : 'default'
 
 export default function Runs() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const [status, setStatus] = useState<string | undefined>()
+  const [runType, setRunType] = useState<string | undefined>()
+  const { tableProps, reload } = usePagedList(listRuns, { filters: { status, run_type: runType } })
+  const [summary, setSummary] = useState<RunsSummary | null>(null)
   const [detail, setDetail] = useState<any>(null)
   const [resuming, setResuming] = useState(false)
 
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listRuns() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
+  const loadSummary = () => {
+    getRunsSummary().then(setSummary).catch((e: any) => message.error(e.response?.data?.detail || '加载统计失败'))
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { loadSummary() }, [])
 
   const doResume = async (decision: any) => {
     if (!detail?.workflow_id) return
@@ -26,22 +32,16 @@ export default function Runs() {
       await resumeWorkflow(detail.workflow_id, detail.id, decision)
       message.success('已提交审核结果')
       setDetail(null)
-      load()
+      reload()
+      loadSummary()
     } catch (e: any) { message.error(e.response?.data?.detail || '操作失败') } finally { setResuming(false) }
   }
-
-  const total = data.length
-  const success = data.filter((r) => r.status === 'success').length
-  const failed = data.filter((r) => r.status === 'failed').length
-  const running = data.filter((r) => r.status === 'running').length
-  const totalTokens = data.reduce((s, r) => s + (r.token_usage?.total_tokens || 0), 0)
-  const totalCost = data.reduce((s, r) => s + (r.cost || 0), 0)
 
   const viewDetail = async (id: number) => {
     try {
       const res: any = await getRun(id)
       setDetail(res)
-    } catch (e: any) { message.error('加载详情失败') }
+    } catch (e: any) { message.error(e.response?.data?.detail || '加载详情失败') }
   }
 
   const columns = [
@@ -51,6 +51,7 @@ export default function Runs() {
     { title: 'Token', dataIndex: ['token_usage', 'total_tokens'], width: 90, render: (v: number) => v || '-' },
     { title: '成本(元)', dataIndex: 'cost', width: 100, render: (v: number) => v != null ? v.toFixed(4) : '-' },
     { title: '耗时(ms)', dataIndex: 'latency_ms', width: 100 },
+    { title: '开始时间', dataIndex: 'started_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
     { title: '错误', dataIndex: 'error', ellipsis: true },
     { title: '操作', width: 80, render: (_: any, r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => viewDetail(r.id)}>详情</Button> },
   ]
@@ -58,18 +59,25 @@ export default function Runs() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ flexShrink: 0 }}>
-        <h2 style={{ marginBottom: 16 }}>运行记录</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ margin: 0 }}>运行记录</h2>
+          <Space>
+            <Select allowClear placeholder="类型" style={{ width: 120 }} value={runType} onChange={setRunType}
+              options={[{ value: 'chat', label: '对话' }, { value: 'workflow', label: '工作流' }]} />
+            <Select allowClear placeholder="状态" style={{ width: 130 }} value={status} onChange={setStatus} options={statusOptions} />
+          </Space>
+        </div>
         <Row gutter={[16, 16]}>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总运行" value={total} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="成功" value={success} valueStyle={{ color: '#16a34a' }} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="失败" value={failed} valueStyle={{ color: '#dc2626' }} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="Token 消耗" value={totalTokens} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总成本(元)" value={totalCost} precision={4} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总运行" value={summary?.total ?? 0} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="成功" value={summary?.success ?? 0} valueStyle={{ color: '#16a34a' }} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="失败" value={summary?.failed ?? 0} valueStyle={{ color: '#dc2626' }} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="Token 消耗" value={summary?.total_tokens ?? 0} /></Card></Col>
+          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总成本(元)" value={summary?.total_cost ?? 0} precision={4} /></Card></Col>
         </Row>
       </div>
 
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title={'运行详情 #' + (detail?.id || '')} open={!!detail} onCancel={() => setDetail(null)} footer={null} width={720}>
@@ -80,6 +88,8 @@ export default function Runs() {
               <Descriptions.Item label="状态"><Tag color={statusColor(detail.status)}>{detail.status}</Tag></Descriptions.Item>
               <Descriptions.Item label="耗时">{detail.latency_ms} ms</Descriptions.Item>
               <Descriptions.Item label="Token">{JSON.stringify(detail.token_usage || {})}</Descriptions.Item>
+              <Descriptions.Item label="开始">{detail.started_at ? new Date(detail.started_at).toLocaleString() : '-'}</Descriptions.Item>
+              <Descriptions.Item label="结束">{detail.finished_at ? new Date(detail.finished_at).toLocaleString() : '-'}</Descriptions.Item>
             </Descriptions>
             <Typography.Text strong>输入：</Typography.Text>
             <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.input, null, 2)}</pre>

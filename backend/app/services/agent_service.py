@@ -2,12 +2,18 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, AgentVersion, User
 from app.schemas import AgentIn
 
 
-def list_agents(db: Session) -> list[Agent]:
-    return db.query(Agent).order_by(Agent.id).all()
+def list_agents(db: Session, params: PageParams, q: str = None, status: str = None) -> dict:
+    query = db.query(Agent)
+    if q:
+        query = query.filter(Agent.name.ilike(f"%{q}%"))
+    if status:
+        query = query.filter(Agent.status == status)
+    return paginate(query.order_by(Agent.id), params)
 
 
 def create_agent(db: Session, data: AgentIn, user: User) -> Agent:
@@ -75,10 +81,14 @@ def publish_agent(db: Session, agent_id: int, user: User) -> Agent:
     return a
 
 
-def list_versions(db: Session, agent_id: int) -> list[dict]:
+def list_versions(db: Session, agent_id: int, params: PageParams) -> dict:
     get_agent(db, agent_id)
-    rows = db.query(AgentVersion).filter(AgentVersion.agent_id == agent_id).order_by(AgentVersion.version.desc()).all()
-    return [{"id": v.id, "version": v.version, "snapshot": v.snapshot, "created_at": v.created_at.isoformat()} for v in rows]
+    query = (
+        db.query(AgentVersion)
+        .filter(AgentVersion.agent_id == agent_id)
+        .order_by(AgentVersion.version.desc(), AgentVersion.id.desc())
+    )
+    return paginate(query, params, lambda v: {"id": v.id, "version": v.version, "snapshot": v.snapshot, "created_at": v.created_at.isoformat()})
 
 
 def rollback_agent(db: Session, agent_id: int, version_id: int) -> Agent:

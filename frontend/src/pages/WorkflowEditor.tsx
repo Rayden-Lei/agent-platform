@@ -4,7 +4,7 @@ import '@xyflow/react/dist/style.css'
 import { Button, Form, Input, InputNumber, Select, Space, message, Empty, Tag, Alert, Divider, Drawer, Grid } from 'antd'
 import { ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DeleteOutlined, CheckOutlined, MenuOutlined, DatabaseOutlined, CodeOutlined, ApiOutlined, SyncOutlined, AuditOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow } from '../api'
+import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow, OPTIONS_PAGE } from '../api'
 
 const PALETTE = [
   { type: 'start', label: '开始', color: '#15803d', icon: <PlayCircleOutlined />, description: '流程入口' },
@@ -72,9 +72,9 @@ function EditorInner() {
   const isMobile = !screens.md
 
   useEffect(() => {
-    listAgents().then((r: any) => setAgents(r))
-    listTools().then((r: any) => setTools(r))
-    listKBs().then((r: any) => setKBs(r))
+    Promise.all([listAgents(OPTIONS_PAGE), listTools(OPTIONS_PAGE), listKBs(OPTIONS_PAGE)])
+      .then(([a, t, k]) => { setAgents(a.items); setTools(t.items); setKBs(k.items) })
+      .catch((e: any) => message.error(e.response?.data?.detail || '加载选项失败'))
     if (!isNew && id) {
       getWorkflow(Number(id)).then((wf: any) => {
         setName(wf.name)

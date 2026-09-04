@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
+from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import conversation_service
@@ -10,8 +11,13 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 @router.get("")
-def list_conversations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return conversation_service.list_conversations(db, user)
+def list_conversations(
+    params: PageParams = Depends(page_params),
+    agent_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return conversation_service.list_conversations(db, user, params, agent_id)
 
 
 @router.get("/{conversation_id}/messages")

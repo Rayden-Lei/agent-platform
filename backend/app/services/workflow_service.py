@@ -6,6 +6,7 @@ from langgraph.types import Command
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, Run, User, Workflow
 from app.services import run_service
 from app.workflow.engine import build_workflow
@@ -13,9 +14,13 @@ from app.workflow.engine import build_workflow
 logger = logging.getLogger(__name__)
 
 
-def list_workflows(db: Session) -> list[dict]:
-    rows = db.query(Workflow).order_by(Workflow.id).all()
-    return [{"id": w.id, "name": w.name, "description": w.description, "status": w.status, "version": w.version} for w in rows]
+def list_workflows(db: Session, params: PageParams, q: str = None) -> dict:
+    query = db.query(Workflow)
+    if q:
+        query = query.filter(Workflow.name.ilike(f"%{q}%"))
+    return paginate(query.order_by(Workflow.id), params, lambda w: {
+        "id": w.id, "name": w.name, "description": w.description, "status": w.status, "version": w.version,
+    })
 
 
 def create_workflow(db: Session, data, user) -> dict:
@@ -126,7 +131,13 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
     return await asyncio.to_thread(execute_workflow, db, w, run, Command(resume=decision), role)
 
 
-def list_workflow_runs(db: Session, workflow_id: int) -> list[dict]:
+def list_workflow_runs(db: Session, workflow_id: int, params: PageParams, status: str = None) -> dict:
     get_workflow(db, workflow_id)
-    rows = db.query(Run).filter(Run.workflow_id == workflow_id).order_by(Run.id.desc()).all()
-    return [{"id": r.id, "status": r.status, "error": r.error, "output": r.output} for r in rows]
+    query = db.query(Run).filter(Run.workflow_id == workflow_id)
+    if status:
+        query = query.filter(Run.status == status)
+    return paginate(query.order_by(Run.id.desc()), params, lambda r: {
+        "id": r.id, "status": r.status, "error": r.error, "output": r.output,
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+    })

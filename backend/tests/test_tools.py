@@ -1,7 +1,9 @@
 def test_list_tools(client, auth_headers):
     res = client.get("/api/v1/tools", headers=auth_headers)
     assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    body = res.json()
+    assert isinstance(body["items"], list)
+    assert body["page"] == 1 and body["total"] >= len(body["items"])
 
 
 def test_tool_crud(client, auth_headers):

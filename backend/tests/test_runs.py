@@ -44,7 +44,7 @@ def _create_schedule(client, auth_headers, wid, name):
 
 
 def _runs_of_workflow(client, auth_headers, wid):
-    return [r for r in client.get("/api/v1/runs", headers=auth_headers).json() if r["workflow_id"] == wid]
+    return client.get(f"/api/v1/runs?workflow_id={wid}", headers=auth_headers).json()["items"]
 
 
 def test_workflow_run_success_writes_timing(client, auth_headers):
@@ -92,7 +92,7 @@ def test_scheduled_job_run_is_finalized(client, auth_headers):
         assert runs[0]["status"] == "success"
         assert runs[0]["finished_at"] is not None
 
-        sched = next(s for s in client.get("/api/v1/schedules", headers=auth_headers).json() if s["id"] == sid)
+        sched = next(s for s in client.get("/api/v1/schedules", headers=auth_headers).json()["items"] if s["id"] == sid)
         assert sched["last_run_at"] is not None
     finally:
         if sid:
@@ -113,7 +113,7 @@ def test_scheduled_job_failure_marks_run_failed(client, auth_headers):
         assert "boom-from-pytest" in runs[0]["error"]
         assert runs[0]["finished_at"] is not None
 
-        sched = next(s for s in client.get("/api/v1/schedules", headers=auth_headers).json() if s["id"] == sid)
+        sched = next(s for s in client.get("/api/v1/schedules", headers=auth_headers).json()["items"] if s["id"] == sid)
         assert sched["last_run_at"] is not None
     finally:
         if sid:

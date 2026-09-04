@@ -1,28 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag, InputNumber } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { listModels, createModel, updateModel, deleteModel } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function Models() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listModels)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
-
-  const load = async () => {
-    setLoading(true)
-    try {
-      const res: any = await listModels()
-      setData(res)
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '加载失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { load() }, [])
 
   const onSubmit = async (values: any) => {
     try {
@@ -30,7 +16,7 @@ export default function Models() {
       else await createModel(values)
       message.success('保存成功')
       setOpen(false)
-      load()
+      reload()
     } catch (e: any) {
       message.error(e.response?.data?.detail || '保存失败')
     }
@@ -47,7 +33,7 @@ export default function Models() {
       title: '操作', render: (_: any, record: any) => (
         <Space>
           <Button size="small" onClick={() => { setEditing(record); form.setFieldsValue({ ...record, api_key: '' }); setOpen(true) }}>编辑</Button>
-          <Popconfirm title="确定删除？" onConfirm={async () => { await deleteModel(record.id); load() }}>
+          <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteModel(record.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}>
             <Button size="small" danger>删除</Button>
           </Popconfirm>
         </Space>
@@ -62,7 +48,7 @@ export default function Models() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setOpen(true) }}>新增模型</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
       <Modal title={editing ? '编辑模型' : '新增模型'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ provider: 'openai', api_key: '' }}>

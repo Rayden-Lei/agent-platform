@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag, InputNumber } from 'antd'
 import { PlusOutlined, ExperimentOutlined } from '@ant-design/icons'
 import { listTools, createTool, updateTool, deleteTool, testTool } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function Tools() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listTools)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [testTarget, setTestTarget] = useState<any>(null)
@@ -13,12 +13,6 @@ export default function Tools() {
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
   const [form] = Form.useForm()
-
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listTools() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
 
   const onSubmit = async (values: any) => {
     try {
@@ -32,7 +26,7 @@ export default function Tools() {
       message.success(editing ? '保存成功' : '创建成功')
       setOpen(false)
       form.resetFields()
-      load()
+      reload()
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
@@ -65,7 +59,7 @@ export default function Tools() {
         <Space>
           <Button size="small" icon={<ExperimentOutlined />} onClick={() => { setTestTarget(r); setTestArgs('{}'); setTestResult(null) }}>测试</Button>
           <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
-          <Popconfirm title="确定删除？" onConfirm={async () => { await deleteTool(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+          <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteTool(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
         </Space>
       ),
     },
@@ -78,7 +72,7 @@ export default function Tools() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增工具</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title={editing ? '编辑工具' : '新增工具'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>

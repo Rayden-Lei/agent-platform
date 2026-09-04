@@ -1,17 +1,16 @@
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.pagination import PageParams, paginate
 from app.core.scheduler import add_schedule_job, remove_schedule_job
 from app.db.models import ScheduledJob, User
 
 
-def list_schedules(db: Session) -> list[dict]:
-    rows = db.query(ScheduledJob).order_by(ScheduledJob.id.desc()).all()
-    return [
-        {"id": s.id, "name": s.name, "workflow_id": s.workflow_id, "cron": s.cron, "input": s.input,
-         "is_enabled": s.is_enabled, "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None}
-        for s in rows
-    ]
+def list_schedules(db: Session, params: PageParams) -> dict:
+    return paginate(db.query(ScheduledJob).order_by(ScheduledJob.id.desc()), params, lambda s: {
+        "id": s.id, "name": s.name, "workflow_id": s.workflow_id, "cron": s.cron, "input": s.input,
+        "is_enabled": s.is_enabled, "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
+    })
 
 
 def create_schedule(db: Session, data, user: User) -> dict:

@@ -1,22 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, message, Popconfirm, Space, Tag, Card } from 'antd'
 import { PlusOutlined, PlayCircleOutlined, EditOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { listWorkflows, deleteWorkflow, runWorkflow } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 export default function Workflows() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listWorkflows)
   const [runWf, setRunWf] = useState<any>(null)
   const [runInput, setRunInput] = useState('')
   const [runResult, setRunResult] = useState<any>(null)
   const navigate = useNavigate()
-
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listWorkflows() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
 
   const doRun = async () => {
     try {
@@ -35,7 +29,7 @@ export default function Workflows() {
       <Space>
         <Button size="small" icon={<EditOutlined />} onClick={() => navigate('/workflows/' + r.id + '/edit')}>编辑</Button>
         <Button size="small" icon={<PlayCircleOutlined />} onClick={() => { setRunWf(r); setRunInput(''); setRunResult(null) }}>运行</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { await deleteWorkflow(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+        <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteWorkflow(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
   ]
@@ -47,7 +41,7 @@ export default function Workflows() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>新建工作流</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title={'运行工作流：' + (runWf?.name || '')} open={!!runWf} onCancel={() => setRunWf(null)} onOk={doRun} okText="运行">
@@ -58,7 +52,7 @@ export default function Workflows() {
         </Form>
         {runResult && (
           <Card size="small" style={{ marginTop: 12 }}>
-            <div>状态：<Tag color={runResult.status === 'success' ? 'green' : 'red'}>{runResult.status}</Tag></div>
+            <div>状态：<Tag color={runResult.status === 'success' ? 'green' : runResult.status === 'awaiting_review' ? 'orange' : 'red'}>{runResult.status}</Tag></div>
             <div>输出：{JSON.stringify(runResult.output)}</div>
             {runResult.error && <div style={{ color: 'red' }}>错误：{runResult.error}</div>}
           </Card>

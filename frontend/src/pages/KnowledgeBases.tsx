@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Drawer, Upload, Tag, List, Divider, Descriptions, Empty, Typography, Card, Switch, Select } from 'antd'
 import { PlusOutlined, UploadOutlined, FolderOpenOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons'
-import { listKBs, createKB, updateKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks } from '../api'
+import { listKBs, createKB, updateKB, deleteKB, listDocs, uploadDoc, searchKB, listDocChunks, OPTIONS_PAGE } from '../api'
+import { usePagedList } from '../hooks/usePagedList'
 
 const { Paragraph, Text } = Typography
 
 export default function KnowledgeBases() {
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
+  const { tableProps, reload } = usePagedList(listKBs)
   const [open, setOpen] = useState(false)
   const [drawerKb, setDrawerKb] = useState<any>(null)
   const [docs, setDocs] = useState<any[]>([])
@@ -18,18 +18,13 @@ export default function KnowledgeBases() {
   const [searching, setSearching] = useState(false)
   const [chunkDoc, setChunkDoc] = useState<any>(null)
   const [chunks, setChunks] = useState<any[]>([])
+  const [chunkPage, setChunkPage] = useState({ page: 1, pageSize: 20, total: 0 })
   const [chunksLoading, setChunksLoading] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form] = Form.useForm()
 
-  const load = async () => {
-    setLoading(true)
-    try { setData(await listKBs() as any) } catch (e: any) { message.error(e.response?.data?.detail || '加载失败') } finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
-
   const loadDocs = async (kbId: number) => {
-    try { setDocs(await listDocs(kbId) as any) } catch (e: any) { message.error('加载文档失败') }
+    try { setDocs((await listDocs(kbId, OPTIONS_PAGE)).items) } catch (e: any) { message.error(e.response?.data?.detail || '加载文档失败') }
   }
 
   const openDocs = (kb: any) => {
@@ -55,19 +50,20 @@ export default function KnowledgeBases() {
       setOpen(false)
       setEditingId(null)
       form.resetFields()
-      load()
+      reload()
     } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
   }
 
-  const loadChunks = async (doc: any) => {
+  const loadChunks = async (doc: any, page = 1, pageSize = 20) => {
     setChunkDoc(doc)
     setChunks([])
     setChunksLoading(true)
     try {
-      const res: any = await listDocChunks(drawerKb.id, doc.id)
-      setChunks(res.items || [])
-      setChunkDoc({ ...doc, chunk_count: res.chunk_count ?? doc.chunk_count })
-    } catch (e: any) { message.error('加载切片失败') } finally { setChunksLoading(false) }
+      const res = await listDocChunks(drawerKb.id, doc.id, { page, page_size: pageSize })
+      setChunks(res.items)
+      setChunkPage({ page: res.page, pageSize: res.page_size, total: res.total })
+      setChunkDoc({ ...doc, chunk_count: res.total })
+    } catch (e: any) { message.error(e.response?.data?.detail || '加载切片失败') } finally { setChunksLoading(false) }
   }
 
   const doSearch = async () => {
@@ -92,7 +88,7 @@ export default function KnowledgeBases() {
       <Space>
         <Button size="small" icon={<FolderOpenOutlined />} onClick={() => openDocs(r)}>文档</Button>
         <Button size="small" onClick={() => { form.setFieldsValue({ ...r, name: r.name, description: r.description, embedding_model: r.embedding_model || 'text-embedding-3-small', chunk_size: r.chunk_size, chunk_overlap: r.chunk_overlap, is_public: r.is_public, visible_roles: r.visible_roles || [] }); setEditingId(r.id); setOpen(true) }}>权限</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { await deleteKB(r.id); load() }}><Button size="small" danger>删除</Button></Popconfirm>
+        <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteKB(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
       </Space>
     ) },
   ]
@@ -104,7 +100,7 @@ export default function KnowledgeBases() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setEditingId(null); setOpen(true) }}>新建知识库</Button>
       </div>
       <div className="fixed-table-wrapper">
-        <Table rowKey="id" loading={loading} dataSource={data} columns={columns} scroll={{ x: 'max-content' }} pagination={{ position: ['bottomRight'], showSizeChanger: true, showTotal: (t) => '共 ' + t + ' 条' }} />
+        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
       <Modal title={editingId ? '编辑知识库权限' : '新建知识库'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
@@ -201,15 +197,16 @@ export default function KnowledgeBases() {
       </Drawer>
 
       <Drawer title={'切片：' + (chunkDoc?.name || '')} open={!!chunkDoc} onClose={() => setChunkDoc(null)} width={760}>
-        <div style={{ marginBottom: 12, color: '#64748b' }}>共 {chunks.length} 个切片</div>
+        <div style={{ marginBottom: 12, color: '#64748b' }}>共 {chunkPage.total} 个切片</div>
         <List
           loading={chunksLoading}
           dataSource={chunks}
+          pagination={{ current: chunkPage.page, pageSize: chunkPage.pageSize, total: chunkPage.total, size: 'small', showSizeChanger: false, onChange: (p) => loadChunks(chunkDoc, p, chunkPage.pageSize) }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无切片" /> }}
           renderItem={(c: any, idx) => (
             <List.Item style={{ display: 'block', padding: '12px 0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-                <Text strong>#{idx + 1}</Text>
+                <Text strong>#{(chunkPage.page - 1) * chunkPage.pageSize + idx + 1}</Text>
                 <Space size={6} wrap>
                   <Tag color="blue">{c.token_count ?? 0} tokens</Tag>
                 </Space>
