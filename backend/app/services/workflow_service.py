@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 
 from langgraph.types import Command
@@ -6,7 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.db.models import Agent, Run, User, Workflow
+from app.services import run_service
 from app.workflow.engine import build_workflow
+
+logger = logging.getLogger(__name__)
 
 
 def list_workflows(db: Session) -> list[dict]:
@@ -78,31 +82,37 @@ async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> d
         return {"status": "failed", "error": str(e)}
 
 
+def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: str = None) -> dict:
+    """同步执行（或续跑）一张工作流图，并收尾运行记录。接口触发（线程池）与定时任务（调度线程）共用。
+
+    payload 为首跑的初始 state，或人工审核后的 Command(resume=...)。
+    thread_id 固定用 run.id：图编译时绑了 checkpointer，不传会直接抛错；resume 也靠它找回被中断的图。
+    永不抛出：任何异常都落到 run.error 并返回 failed，调用方按返回值判断。
+    """
+    try:
+        graph = build_workflow(workflow.graph, run_id=run.id, role=role)
+        result = graph.invoke(payload, {"configurable": {"thread_id": str(run.id)}})
+    except Exception as e:
+        logger.exception("工作流执行失败 run_id=%s workflow_id=%s", run.id, workflow.id)
+        run_service.finalize_run(db, run, "failed", error=str(e))
+        return {"run_id": run.id, "status": "failed", "error": str(e)}
+
+    steps = result.get("steps", [])
+    iv = _interrupt_value(result)
+    if iv is not None:
+        # 等待人工审核不是终态：不写 finished_at，resume 后再收尾
+        run.status = "awaiting_review"
+        run.output = {"interrupt": iv, "steps": steps}
+        db.commit()
+        return {"run_id": run.id, "status": "awaiting_review", "interrupt": iv, "steps": steps}
+    run_service.finalize_run(db, run, "success", output={"output": result.get("output"), "steps": steps})
+    return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": steps}
+
+
 async def run_workflow(db: Session, workflow_id: int, input_text: str, user) -> dict:
     w = get_workflow(db, workflow_id)
-    run = Run(run_type="workflow", workflow_id=workflow_id, user_id=user.id, status="running", input={"input": input_text})
-    db.add(run)
-    db.commit()
-    db.refresh(run)
-
-    try:
-        graph = build_workflow(w.graph, run_id=run.id, role=user.role)
-        result = await asyncio.to_thread(graph.invoke, {"input": input_text, "steps": []}, {"configurable": {"thread_id": str(run.id)}})
-        iv = _interrupt_value(result)
-        if iv is not None:
-            run.status = "awaiting_review"
-            run.output = {"interrupt": iv, "steps": result.get("steps", [])}
-            db.commit()
-            return {"run_id": run.id, "status": "awaiting_review", "interrupt": iv, "steps": result.get("steps", [])}
-        run.status = "success"
-        run.output = {"output": result.get("output"), "steps": result.get("steps", [])}
-        db.commit()
-        return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": result.get("steps", [])}
-    except Exception as e:
-        run.status = "failed"
-        run.error = str(e)
-        db.commit()
-        return {"run_id": run.id, "status": "failed", "error": str(e)}
+    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text})
+    return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
 
 
 async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict) -> dict:
@@ -112,25 +122,8 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
         raise BizError(404, "运行记录不存在")
     if run.status != "awaiting_review":
         raise BizError(400, "该运行不在待审核状态")
-
-    try:
-        role = db.get(User, run.user_id).role if run.user_id else None
-        graph = build_workflow(w.graph, run_id=run.id, role=role)
-        result = await asyncio.to_thread(graph.invoke, Command(resume=decision), {"configurable": {"thread_id": str(run_id)}})
-        iv = _interrupt_value(result)
-        if iv is not None:
-            run.output = {"interrupt": iv, "steps": result.get("steps", [])}
-            db.commit()
-            return {"run_id": run.id, "status": "awaiting_review", "interrupt": iv, "steps": result.get("steps", [])}
-        run.status = "success"
-        run.output = {"output": result.get("output"), "steps": result.get("steps", [])}
-        db.commit()
-        return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": result.get("steps", [])}
-    except Exception as e:
-        run.status = "failed"
-        run.error = str(e)
-        db.commit()
-        return {"run_id": run.id, "status": "failed", "error": str(e)}
+    role = db.get(User, run.user_id).role if run.user_id else None
+    return await asyncio.to_thread(execute_workflow, db, w, run, Command(resume=decision), role)
 
 
 def list_workflow_runs(db: Session, workflow_id: int) -> list[dict]:

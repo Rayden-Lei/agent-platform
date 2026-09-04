@@ -10,6 +10,7 @@ from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
 from app.model_gateway.gateway import build_llm
 from app.rag.retriever import retrieve, retrieve_with_stats
+from app.services import run_service
 from app.tools.langchain_tools import build_tools
 
 
@@ -111,10 +112,7 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
         db.refresh(conversation)
 
     db.add(Message(conversation_id=conversation.id, role="user", content=message))
-    run = Run(run_type="chat", agent_id=agent_id, user_id=user_id, status="running", input={"message": message})
-    db.add(run)
-    db.commit()
-    db.refresh(run)
+    run = run_service.create_run(db, "chat", user_id, agent_id=agent_id, input_data={"message": message})
     return conversation.id, run.id
 
 
@@ -171,11 +169,21 @@ def save_assistant_message(db: Session, conversation_id: int, content: str, cita
 def finalize_run(db: Session, run_id: int, status: str, content: str = None, usage: dict = None, error: str = None) -> None:
     run = db.get(Run, run_id)
     if run:
-        run.status = status
-        if content is not None:
-            run.output = {"content": content}
-        if usage is not None:
-            run.token_usage = usage
-        if error:
-            run.error = error
-        db.commit()
+        output = {"content": content} if content is not None else None
+        run_service.finalize_run(db, run, status, output=output, usage=usage, error=error)
+
+
+def finalize_cancelled_chat(db: Session, run_id: int, conversation_id: int, partial_content: str,
+                            citations: list, usage: dict, tool_calls: list) -> bool:
+    """客户端中断（停止按钮/断网）时的收尾：已生成的部分回答落库，运行记录置为 cancelled。
+
+    部分回答也要落库：界面上用户已经看到了这段内容，不存的话刷新后会只剩一条孤零零的用户消息。
+    幂等：运行已是终态（正常 done 或 failed）则什么都不做，不会重复写消息。返回是否实际收尾。
+    """
+    run = db.get(Run, run_id)
+    if run is None or run.status in run_service.FINAL_STATUSES:
+        return False
+    if partial_content:
+        save_assistant_message(db, conversation_id, partial_content, citations, usage or {}, tool_calls)
+    run_service.finalize_run(db, run, "cancelled", output={"content": partial_content}, usage=usage or None)
+    return True

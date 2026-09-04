@@ -1,4 +1,5 @@
 import json
+import logging
 import warnings
 
 from fastapi import APIRouter, Depends
@@ -16,6 +17,8 @@ from app.core.exceptions import BizError
 from app.db.models import AuditLog, User
 from app.db.session import SessionLocal, get_db
 from app.services import chat_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
@@ -36,15 +39,27 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
 
     async def event_stream():
         db2 = SessionLocal()
+        final_content = ""
+        usage_total: dict = {}
+        tool_calls_list: list = []
+        citations: list = []
+        # 已正常收尾（done / failed）。finally 里据此判断是否为客户端中断（停止按钮/断网）导致生成器被关闭。
+        finished = False
         try:
             try:
                 ctx = chat_service.build_chat_context(db2, agent_id, message_text, conversation_id, role=user.role)
             except BizError as e:
+                chat_service.finalize_run(db2, run_id, "failed", error=e.detail)
+                finished = True
                 yield _sse({"type": "error", "message": e.detail})
                 return
             except Exception as e:
+                logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", run_id, agent_id)
+                chat_service.finalize_run(db2, run_id, "failed", error=str(e))
+                finished = True
                 yield _sse({"type": "error", "message": "上下文构建失败: " + str(e)[:300]})
                 return
+            citations = ctx.citations
 
             # 审计：记录检索鉴权（uid/query/召回 chunk_id/鉴权剔除数）
             db2.add(AuditLog(
@@ -56,11 +71,8 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             yield _sse({"type": "citations", "citations": ctx.citations})
 
             graph = create_react_agent(ctx.llm, ctx.tools, prompt=ctx.system_prompt)
-            final_content = ""
-            usage_total = {}
             tool_call_acc: dict[int, dict] = {}
             tool_call_by_id: dict[str, int] = {}
-            tool_calls_list = []
             try:
                 async for chunk, _meta in graph.astream({"messages": ctx.history_messages}, stream_mode="messages"):
                     if isinstance(chunk, AIMessageChunk):
@@ -110,12 +122,21 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
 
                 assistant_msg = chat_service.save_assistant_message(db2, conversation_id, final_content, ctx.citations, usage_total, tool_calls_list)
                 chat_service.finalize_run(db2, run_id, "success", content=final_content, usage=usage_total)
+                finished = True
                 yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id,
                             "conversation_id": conversation_id, "usage": usage_total})
             except Exception as e:
+                logger.exception("对话生成失败 run_id=%s agent_id=%s", run_id, agent_id)
                 chat_service.finalize_run(db2, run_id, "failed", error=str(e))
+                finished = True
                 yield _sse({"type": "error", "message": str(e)})
         finally:
+            if not finished:
+                # 客户端中断：把已生成的部分回答落库，运行记录置为 cancelled，避免永远停在 running
+                try:
+                    chat_service.finalize_cancelled_chat(db2, run_id, conversation_id, final_content, citations, usage_total, tool_calls_list)
+                except Exception:
+                    logger.exception("对话中断收尾失败 run_id=%s", run_id)
             db2.close()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

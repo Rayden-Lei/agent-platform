@@ -1,3 +1,4 @@
+import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -46,6 +47,10 @@ async def lifespan(_app: FastAPI):
     get_scheduler()
     yield
 
+
+# 最小日志配置：uvicorn 只给自己的 logger 配 handler，应用侧 logger 的 INFO/ERROR 否则会被丢掉。
+# basicConfig 在 root 已有 handler 时不生效，因此不会覆盖 pytest 等外部环境的配置。
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 app.add_middleware(
