@@ -1,53 +1,44 @@
-# 智能体中台 - 后端服务
+# 后端服务
 
-技术栈：FastAPI + SQLAlchemy 2.0 + PostgreSQL(pgvector) + Redis + MinIO
+FastAPI + SQLAlchemy 2.0 + LangChain / LangGraph + PostgreSQL（pgvector）+ Redis + MinIO + APScheduler。
 
-## 目录结构
+## 目录
+
+```
 app/
-  main.py            应用入口
-  config.py          配置（.env）
-  db/                base/session/models（17 张表）
-  core/              security（JWT/bcrypt/AES）、deps（鉴权依赖）
-  schemas/           Pydantic 模型
-  api/v1/            auth/users/models/agents 路由
-  model_gateway/     模型网关（待实现）
-  rag/               RAG 管道（待实现）
-  workflow/          工作流引擎（待实现）
-  tools/             工具执行器（待实现）
-  tasks/             后台任务（待实现）
+  main.py            应用装配：日志、CORS、路由、启动建表与初始化管理员、调度器
+  config.py          pydantic-settings 读 .env
+  api/v1/            一模块一路由文件，router.py 汇总
+  schemas/           多路由共享的 Pydantic 模型
+  services/          业务规则与事务边界
+  core/              security / deps / exceptions / audit / scheduler
+  db/                base / session / models（17 张表）
+  model_gateway/     数据库模型配置 → LangChain ChatModel
+  rag/               parser / pipeline / embeddings / retriever / rerank / minio_client
+  workflow/engine.py 工作流 JSON → LangGraph 图，10 类节点
+  tools/             executor（内置 + HTTP）、langchain_tools
 scripts/
-  setup_db.py        创建数据库 + vector 扩展
-  init_db.py         建表 + 初始化管理员
+  setup_db.py        建库 + vector 扩展
+  init_db.py         建表 + 管理员（应用启动也会做）
+  migrations/        幂等迁移脚本，按文件名顺序执行
+  test_*.py          手工联调脚本
+tests/               pytest
+```
 
-## 快速开始
+## 启动
 
-> 要求 **Python 3.12+**（LangChain 1.x 需 3.10+，用 3.9 会报 `create_agent` 缺失）。依赖用 uv 管理。
+```bash
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python -r requirements.txt pytest
+cp .env.example .env
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-1. 建虚拟环境并装依赖：
-   uv venv .venv --python 3.12
-   source .venv/bin/activate
-   uv pip install -r requirements.txt
-2. 配置 .env（参考 .env.example）
-3. 初始化数据库：
-   PYTHONPATH=. python3 scripts/setup_db.py
-   PYTHONPATH=. python3 scripts/init_db.py
-4. 启动：python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-5. 健康检查：curl http://127.0.0.1:8000/health
+## 验证
 
-## 默认账号
-admin / admin123（角色 admin）
+```bash
+.venv/bin/python -c "from app.main import app"
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -v
+```
 
-## 已完成
-- JWT 登录/me、角色鉴权（admin/developer/caller）
-- 用户管理（管理员 CRUD）
-- 模型管理（CRUD + API 密钥 AES 加密）
-- 智能体管理（CRUD + 发布版本）
-- 17 张表数据库模型（含 pgvector 向量列）
-
-## 待实现
-- 模型网关（chat/chat_stream 流式）
-- 对话运行时（SSE + 工具调用循环 + RAG 检索）
-- 工具执行器（内置 + HTTP）
-- RAG 管道（文档解析/切片/向量化/检索）
-- 工作流引擎（DAG 拓扑执行 + 6 类节点）
-- 知识库/文档/工作流/运行记录 API
+细节见 `../docs/06-后端规范.md` 与 `../docs/08-运行与部署.md`。

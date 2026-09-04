@@ -1,23 +1,13 @@
-# 后端开发规范与铁律（简版）
+# 后端铁律卡片
 
-完整版见 docs/03-开发规范与铁律.txt
+完整规范见 `../docs/05-开发规范.md` 与 `../docs/06-后端规范.md`，本卡片只列改代码前必须记住的几条。
 
-## 铁律
-1. 改文件先 read 完整，再 edit；严禁 read 部分 + write 回写（会截断文件）。
-2. 改完必验：PYTHONPATH=. python3 -c "from app.main import app"
-3. 测试用 .py 脚本文件，禁止 shell -c 内联复杂 JSON。
-
-## 分层
-api 路由 / services 业务 / core 安全鉴权异常 / db 模型会话 /
-model_gateway 模型 / rag 知识库 / workflow 工作流 / tools 工具 / tasks 任务
-
-## 框架
-FastAPI + SQLAlchemy 2.0 + Alembic；LangChain ChatOpenAI（OpenAI 兼容）；
-agent 用 create_agent；工作流用 LangGraph StateGraph；向量用 pgvector。
-
-## 安全
-bcrypt 密码、AES 密钥加密、JWT + 三角色鉴权、接口返回密钥脱敏、日志不落敏感信息。
-
-## 接口
-REST + JSON，前缀 /api/v1，统一 code/message/data，分页 page/page_size，
-流式 SSE，错误码 401/403/404/422/500/504。
+1. 改文件先读完整，再精确替换；禁止只读一段就整体写回。
+2. 改完必验：`.venv/bin/python -c "from app.main import app"` 与 `PYTHONPATH=. .venv/bin/python -m pytest tests/ -v`。
+3. 错误不吞：禁止 `except Exception: pass`；要么处理，要么 `logger.exception`。
+4. 运行记录只走 `run_service.create_run / finalize_run`。
+5. 路由不写业务，业务在 `services/`，服务层抛 `BizError(status, detail)`。
+6. 表结构变更必落 `scripts/migrations/` 幂等脚本并更新 `docs/03`。
+7. 接口变更同批改 `docs/04` 与 `frontend/src/api/index.ts`。
+8. 密钥不进仓库、不进日志；共享库上的破坏性操作先确认。
+9. 测试脚本写成 `.py` 文件，不用 shell 内联 JSON。
