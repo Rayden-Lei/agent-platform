@@ -191,7 +191,7 @@ class ApiKey(Base):
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(64), nullable=False)
     key_prefix = Column(String(16), nullable=False)
-    key_hash = Column(String(128), nullable=False)
+    key_hash = Column(String(128), nullable=False, index=True)  # 鉴权按哈希查找
     is_enabled = Column(Boolean, nullable=False, default=True)
     quota = Column(Integer, nullable=False, default=1000)
     used = Column(Integer, nullable=False, default=0)

@@ -61,12 +61,12 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
 
 
 @router.post("/{workflow_id}/run")
-async def run_workflow(workflow_id: int, data: RunIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+async def run_workflow(workflow_id: int, data: RunIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
     return await workflow_service.run_workflow(db, workflow_id, data.input, user)
 
 
 @router.post("/{workflow_id}/runs/{run_id}/resume")
-async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
     return await workflow_service.resume_workflow(db, workflow_id, run_id, data.decision)
 
 

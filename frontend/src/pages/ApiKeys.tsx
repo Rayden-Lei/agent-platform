@@ -61,6 +61,9 @@ export default function ApiKeys() {
 
       <Modal title="API Key 已生成（仅显示一次，请复制保存）" open={!!createdKey} onCancel={() => setCreatedKey(null)} footer={<Button type="primary" onClick={() => setCreatedKey(null)}>我已保存</Button>}>
         <div style={{ background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 6, padding: 12, fontFamily: 'monospace', wordBreak: 'break-all' }}>{createdKey}</div>
+        <div style={{ marginTop: 10, fontSize: 12, color: '#64748b', lineHeight: 1.7 }}>
+          调用方式：请求头 <code>Authorization: Bearer {'<key>'}</code>。可调用对话、会话、工作流运行接口，管理类接口不接受 API Key；每次请求消耗 1 次配额。
+        </div>
       </Modal>
     </div>
   )
