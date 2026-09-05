@@ -4,6 +4,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, Tool
 from app.tools.executor import execute_tool
+from app.tools.schema import check_tool_args
 
 
 def list_tools(db: Session, params: PageParams, q: str = None) -> dict:
@@ -64,6 +65,10 @@ def delete_tool(db: Session, tool_id: int) -> None:
 
 
 async def test_tool(db: Session, tool_id: int, args: dict) -> dict:
-    """用给定参数实际执行一次工具，供前端测试配置是否可用。"""
+    """用给定参数实际执行一次工具，供前端测试配置是否可用。HTTP 工具先按参数声明校验，不合法 400 且不发起调用。"""
     t = get_tool(db, tool_id)
+    try:
+        args = check_tool_args(t, args)
+    except ValueError as e:
+        raise BizError(400, str(e)) from e
     return await execute_tool(t, args)

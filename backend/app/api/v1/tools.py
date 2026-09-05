@@ -4,7 +4,7 @@
 """
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
@@ -12,18 +12,34 @@ from app.core.pagination import PageParams, page_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import tool_service
+from app.tools.schema import ToolParameters, format_validation_error
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 
 
 class ToolIn(BaseModel):
-    """工具配置请求体：type 默认 builtin（内置工具）；config 为工具参数；timeout 为调用超时（秒）。"""
+    """工具配置请求体：type 默认 builtin（内置工具）；config 为工具参数；timeout 为调用超时（秒）。
+
+    config.parameters（HTTP 工具的参数声明，FR-030）在这里按 JSON Schema 子集校验并规范化，不合法 422。
+    """
 
     name: str
     description: str
     type: str = "builtin"
-    config: dict = {}
+    config: dict = Field(default_factory=dict)
     timeout: int = 30
+
+    @field_validator("config")
+    @classmethod
+    def _check_parameters(cls, config: dict) -> dict:
+        if "parameters" not in config:
+            return config
+        try:
+            parameters = ToolParameters.model_validate(config["parameters"])
+        except ValidationError as e:
+            raise ValueError(f"config.parameters 不合法：{format_validation_error(e)}") from e
+        # 落库前规范化：补齐 type / required，去掉 enum: null，前端与引擎拿到的结构固定
+        return {**config, "parameters": parameters.model_dump(exclude_none=True)}
 
 
 class ToolTestIn(BaseModel):

@@ -15,6 +15,7 @@ from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
 from app.tools.executor import execute_tool
+from app.tools.schema import check_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +230,8 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
                 args = fixed_args
             else:
                 args = json.loads(input_val) if isinstance(input_val, str) else (input_val or {})
+            # HTTP 工具按参数声明校验（FR-030）：不合法抛 ValueError → 节点 failed，错误文本"参数校验失败：..."
+            args = check_tool_args(tool_db, args)
             result = asyncio.run(execute_tool(tool_db, args))
             out = _finalize_node_output(state, node_id, result, config)
             out["steps"] = [*state.get("steps", []), f"tool:{tool_name}"]

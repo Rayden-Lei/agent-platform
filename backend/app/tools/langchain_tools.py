@@ -3,9 +3,11 @@ import logging
 from datetime import datetime
 
 from langchain_core.tools import StructuredTool, tool
+from pydantic import ValidationError
 
 from app.db.models import Tool
 from app.tools.executor import _execute_http, _safe_eval
+from app.tools.schema import ToolParameters, build_args_model, format_validation_error, parse_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -28,25 +30,34 @@ def calculator(expression: str) -> str:
 
 
 def _build_http_tool(t: Tool):
-    """把 DB 中的 HTTP 工具转成 LangChain StructuredTool。
+    """把 DB 中的 HTTP 工具转成 LangChain StructuredTool（FR-030）。
 
-    LangChain 工具函数接收字符串参数，这里先 json.loads 再交给 executor；
-    模型传参不是合法 JSON 时降级为空参数调用并记日志，避免工具静默失败。
+    按 config.parameters 生成 args_schema，模型看到参数名 / 类型 / 必填 / 枚举并以结构化参数调用；
+    未声明参数的工具暴露为无参数工具，模型只能以 {} 调用。
+    参数不符合声明时不抛异常中断对话：校验错误作为工具结果回给模型让它纠正，同时打 WARN 留痕。
     """
-    async def _run(arguments: str) -> str:
-        try:
-            args = json.loads(arguments or "{}")
-        except json.JSONDecodeError as e:
-            # 模型给的参数不是合法 JSON：按空参数调用，但要记下来，否则表现为"工具总是没带参数"
-            logger.warning("工具 %s 的参数不是合法 JSON，按空参数调用：%s", t.name, e)
-            args = {}
-        result = await _execute_http(t, args)
+    try:
+        parameters = parse_parameters(t.config)
+    except ValidationError as e:
+        # 库里的声明不合法（绕过接口直接写库）：按无参数工具暴露，不让一个坏工具拖垮整个对话
+        logger.warning("工具 %s 的参数声明不合法，按无参数工具暴露：%s", t.name, format_validation_error(e))
+        parameters = ToolParameters()
+
+    async def _run(**kwargs) -> str:
+        # LangChain 会把可选参数的默认 None 一并传进来，不过滤会变成 ?days= 这种空查询参数
+        result = await _execute_http(t, {k: v for k, v in kwargs.items() if v is not None})
         return json.dumps(result, ensure_ascii=False)
+
+    def _on_validation_error(e: ValidationError) -> str:
+        logger.warning("工具 %s 收到不符合声明的参数：%s", t.name, format_validation_error(e))
+        return f"参数校验失败：{format_validation_error(e)}"
 
     return StructuredTool.from_function(
         name=t.name,
         description=t.description,
         coroutine=_run,
+        args_schema=build_args_model(parameters, f"{t.name}_args"),
+        handle_validation_error=_on_validation_error,
     )
 
 
