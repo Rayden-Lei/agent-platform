@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     MODEL_BREAKER_OPEN_SECONDS: int = 30
     RAG_TOP_K: int = 4
     CHAT_HISTORY_MAX_MESSAGES: int = 20
+    # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入
+    CHAT_SUMMARY_BATCH_MESSAGES: int = 10
     CHAT_TITLE_MAX_LEN: int = 30
     TOOL_CALL_MAX_ROUNDS: int = 8
     LOOP_MAX_ITERATIONS: int = 20

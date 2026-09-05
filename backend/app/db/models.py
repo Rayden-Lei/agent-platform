@@ -141,6 +141,10 @@ class Conversation(Base, TimestampMixin):
     workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=True)
+    # 对话摘要持久化（FR-031）：summary 覆盖 id ≤ summary_upto_message_id 的更早消息，按批增量折叠，不再每轮重算
+    summary = Column(Text, nullable=True)
+    summary_upto_message_id = Column(BigInteger, nullable=True)
+    summary_updated_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class Message(Base):

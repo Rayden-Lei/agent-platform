@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -42,35 +43,63 @@ def _history_to_messages(rows: list) -> list:
     return msgs
 
 
-def _summarize_history(model: ModelConfig, llm: Any, older: list) -> str:
-    """用 LLM 把较早历史压缩为简短摘要；失败或为空时退回字符截断兜底。
+# 摘要失败时待折叠消息退回原文注入的字符上限：摘要不可用也要保证注入的 token 有界
+SUMMARY_FALLBACK_CHARS = 2000
+
+
+def _plain_text(messages: list) -> str:
+    return "\n".join(f"{m.type}: {m.content}" for m in messages)
+
+
+def _summarize_history(model: ModelConfig, llm: Any, previous_summary: str, pending: list) -> str | None:
+    """用 LLM 把"旧摘要 + 待折叠消息"压成一段新摘要；失败或为空返回 None，由调用方决定降级方式。
 
     熔断打开期间 guarded_invoke 直接抛 503，这里同样走降级不对外报错；失败照常计入该模型的连续失败。
     """
-    text = "\n".join(f"{m.type}: {m.content}" for m in older)
     prompt = (
         "你是对话摘要助手。请把下面的历史对话压缩成一段不超过 150 字的摘要，"
-        "只保留用户目标、关键事实和已确认结论，不要编造信息：\n\n" + text
+        "只保留用户目标、关键事实和已确认结论，不要编造信息。\n\n"
     )
+    if previous_summary:
+        prompt += "【更早对话的已有摘要】\n" + previous_summary + "\n\n【需要并入摘要的新对话】\n"
+    prompt += _plain_text(pending)
     try:
         resp = guarded_invoke(model, llm, prompt)
         summary = (resp.content or "").strip() if resp else ""
     except Exception as e:
-        # 摘要失败不影响对话，但历史会退化为字符截断，质量下降，必须能看见
-        logger.warning("历史摘要生成失败，退回字符截断：%s", e)
-        summary = ""
-    # 兜底：摘要不可用时按字符截断，保证 token 仍是有界的
-    return summary or text[:2000]
+        # 摘要失败不影响对话，但这批历史会退化为字符截断，质量下降，必须能看见
+        logger.warning("历史摘要生成失败，本轮待折叠消息退回字符截断：%s", e)
+        return None
+    return summary or None
 
 
-def _build_history_messages(model: ModelConfig, llm: Any, rows: list, max_messages: int) -> list:
-    """有界历史：保留最近 max_messages 条，更早的压缩为摘要后以 SystemMessage 注入。"""
+def _build_history_messages(db: Session, model: ModelConfig, llm: Any, conversation: Conversation, rows: list, max_messages: int) -> list:
+    """有界历史（FR-031）：保留最近 max_messages 条原文，更早的按批折叠进会话上持久化的摘要。
+
+    更早消息里 id 大于 summary_upto_message_id 的是"待折叠"：攒够 CHAT_SUMMARY_BATCH_MESSAGES 条才调一次模型，
+    把旧摘要与它们压成新摘要并落库；不足一批时按原文注入。摘要调用因此从每轮一次降为每批一次，且输入有界。
+    摘要失败时旧摘要与边界不动、本轮待折叠消息退回截断原文，下一轮再试；截断文本不当摘要落库。
+    注入顺序：[摘要] + 未折叠的更早消息原文 + 最近 max_messages 条。
+    """
     if len(rows) <= max_messages:
         return _history_to_messages(rows)
-    older = _history_to_messages(rows[:-max_messages])
-    recent = _history_to_messages(rows[-max_messages:])
-    summary = _summarize_history(model, llm, older)
-    return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
+    older_rows, recent_rows = rows[:-max_messages], rows[-max_messages:]
+    upto = conversation.summary_upto_message_id or 0
+    summary = conversation.summary or ""
+    pending_rows = [r for r in older_rows if r.id > upto]
+    pending = _history_to_messages(pending_rows)
+    if len(pending_rows) >= settings.CHAT_SUMMARY_BATCH_MESSAGES:
+        new_summary = _summarize_history(model, llm, summary, pending)
+        if new_summary:
+            conversation.summary = new_summary
+            conversation.summary_upto_message_id = pending_rows[-1].id
+            conversation.summary_updated_at = datetime.now(timezone.utc)
+            db.commit()
+            summary, pending = new_summary, []
+        else:
+            pending = [SystemMessage(content="以下是更早对话的原文节选（摘要暂不可用，已截断）：\n" + _plain_text(pending)[:SUMMARY_FALLBACK_CHARS])]
+    messages = [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] if summary else []
+    return messages + pending + _history_to_messages(recent_rows)
 
 
 REWRITE_TIMEOUT_SECONDS = 10
@@ -180,8 +209,12 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
             )
     system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
+    conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
-    lc_messages = _build_history_messages(model, llm, history, settings.CHAT_HISTORY_MAX_MESSAGES)
+    # prepare_chat 已把本轮用户消息落库，历史里的最后一行就是它；不剔除会让模型收到两条相同的用户消息
+    if history and history[-1].role == "user" and history[-1].content == message_text:
+        history = history[:-1]
+    lc_messages = _build_history_messages(db, model, llm, conversation, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
 
     return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages, acl_rejected=acl_rejected)

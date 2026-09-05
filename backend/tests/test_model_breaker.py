@@ -173,10 +173,9 @@ def test_summary_degrades_when_breaker_open():
             calls.append(x)
             return AIMessage(content="不该被调用")
 
-    older = [AIMessage(content="早先的回答 " * 20)]
-    text = chat_service._summarize_history(STUB, _LLM(), older)
+    pending = [AIMessage(content="早先的回答 " * 20)]
+    assert chat_service._summarize_history(STUB, _LLM(), "", pending) is None  # 返回 None 由调用方退回截断原文
     assert calls == []
-    assert "不该被调用" not in text and text.startswith("ai: ")  # 退回字符截断
 
 
 def test_rewrite_timeout_counts_toward_breaker(monkeypatch):

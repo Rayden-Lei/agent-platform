@@ -20,7 +20,7 @@ def list_conversations(db: Session, user: User, params: PageParams, agent_id: in
         query = query.filter(Conversation.agent_id == agent_id)
     query = query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
     return paginate(query, params, lambda c: {
-        "id": c.id, "agent_id": c.agent_id, "title": c.title,
+        "id": c.id, "agent_id": c.agent_id, "title": c.title, "summary": c.summary,
         "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat(),
     })
 
