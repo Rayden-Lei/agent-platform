@@ -16,16 +16,18 @@ export default defineConfig({
     },
   },
   build: {
-    // 大依赖单独分块：图表库只在挂了图表的页面下载，画布库只在工作流编辑器 / 详情页下载；页面按路由懒加载
-    chunkSizeWarningLimit: 1200,
+    // 大依赖单独分块：图表库只在挂了图表的页面下载，画布库只在工作流编辑器 / 详情页下载；页面按路由懒加载。
+    // 其余第三方包合成一个 vendor：之前把 react 与 antd 拆成两个块，rc-* 等共享依赖被分到两边形成环，
+    // 生产包里 antd 块先于 react 块执行、读 React.version 报 undefined，整站白屏（2026-09-06 线上踩坑）。
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom', 'zustand', 'axios', 'dayjs'],
-          antd: ['antd', '@ant-design/icons'],
-          charts: ['@ant-design/plots'],
-          flow: ['@xyflow/react'],
-          markdown: ['react-markdown', 'remark-gfm'],
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('@ant-design/plots') || id.includes('@antv')) return 'charts'
+          if (id.includes('@xyflow')) return 'flow'
+          if (/node_modules\/(react-markdown|remark-|micromark|mdast-|unified|unist-|hast-|vfile|bail|trough|zwitch|comma-separated-tokens|space-separated-tokens|property-information|html-url-attributes|estree-util|devlop|decode-named-character-reference|character-entities|ccount|longest-streak|markdown-table|trim-lines|is-plain-obj|style-to-object|style-to-js|inline-style-parser|extend)/.test(id)) return 'markdown'
+          return 'vendor'
         },
       },
     },
