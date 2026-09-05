@@ -26,7 +26,7 @@ export default function RenderPreview({ template, open, onClose }: Props) {
   }
 
   return (
-    <Modal title={'渲染预览：' + (template?.name || '')} open={open} onCancel={onClose} onOk={doRender} okText="渲染" confirmLoading={rendering} destroyOnClose>
+    <Modal title={'渲染预览：' + (template?.name || '')} open={open} onCancel={onClose} onOk={doRender} okText="渲染" confirmLoading={rendering} destroyOnHidden>
       <Form layout="vertical">
         {(template?.variables || []).map((v) => (
           <Form.Item key={v.name} label={`${v.name}${v.description ? `（${v.description}）` : ''}`} required={!!v.required && !v.default}>

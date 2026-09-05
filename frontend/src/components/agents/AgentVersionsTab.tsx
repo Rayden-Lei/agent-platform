@@ -56,7 +56,7 @@ export default function AgentVersionsTab({ agent, onChanged }: Props) {
           },
         ]}
       />
-      <Modal title={compare ? `v${compare.version} 与当前配置的差异` : ''} open={!!compare} onCancel={() => setCompare(null)} footer={null} width={860} destroyOnClose>
+      <Modal title={compare ? `v${compare.version} 与当前配置的差异` : ''} open={!!compare} onCancel={() => setCompare(null)} footer={null} width={860} destroyOnHidden>
         {compare && <FieldDiff before={compare.snapshot as Record<string, unknown>} after={current} labels={FIELD_LABELS} />}
       </Modal>
     </>

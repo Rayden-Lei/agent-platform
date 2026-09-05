@@ -10,7 +10,7 @@ interface Props {
 
 export default function BatchResultModal({ result, onClose, nameOf }: Props) {
   return (
-    <Modal open={!!result} onCancel={onClose} onOk={onClose} cancelButtonProps={{ style: { display: 'none' } }} title="批量操作结果" destroyOnClose>
+    <Modal open={!!result} onCancel={onClose} onOk={onClose} cancelButtonProps={{ style: { display: 'none' } }} title="批量操作结果" destroyOnHidden>
       {result && (
         <>
           <Typography.Paragraph>成功 <b>{result.succeeded.length}</b> 项，失败 <b style={{ color: '#dc2626' }}>{result.failed.length}</b> 项。</Typography.Paragraph>

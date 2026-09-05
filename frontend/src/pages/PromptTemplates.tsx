@@ -81,7 +81,7 @@ export default function PromptTemplates() {
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
-      <Drawer title={editing ? `编辑模板（当前 v${editing.version}）` : '新增模板'} open={open} onClose={() => setOpen(false)} width={760} destroyOnClose
+      <Drawer title={editing ? `编辑模板（当前 v${editing.version}）` : '新增模板'} open={open} onClose={() => setOpen(false)} width={760} destroyOnHidden
         extra={<Button type="primary" onClick={() => form.submit()}>保存</Button>}>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ variables: [] }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 128 }]}><Input /></Form.Item>

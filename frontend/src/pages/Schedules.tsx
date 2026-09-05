@@ -60,7 +60,7 @@ export default function Schedules() {
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
-      <Modal title="新建定时任务" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
+      <Modal title="新建定时任务" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="workflow_id" label="工作流" rules={[{ required: true }]}>

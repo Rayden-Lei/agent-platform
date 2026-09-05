@@ -96,7 +96,7 @@ export default function ApiKeys() {
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
-      <Modal title={editing ? `编辑 API Key：${editing.name}` : '生成 API Key'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
+      <Modal title={editing ? `编辑 API Key：${editing.name}` : '生成 API Key'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ quota: 1000, rate_limit_per_minute: 0 }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 64 }]}><Input placeholder="如：生产环境调用" /></Form.Item>
           <Form.Item name="quota" label="配额(调用次数)" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item>

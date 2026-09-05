@@ -63,7 +63,7 @@ export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
   }
 
   return (
-    <Modal title={editing ? `编辑智能体：${editing.name}` : '新增智能体'} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={submitting} width={680} destroyOnClose>
+    <Modal title={editing ? `编辑智能体：${editing.name}` : '新增智能体'} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={submitting} width={680} destroyOnHidden>
       <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ use_template: false, params: {} }}>
         <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="description" label="描述"><Input /></Form.Item>

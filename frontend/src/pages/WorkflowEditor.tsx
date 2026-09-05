@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button, Form, Input, Space, message, Empty, Tag, Alert, Divider, Drawer, Grid } from 'antd'
@@ -8,6 +8,8 @@ import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, lis
 import { PALETTE, PaletteList, buildDetail, degreeOf, paletteOf, toGraph } from './workflow/palette'
 import { nodeTypes } from './workflow/FlowNode'
 import NodeConfigForm, { collectNodeConfig, configToFormValues } from './workflow/NodeConfigForm'
+import { useUnsaved } from '../store/unsaved'
+import { errorText } from '../utils/errors'
 
 // 工作流画布编辑器（基于 @xyflow/react）：左侧节点库拖拽建节点，中间画布连线编排，
 // 右侧为节点/连线配置面板；支持测试运行与保存（新建/更新）。
@@ -18,6 +20,10 @@ function EditorInner() {
   // isNew：路由无 id 即为新建模式（保存走 create），有 id 为编辑模式（走 update）
   const isNew = !id
   const [name, setName] = useState('未命名工作流')
+  const [description, setDescription] = useState('')
+  // 未保存标记：把当前画布序列化后与最近一次加载 / 保存的基线比较，只有真正改了才置 dirty
+  const setDirty = useUnsaved((s) => s.setDirty)
+  const baseline = useRef<string | null>(null)
   // ReactFlow 的节点/边状态：nodes 的 data 里挂 nodeType/config/detail 等业务数据
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -47,8 +53,9 @@ function EditorInner() {
     if (!isNew && id) {
       // 把后端存的工作流 graph 映射成 ReactFlow 结构：
       // 节点按 type 从 PALETTE 取外观（图标/颜色），config 挂在 data 上供配置面板回填
-      getWorkflow(Number(id)).then((wf: any) => {
+      getWorkflow(Number(id)).then((wf) => {
         setName(wf.name)
+        setDescription(wf.description || '')
         const ns = (wf.graph?.nodes || []).map((n: any) => {
           // 摘要先留空，避免用空 agents/tools 误显示"未选择智能体/工具"；
           // 真正的摘要由下方 [agents, tools] 的 effect 在数据就绪后派生
@@ -58,9 +65,19 @@ function EditorInner() {
         const es = (wf.graph?.edges || []).map((e: any, i: number) => ({ id: 'e' + i, source: e.from, target: e.to, label: e.when || undefined }))
         setNodes(ns)
         setEdges(es)
-      })
+        baseline.current = JSON.stringify({ name: wf.name, description: wf.description || '', graph: toGraph(ns, es) })
+      }).catch((e) => { message.error(errorText(e, '加载工作流失败')); navigate('/workflows') })
+    } else {
+      baseline.current = JSON.stringify({ name: '未命名工作流', description: '', graph: toGraph([], []) })
     }
   }, [id])
+
+  // 名称 / 描述 / 画布任一变化与基线不同即视为未保存；离开编辑器时清掉标记
+  useEffect(() => {
+    if (baseline.current === null) return
+    setDirty(JSON.stringify({ name, description, graph: toGraph(nodes, edges) }) !== baseline.current)
+  }, [name, description, nodes, edges, setDirty])
+  useEffect(() => () => setDirty(false), [setDirty])
 
   // 摘要里智能体/工具名依赖 agents/tools 下拉数据，而工作流详情与这些数据是并行异步加载的，
   // 不能在 getWorkflow 的 then 里重建（闭包拿到的还是空数组）。改为独立 effect：
@@ -133,15 +150,16 @@ function EditorInner() {
     try { setTestResult(await testRunWorkflow({ graph: toGraph(nodes, edges), input: testInput }) as any) } catch (e: any) { message.error(e.response?.data?.detail || '测试失败') } finally { setTesting(false) }
   }
 
-  // 保存：同样序列化 graph；新建走 create，编辑走 update，成功后回列表页；图校验失败的 400 直接提示 detail
+  // 保存：同样序列化 graph；新建走 create，编辑走 update，成功后进详情页；图校验失败的 400 直接提示 detail
   const onSave = async () => {
     if (!name.trim()) { message.error('请输入工作流名称'); return }
     const graph = toGraph(nodes, edges)
     try {
-      if (isNew) await createWorkflow({ name, description: '', graph })
-      else await updateWorkflow(Number(id), { name, description: '', graph })
-      message.success('保存成功'); navigate('/workflows')
-    } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
+      const saved = isNew ? await createWorkflow({ name, description, graph }) : await updateWorkflow(Number(id), { name, description, graph })
+      baseline.current = JSON.stringify({ name, description, graph })
+      setDirty(false)
+      message.success('保存成功'); navigate(`/workflows/${saved.id}`)
+    } catch (e) { message.error(errorText(e, '保存失败')) }
   }
 
   // 连线的来源节点类型：决定连线配置面板的文案（条件分支 / 循环分支 / 并行分支无分支值）
@@ -222,9 +240,10 @@ function EditorInner() {
     <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', marginBottom: 12, flexShrink: 0 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workflows')}>{isMobile ? '' : '返回'}</Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(isNew ? '/workflows' : `/workflows/${id}`)}>{isMobile ? '' : '返回'}</Button>
           {isMobile && <Button icon={<MenuOutlined />} onClick={() => setShowPalette(true)}>节点</Button>}
           <Input value={name} onChange={(e) => setName(e.target.value)} style={{ width: isMobile ? 130 : 220 }} placeholder="工作流名称" />
+          {!isMobile && <Input value={description} onChange={(e) => setDescription(e.target.value)} style={{ width: 320 }} placeholder="描述（可选，列表与详情页显示）" />}
         </Space>
         <Button type="primary" icon={<SaveOutlined />} onClick={onSave}>保存</Button>
       </div>

@@ -46,7 +46,7 @@ export default function Users() {
       <div className="fixed-table-wrapper">
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
-      <Modal title={editing ? '编辑用户' : '新增用户'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose>
+      <Modal title={editing ? '编辑用户' : '新增用户'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ role: 'caller', is_active: true }}>
           {/* 仅新增模式显示用户名/密码输入；编辑模式不提供，避免误改登录凭据 */}
           {!editing && <Form.Item name="username" label="用户名" rules={[{ required: true }]}><Input /></Form.Item>}

@@ -110,7 +110,7 @@ export default function Tools() {
         <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       </div>
 
-      <Modal title={editing ? '编辑工具' : '新增工具'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnClose width={760}>
+      <Modal title={editing ? '编辑工具' : '新增工具'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden width={760}>
         <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ type: 'builtin', timeout: 30, params: [] }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="描述" rules={[{ required: true }]}><Input.TextArea rows={2} /></Form.Item>
@@ -132,7 +132,7 @@ export default function Tools() {
         </Form>
       </Modal>
 
-      <Modal title={'测试工具：' + (testTarget?.name || '')} open={!!testTarget} onCancel={() => setTestTarget(null)} onOk={doTest} okText="测试" confirmLoading={testing} destroyOnClose>
+      <Modal title={'测试工具：' + (testTarget?.name || '')} open={!!testTarget} onCancel={() => setTestTarget(null)} onOk={doTest} okText="测试" confirmLoading={testing} destroyOnHidden>
         {testTarget && (
           <Form layout="vertical">
             <ToolTestArgsForm tool={testTarget} values={testValues} onChange={setTestValues} jsonText={testJson} onJsonChange={setTestJson} />

@@ -11,7 +11,9 @@ const Agents = lazy(() => import('./pages/Agents'))
 const AgentDetail = lazy(() => import('./pages/AgentDetail'))
 const Chat = lazy(() => import('./pages/Chat'))
 const KnowledgeBases = lazy(() => import('./pages/KnowledgeBases'))
+const KbDetail = lazy(() => import('./pages/KbDetail'))
 const Workflows = lazy(() => import('./pages/Workflows'))
+const WorkflowDetail = lazy(() => import('./pages/WorkflowDetail'))
 const WorkflowEditor = lazy(() => import('./pages/WorkflowEditor'))
 const Tools = lazy(() => import('./pages/Tools'))
 const Runs = lazy(() => import('./pages/Runs'))
@@ -43,7 +45,9 @@ export default function App() {
         <Route path="models" element={<Models />} />
         <Route path="tools" element={<Tools />} />
         <Route path="knowledge-bases" element={<KnowledgeBases />} />
+        <Route path="knowledge-bases/:id" element={<KbDetail />} />
         <Route path="workflows" element={<Workflows />} />
+        <Route path="workflows/:id" element={<WorkflowDetail />} />
         {/* 新建与编辑共用同一个工作流编辑器页面，通过是否有 :id 区分 */}
         <Route path="workflows/new" element={<WorkflowEditor />} />
         <Route path="workflows/:id/edit" element={<WorkflowEditor />} />
