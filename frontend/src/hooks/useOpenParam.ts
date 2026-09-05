@@ -11,7 +11,7 @@ export function useOpenParam(onOpen: (id: number) => void): void {
     const next = new URLSearchParams(params)
     next.delete('open')
     setParams(next, { replace: true })
-    if (Number.isFinite(id)) onOpen(id)
+    if (Number.isFinite(id) && id > 0) onOpen(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [raw])
 }

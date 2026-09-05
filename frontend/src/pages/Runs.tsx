@@ -17,7 +17,7 @@ import { exportCsv } from '../utils/csv'
 import { statusLabel } from '../constants/status'
 import { formatDateTime } from '../utils/time'
 
-const DEFAULTS: RunFilterValues = { run_type: undefined, status: undefined, source: undefined, agent_id: undefined, workflow_id: undefined, started_from: undefined, started_to: undefined }
+const DEFAULTS: RunFilterValues = { run_type: undefined, status: undefined, source: undefined, agent_id: undefined, workflow_id: undefined, model_id: undefined, started_from: undefined, started_to: undefined }
 
 // 运行记录页：筛选（同步到 URL）→ 统计卡随筛选联动（点卡即筛状态）→ 服务端排序的表格 → 行点击进详情页；待审核的行内直接通过 / 拒绝。
 export default function Runs() {

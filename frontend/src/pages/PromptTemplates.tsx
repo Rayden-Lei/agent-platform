@@ -1,100 +1,58 @@
-import { useState } from 'react'
-import { Table, Button, Drawer, Form, Input, message, Popconfirm, Space, Tag } from 'antd'
-import { PlusOutlined, HistoryOutlined, EyeOutlined } from '@ant-design/icons'
-import { listPromptTemplates, createPromptTemplate, updatePromptTemplate, deletePromptTemplate, getPromptTemplate, type PromptTemplateRow } from '../api'
+import { useMemo, useState } from 'react'
+import { Button, Table, message } from 'antd'
+import { FileTextOutlined, PlusOutlined } from '@ant-design/icons'
+import { batchPromptTemplates, deletePromptTemplate, getPromptTemplate, listPromptTemplates, type PromptTemplateRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
-import VariablesEditor, { rowsFromVariables, variablesFromRows, type VarRow } from '../components/prompt/VariablesEditor'
-import VersionsDrawer from '../components/prompt/VersionsDrawer'
-import RenderPreview from '../components/prompt/RenderPreview'
+import { useQueryState } from '../hooks/useQueryState'
+import { useBatchAction } from '../hooks/useBatchAction'
+import { useOpenParam } from '../hooks/useOpenParam'
+import ListPage from '../components/layout/ListPage'
+import PageHeader from '../components/layout/PageHeader'
+import FilterBar from '../components/layout/FilterBar'
+import SearchInput from '../components/common/SearchInput'
+import EmptyState from '../components/common/EmptyState'
+import BatchActionBar from '../components/common/BatchActionBar'
+import BatchResultModal from '../components/common/BatchResultModal'
+import TemplateForm from '../components/prompt/TemplateForm'
+import TemplateDrawer from '../components/prompt/TemplateDrawer'
+import { buildTemplateColumns } from '../components/prompt/templateColumns'
+import { errorText } from '../utils/errors'
 
-// 提示词模板页（FR-028）：列表 + 编辑抽屉（内容 + 变量表格）+ 版本历史（回滚）+ 渲染预览。
-// 内容里用 {{变量名}} 引用变量；引用未声明的变量后端 400，声明了但没用到的在保存后提示。
+type Filters = { q?: string }
+const DEFAULTS: Filters = { q: undefined }
+
+// 提示词模板（FR-028）：列表筛选 / 排序 / 批量删除 + 编辑弹窗 + 详情抽屉（内容、版本对比回滚、绑定智能体、渲染预览；?open= 深链）。
 export default function PromptTemplates() {
-  const { tableProps, reload } = usePagedList(listPromptTemplates)
-  const [open, setOpen] = useState(false)
-  // editing 非空表示编辑模式（走 update），否则新增（走 create）
+  const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
+  const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<PromptTemplateRow | null>(null)
-  const [versionTarget, setVersionTarget] = useState<PromptTemplateRow | null>(null)
-  const [previewTarget, setPreviewTarget] = useState<PromptTemplateRow | null>(null)
-  const [form] = Form.useForm()
+  const [current, setCurrent] = useState<PromptTemplateRow | null>(null)
+  const list = usePagedList<PromptTemplateRow>(listPromptTemplates, { filters, selectable: true, emptyText: <EmptyState description="还没有模板。把系统提示词沉淀成带变量的模板，多个智能体共用并按版本管理。" action={{ label: '新增模板', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
+  const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
+  useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getPromptTemplate(id).then(setCurrent).catch((e) => message.error(errorText(e, '模板不存在'))) })
 
-  const onSubmit = async (values: any) => {
-    const payload = { name: values.name, description: values.description || '', content: values.content, variables: variablesFromRows((values.variables as VarRow[]) || []) }
-    try {
-      const saved = editing ? await updatePromptTemplate(editing.id, payload) : await createPromptTemplate(payload)
-      if (saved.unused_variables?.length) message.warning('已保存，但这些变量声明了却没在内容里使用：' + saved.unused_variables.join(', '))
-      else message.success(editing ? '保存成功' : '创建成功')
-      setOpen(false)
-      form.resetFields()
-      reload()
-    } catch (e: any) {
-      // 422 是 FastAPI 的逐字段数组（变量名不合法 / 重复 / 超过 30 个），取首条 msg；400 / 409 是字符串 detail
-      const detail = e.response?.data?.detail
-      message.error(Array.isArray(detail) ? detail[0]?.msg : detail || '保存失败')
-    }
-  }
-
-  const openCreate = () => { setEditing(null); form.resetFields(); setOpen(true) }
   // 列表不下发 content，编辑前先取详情
-  const openEdit = async (r: PromptTemplateRow) => {
-    try {
-      const detail = await getPromptTemplate(r.id)
-      setEditing(detail)
-      form.setFieldsValue({ name: detail.name, description: detail.description || '', content: detail.content, variables: rowsFromVariables(detail.variables) })
-      setOpen(true)
-    } catch (e: any) { message.error(e.response?.data?.detail || '加载模板失败') }
+  const onEdit = async (r: PromptTemplateRow) => {
+    try { setEditing(r.content !== undefined ? r : await getPromptTemplate(r.id)); setFormOpen(true) } catch (e) { message.error(errorText(e, '加载模板失败')) }
   }
-
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: '名称', dataIndex: 'name' },
-    { title: '描述', dataIndex: 'description', ellipsis: true },
-    {
-      title: '变量', dataIndex: 'variables', render: (vars: PromptTemplateRow['variables']) => (
-        vars.length ? <Space size={4} wrap>{vars.map((v) => <Tag key={v.name}>{v.name}{v.required ? ' *' : ''}</Tag>)}</Space> : <span style={{ color: '#9ca3af' }}>无</span>
-      ),
-    },
-    { title: '版本', dataIndex: 'version', width: 70, render: (v: number) => 'v' + v },
-    { title: '更新时间', dataIndex: 'updated_at', width: 170, render: (v: string) => new Date(v).toLocaleString() },
-    {
-      title: '操作', width: 260, render: (_: unknown, r: PromptTemplateRow) => (
-        <Space>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewTarget(r)}>预览</Button>
-          <Button size="small" icon={<HistoryOutlined />} onClick={() => setVersionTarget(r)}>版本</Button>
-          <Button size="small" onClick={() => openEdit(r)}>编辑</Button>
-          {/* 仍被智能体绑定时后端 409，提示里带绑定数 */}
-          <Popconfirm title="确定删除？" onConfirm={async () => { try { await deletePromptTemplate(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}>
-            <Button size="small" danger>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ]
+  const onDelete = async (r: PromptTemplateRow) => { try { await deletePromptTemplate(r.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const afterSave = () => { list.reload(); if (current) getPromptTemplate(current.id).then(setCurrent).catch(() => setCurrent(null)) }
+  const columns = useMemo(() => buildTemplateColumns({ sortProps: list.sortProps, onOpen: setCurrent, onEdit, onDelete }), [list.sortProps]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
-        <h2>提示词模板</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模板</Button>
-      </div>
-      <div className="fixed-table-wrapper">
-        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      </div>
-
-      <Drawer title={editing ? `编辑模板（当前 v${editing.version}）` : '新增模板'} open={open} onClose={() => setOpen(false)} width={760} destroyOnHidden
-        extra={<Button type="primary" onClick={() => form.submit()}>保存</Button>}>
-        <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ variables: [] }}>
-          <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 128 }]}><Input /></Form.Item>
-          <Form.Item name="description" label="描述"><Input /></Form.Item>
-          <Form.Item name="content" label="内容" rules={[{ required: true }]} extra="用 {{变量名}} 引用下方声明的变量；内容或变量变化会自动升版本">
-            <Input.TextArea rows={10} placeholder={'你是{{role}}，请用{{tone}}的语气回答。'} />
-          </Form.Item>
-          <Form.Item name="variables" label="变量声明（最多 30 个）"><VariablesEditor /></Form.Item>
-        </Form>
-      </Drawer>
-
-      <VersionsDrawer template={versionTarget} open={!!versionTarget} onClose={() => setVersionTarget(null)} onRolledBack={reload} />
-      <RenderPreview template={previewTarget} open={!!previewTarget} onClose={() => setPreviewTarget(null)} />
-    </div>
+    <ListPage
+      header={<PageHeader icon={<FileTextOutlined />} title="提示词模板" description="带变量的系统提示词；内容或变量变化自动升版本，智能体发布时固化所用版本。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模板</Button>} />}
+      filters={
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+          <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索模板名称" />
+        </FilterBar>
+      }
+      batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[{ key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个模板？仍被智能体绑定的会失败并列在结果里`, run: () => batch.run(() => batchPromptTemplates(list.selectedKeys), '已删除') }]} />}
+    >
+      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <TemplateForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={afterSave} />
+      <TemplateDrawer template={current} onClose={() => setCurrent(null)} onEdit={onEdit} onChanged={afterSave} />
+      <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((t) => t.id === id)?.name} />
+    </ListPage>
   )
 }

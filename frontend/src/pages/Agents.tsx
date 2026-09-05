@@ -16,7 +16,7 @@ import AgentForm from '../components/agents/AgentForm'
 import { buildAgentColumns } from '../components/agents/agentColumns'
 import { errorText } from '../utils/errors'
 
-const DEFAULTS: AgentFilterValues = { q: undefined, status: undefined, model_id: undefined }
+const DEFAULTS: AgentFilterValues = { q: undefined, status: undefined, model_id: undefined, tool_id: undefined, kb_id: undefined, prompt_template_id: undefined }
 
 // 智能体列表：筛选（URL 同步）+ 服务端排序 + 行选择批量发布 / 删除；名称进详情页，模型 / 模板可跳转。
 export default function Agents() {

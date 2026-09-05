@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react'
-import { Select } from 'antd'
+import { Select, Tag } from 'antd'
 import { listAgents, listWorkflows, OPTIONS_PAGE } from '../../api'
 import { statusOptions } from '../../constants/status'
 import DateRangeFilter from '../common/DateRangeFilter'
 import FilterBar from '../../components/layout/FilterBar'
 
 // 运行记录筛选条：类型 / 状态 / 来源 / 智能体 / 工作流 / 发起时间区间；值由页面用 useQueryState 放进 URL。
-// 用 type 而不是 interface：useQueryState 要求隐式索引签名（interface 没有）
+// model_id 只从模型页链接带入，显示为可关闭标签。用 type 而不是 interface：useQueryState 要求隐式索引签名（interface 没有）
 export type RunFilterValues = {
   run_type?: string
   status?: string
   source?: string
   agent_id?: string
   workflow_id?: string
+  model_id?: string
   started_from?: string
   started_to?: string
 }
@@ -45,6 +46,7 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
       <Select allowClear placeholder="触发来源" style={{ width: 120 }} value={values.source} onChange={(v) => onChange({ source: v })} options={statusOptions('runSource')} />
       {!lockOwner && <Select allowClear showSearch optionFilterProp="label" placeholder="智能体" style={{ width: 160 }} value={values.agent_id} onChange={(v) => onChange({ agent_id: v })} options={agents} />}
       {!lockOwner && <Select allowClear showSearch optionFilterProp="label" placeholder="工作流" style={{ width: 160 }} value={values.workflow_id} onChange={(v) => onChange({ workflow_id: v })} options={workflows} />}
+      {values.model_id && <Tag closable color="blue" onClose={() => onChange({ model_id: undefined })}>模型 #{values.model_id}</Tag>}
       <DateRangeFilter
         value={values.started_from && values.started_to ? [values.started_from, values.started_to] : null}
         onChange={(range) => onChange({ started_from: range?.[0], started_to: range?.[1] })}
