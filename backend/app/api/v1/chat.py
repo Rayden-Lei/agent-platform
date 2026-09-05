@@ -21,6 +21,7 @@ from app.core.deps import get_current_user
 from app.core.exceptions import BizError
 from app.db.models import AuditLog, User
 from app.db.session import SessionLocal, get_db
+from app.model_gateway.gateway import guarded_astream
 from app.services import chat_service
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,9 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             tool_call_acc: dict[int, dict] = {}
             tool_call_by_id: dict[str, int] = {}
             try:
-                async for chunk, _meta in graph.astream({"messages": ctx.history_messages}, stream_mode="messages"):
+                # 熔断包装：打开期直接以 error 事件结束；首个 chunk 视为成功，建立流之前的异常计入失败
+                stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, stream_mode="messages"))
+                async for chunk, _meta in stream:
                     if isinstance(chunk, AIMessageChunk):
                         delta = chunk.content
                         if isinstance(delta, str) and delta:

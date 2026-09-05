@@ -9,7 +9,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
-from app.model_gateway.gateway import build_llm
+from app.model_gateway import breaker
+from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.services import run_service
 from app.tools.langchain_tools import build_tools
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ChatContext:
-    """一次对话的完整上下文：LLM、工具、系统提示（含 RAG 引用）、多轮历史消息。"""
+    """一次对话的完整上下文：模型配置（熔断按它计数）、LLM、工具、系统提示（含 RAG 引用）、多轮历史消息。"""
 
+    model: ModelConfig
     llm: Any
     tools: list
     system_prompt: str
@@ -40,15 +42,18 @@ def _history_to_messages(rows: list) -> list:
     return msgs
 
 
-def _summarize_history(llm: Any, older: list) -> str:
-    """用 LLM 把较早历史压缩为简短摘要；失败或为空时退回字符截断兜底。"""
+def _summarize_history(model: ModelConfig, llm: Any, older: list) -> str:
+    """用 LLM 把较早历史压缩为简短摘要；失败或为空时退回字符截断兜底。
+
+    熔断打开期间 guarded_invoke 直接抛 503，这里同样走降级不对外报错；失败照常计入该模型的连续失败。
+    """
     text = "\n".join(f"{m.type}: {m.content}" for m in older)
     prompt = (
         "你是对话摘要助手。请把下面的历史对话压缩成一段不超过 150 字的摘要，"
         "只保留用户目标、关键事实和已确认结论，不要编造信息：\n\n" + text
     )
     try:
-        resp = llm.invoke(prompt)
+        resp = guarded_invoke(model, llm, prompt)
         summary = (resp.content or "").strip() if resp else ""
     except Exception as e:
         # 摘要失败不影响对话，但历史会退化为字符截断，质量下降，必须能看见
@@ -58,23 +63,24 @@ def _summarize_history(llm: Any, older: list) -> str:
     return summary or text[:2000]
 
 
-def _build_history_messages(llm: Any, rows: list, max_messages: int) -> list:
+def _build_history_messages(model: ModelConfig, llm: Any, rows: list, max_messages: int) -> list:
     """有界历史：保留最近 max_messages 条，更早的压缩为摘要后以 SystemMessage 注入。"""
     if len(rows) <= max_messages:
         return _history_to_messages(rows)
     older = _history_to_messages(rows[:-max_messages])
     recent = _history_to_messages(rows[-max_messages:])
-    summary = _summarize_history(llm, older)
+    summary = _summarize_history(model, llm, older)
     return [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] + recent
 
 
 REWRITE_TIMEOUT_SECONDS = 10
 
 
-def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
+def _rewrite_queries(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
     """LLM 改写查询：生成多个利于检索的子查询（覆盖同义词/不同角度）。
 
     超时或失败时退回原查询，保证检索总能快速执行、不卡对话。
+    熔断打开期间同样退回原查询不对外报错；本地超时也计入该模型的连续失败（上游异常由 guarded_invoke 记录）。
     """
     prompt = (
         "你是检索查询改写助手。把用户问题改写成 3 个更利于向量检索的查询短语，"
@@ -83,9 +89,10 @@ def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
     )
 
     def _invoke():
-        return llm.invoke(prompt)
+        return guarded_invoke(model, llm, prompt)
 
     from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeoutError
 
     # 不能用 with：ThreadPoolExecutor 退出时会 shutdown(wait=True)，
     # 超时后仍要等那次慢调用返回，超时保护形同虚设（实测把对话首字节拖到 55 秒）。
@@ -99,6 +106,9 @@ def _rewrite_queries(llm: Any, message_text: str) -> list[str]:
     except Exception as e:
         # 超时或模型故障：退回原查询，检索仍可用但召回面变窄
         logger.warning("检索查询改写失败，使用原查询：%s: %s", type(e).__name__, e)
+        if isinstance(e, FutureTimeoutError):
+            # 本地超时时上游调用还在后台线程里跑，guarded_invoke 记不到这次"失败"，这里补记
+            breaker.record_failure(model.id, model.name, e)
         queries = []
     finally:
         executor.shutdown(wait=False)
@@ -150,7 +160,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     citations = []
     acl_rejected = 0
     if agent.kb_ids:
-        queries = _rewrite_queries(llm, message_text)
+        queries = _rewrite_queries(model, llm, message_text)
         merged: dict = {}
         for kb_id in agent.kb_ids:
             for q in queries:
@@ -171,10 +181,10 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
-    lc_messages = _build_history_messages(llm, history, settings.CHAT_HISTORY_MAX_MESSAGES)
+    lc_messages = _build_history_messages(model, llm, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
 
-    return ChatContext(llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages, acl_rejected=acl_rejected)
+    return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages, acl_rejected=acl_rejected)
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:

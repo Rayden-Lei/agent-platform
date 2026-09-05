@@ -8,7 +8,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, paginate
 from app.core.security import encrypt_secret
 from app.db.models import Agent, ModelConfig, User
-from app.model_gateway.gateway import build_llm
+from app.model_gateway.gateway import build_llm, guarded_ainvoke
 from app.schemas import ModelIn
 
 logger = logging.getLogger(__name__)
@@ -82,11 +82,14 @@ def delete_model(db: Session, model_id: int, user: User) -> None:
 
 
 async def test_model(db: Session, model_id: int) -> dict:
-    """连通性测试：发一条 ping 看模型是否可用。失败不抛异常，返回 ok=False 供前端展示。"""
+    """连通性测试：发一条 ping 看模型是否可用。失败不抛异常，返回 ok=False 供前端展示。
+
+    以探测模式绕过熔断的打开期判定：成功即关闭该模型的熔断，是人工恢复的手段。
+    """
     m = get_model(db, model_id)
     try:
         llm = build_llm(m)
-        resp = await llm.ainvoke([HumanMessage(content="ping")])
+        resp = await guarded_ainvoke(m, llm, [HumanMessage(content="ping")], probe=True)
         return {"ok": True, "reply": (resp.content or "")[:100]}
     except Exception as e:
         # 连通性测试的失败本身就是结果，返回给前端展示；同时留日志便于排查是网络还是鉴权

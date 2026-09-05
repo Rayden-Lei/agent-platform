@@ -12,7 +12,7 @@ from langgraph.types import interrupt
 
 from app.db.models import Agent, ModelConfig, RunNode, Tool
 from app.db.session import SessionLocal
-from app.model_gateway.gateway import build_llm
+from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
 from app.tools.executor import execute_tool
 
@@ -188,7 +188,8 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
                 return out
             model = db.get(ModelConfig, agent.model_id)
             llm = build_llm(model)
-            resp = llm.invoke([
+            # 经熔断包装：打开期直接抛 503，节点按失败收尾，错误文本含"熔断中"
+            resp = guarded_invoke(model, llm, [
                 SystemMessage(content=prompt_override or agent.system_prompt),
                 HumanMessage(content=str(input_val)),
             ])

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "kb-docs"
     MODEL_HTTP_TIMEOUT: int = 120
+    # 模型调用熔断（FR-027）。SDK 重试归零：故障处理统一交给熔断器；阈值 0 表示关闭熔断
+    MODEL_MAX_RETRIES: int = 0
+    MODEL_BREAKER_FAIL_THRESHOLD: int = 5
+    MODEL_BREAKER_OPEN_SECONDS: int = 30
     RAG_TOP_K: int = 4
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     CHAT_TITLE_MAX_LEN: int = 30

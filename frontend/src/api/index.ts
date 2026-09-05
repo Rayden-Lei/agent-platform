@@ -26,6 +26,8 @@ export const listModels = (params?: PageQuery) => get<Page>('/models', params)
 export const createModel = (data: any) => client.post('/models', data)
 export const updateModel = (id: number, data: any) => client.put(`/models/${id}`, data)
 export const deleteModel = (id: number) => client.delete(`/models/${id}`)
+// 连通测试：成功会关闭该模型的熔断（人工恢复手段）；失败不抛错，data.ok=false 带 error
+export const testModel = (id: number) => client.post(`/models/${id}/test`) as unknown as Promise<{ code: number; message: string; data: { ok: boolean; reply?: string; error?: string } }>
 
 // ===== 智能体（含发布、版本历史与回滚）=====
 export const listAgents = (params?: PageQuery) => get<Page>('/agents', params)
@@ -137,6 +139,14 @@ export interface EmbeddingStatus {
   reason: string | null
   last_error: { at: string; error: string } | null
 }
+export interface ModelBreakerStatus {
+  model_id: number
+  name: string
+  state: 'open' | 'half_open'
+  consecutive_failures: number
+  opened_at: string | null
+  retry_after_seconds: number
+}
 export interface SystemStatus {
   app: string
   database: { ok: boolean; reason: string | null }
@@ -144,6 +154,8 @@ export interface SystemStatus {
   login_guard: { enabled: boolean; reason: string | null; max_fail: number; lock_seconds: number }
   // 入口限流：configured=false 是配置关闭（不算降级），configured=true 且 enabled=false 是 Redis 故障
   rate_limit: { enabled: boolean; configured: boolean; reason: string | null; api_key_per_minute: number; user_per_minute: number; ip_per_minute: number }
+  // 只列非 closed 的模型熔断器；open 的同时会出现在 degraded
+  model_breakers: ModelBreakerStatus[]
   scheduler: { running: boolean; registered_jobs: number; enabled_jobs: number }
   degraded: { item: string; message: string }[]
 }
