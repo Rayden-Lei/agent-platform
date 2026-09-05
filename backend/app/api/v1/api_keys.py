@@ -5,13 +5,15 @@ API Key 供外部系统调用执行类接口（如工作流运行）时使用，
 """
 
 import ipaddress
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
-from app.core.pagination import PageParams, page_params
+from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import api_key_service
@@ -67,16 +69,35 @@ class ApiKeyUpdate(BaseModel):
         return None if value is None else _validate_cidrs(value)
 
 
+class ApiKeyBatchIn(BatchIn):
+    action: Literal["enable", "disable", "delete"]
+
+
 @router.get("")
-def list_api_keys(params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """API Key 列表（分页）。developer 只看到本人创建的。"""
-    return api_key_service.list_api_keys(db, params, user)
+def list_api_keys(
+    params: PageParams = Depends(page_params),
+    sort: SortParams = Depends(sort_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    is_enabled: bool | None = Query(None),
+    user_id: int | None = Query(None, description="按创建人过滤，仅 admin 生效"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    """API Key 列表（分页），可按名称、启用状态、创建人过滤；sort 可选 id / name / used / last_used_at / created_at。developer 只看到本人创建的。"""
+    return api_key_service.list_api_keys(db, params, user, q, is_enabled, user_id, sort)
 
 
 @router.post("")
 def create_api_key(data: ApiKeyIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """新建 API Key。创建后返回密钥信息，供调用方保存。"""
     return api_key_service.create_api_key(db, data, user)
+
+
+# 固定路径必须声明在 /{key_id} 之前
+@router.post("/batch")
+def batch_api_keys(data: ApiKeyBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """批量启用 / 停用 / 删除：逐条独立执行并返回成功与失败清单；developer 对他人 Key 的 404 进失败清单。"""
+    return run_batch(db, data.unique_ids(), lambda key_id: api_key_service.apply_batch_action(db, key_id, data.action, user))
 
 
 @router.put("/{key_id}")

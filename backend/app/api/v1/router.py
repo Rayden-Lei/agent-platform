@@ -5,7 +5,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import agents, api_keys, audit, auth, chat, conversations, kb, models, prompt_templates, runs, schedules, system, tools, users, workflows
+from app.api.v1 import agents, api_keys, audit, auth, chat, conversations, kb, models, prompt_templates, runs, schedules, stats, system, tools, users, workflows
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -23,3 +23,4 @@ api_router.include_router(audit.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(schedules.router)
 api_router.include_router(system.router)
+api_router.include_router(stats.router)

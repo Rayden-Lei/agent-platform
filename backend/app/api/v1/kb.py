@@ -1,23 +1,27 @@
-"""知识库（KB）路由：知识库 CRUD、文档上传 / 解析 / 分块查看、库内检索。
+"""知识库（KB）路由：知识库 CRUD、文档上传 / 解析 / 重新解析 / 分块查看、批量操作、库内检索。
 
 除检索接口把当前用户角色传给 service 做可见性过滤（ACL）外，其余接口仅允许
 admin / developer 角色访问。文档解析在后台任务中异步执行。
 """
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
-from app.core.pagination import PageParams, page_params
+from app.core.pagination import PageParams, SortParams, page_params, sort_params, time_range
 from app.db.models import User
 from app.db.session import get_db
 from app.rag.pipeline import process_document
 from app.services import kb_service
 
 router = APIRouter(prefix="/knowledge-bases", tags=["kb"])
+
+DocStatus = Literal["uploading", "parsing", "chunking", "ready", "failed"]
 
 
 class KnowledgeBaseIn(BaseModel):
@@ -42,15 +46,25 @@ class SearchIn(BaseModel):
     debug: bool = False
 
 
+class KbBatchIn(BatchIn):
+    action: Literal["delete"]
+
+
+class DocumentBatchIn(BatchIn):
+    action: Literal["delete", "reprocess"]
+
+
 @router.get("")
 def list_kbs(
     params: PageParams = Depends(page_params),
+    sort: SortParams = Depends(sort_params),
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    is_public: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    """知识库列表（分页），支持名称模糊匹配。"""
-    return kb_service.list_kbs(db, params, q)
+    """知识库列表（分页），支持名称模糊、公开 / 受限过滤；sort 可选 id / name / updated_at；附文档与切片统计。"""
+    return kb_service.list_kbs(db, params, q, is_public, sort)
 
 
 @router.post("")
@@ -59,9 +73,16 @@ def create_kb(data: KnowledgeBaseIn, db: Session = Depends(get_db), user: User =
     return kb_service.create_kb(db, data, user)
 
 
+# 固定路径必须声明在 /{kb_id} 之前
+@router.post("/batch")
+def batch_kbs(data: KbBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """批量删除知识库：逐条独立执行并返回成功与失败清单。"""
+    return run_batch(db, data.unique_ids(), lambda kb_id: kb_service.delete_kb(db, kb_id))
+
+
 @router.get("/{kb_id}")
 def get_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """按 ID 查询知识库详情。"""
+    """知识库详情（含统计与引用它的智能体）。"""
     return kb_service.get_kb_detail(db, kb_id)
 
 
@@ -98,12 +119,43 @@ async def upload_document(
 def list_documents(
     kb_id: int,
     params: PageParams = Depends(page_params),
-    status: Literal["uploading", "parsing", "chunking", "ready", "failed"] | None = Query(None),
+    sort: SortParams = Depends(sort_params),
+    status: DocStatus | None = Query(None),
+    q: str | None = Query(None, max_length=128, description="文件名模糊匹配"),
+    file_type: str | None = Query(None, max_length=16),
+    created_from: datetime | None = Query(None),
+    created_to: datetime | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    """知识库下的文档列表（分页），可按解析状态过滤。"""
-    return kb_service.list_documents(db, kb_id, params, status)
+    """知识库下的文档列表（分页），可按状态、文件名、类型、上传时间区间过滤；sort 可选 id / name / status / chunk_count / created_at。"""
+    created_from, created_to = time_range(created_from, created_to)
+    return kb_service.list_documents(db, kb_id, params, status, q, file_type, created_from, created_to, sort)
+
+
+# 固定路径必须声明在 /{doc_id} 之前
+@router.post("/{kb_id}/documents/batch")
+def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """批量删除 / 重新解析文档：逐条独立执行；重新解析的文档排进后台任务。"""
+    queued: list[int] = []
+
+    def _apply(doc_id: int) -> None:
+        doc = kb_service.apply_document_batch_action(db, kb_id, doc_id, data.action)
+        if doc is not None:
+            queued.append(doc.id)
+
+    result = run_batch(db, data.unique_ids(), _apply)
+    for doc_id in queued:
+        background_tasks.add_task(process_document, doc_id)
+    return result
+
+
+@router.post("/{kb_id}/documents/{doc_id}/reprocess")
+def reprocess_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """重新解析文档（失败的文档重试，或切片参数改了之后重建）：清掉旧切片后排进后台任务；处理中的文档 400。"""
+    doc = kb_service.prepare_reprocess(db, kb_id, doc_id)
+    background_tasks.add_task(process_document, doc.id)
+    return {"id": doc.id, "status": doc.status}
 
 
 @router.get("/{kb_id}/documents/{doc_id}/chunks")

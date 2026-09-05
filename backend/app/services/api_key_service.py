@@ -9,7 +9,7 @@ from app.config import settings
 from app.core import rate_limiter
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
-from app.core.pagination import PageParams, paginate
+from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.rate_limiter import RateLimitResult
 from app.core.request_context import get_client_ip
 from app.db.models import ApiKey, User
@@ -70,11 +70,15 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey, RateLimitResu
     return user, ak, rate_limit
 
 
-def _to_dict(k: ApiKey) -> dict:
-    """Key 元信息（只含前缀，永不返回明文与哈希）。"""
+SORTABLE = {"id": ApiKey.id, "name": ApiKey.name, "used": ApiKey.used, "last_used_at": ApiKey.last_used_at, "created_at": ApiKey.created_at}
+
+
+def _to_dict(k: ApiKey, username: str | None = None) -> dict:
+    """Key 元信息（只含前缀，永不返回明文与哈希）；username 是创建人，admin 视角区分归属。"""
     return {
         "id": k.id, "name": k.name, "key_prefix": k.key_prefix, "quota": k.quota, "used": k.used,
         "is_enabled": k.is_enabled, "allowed_ips": k.allowed_ips or [], "rate_limit_per_minute": k.rate_limit_per_minute,
+        "user_id": k.user_id, "username": username,
         "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
         "created_at": k.created_at.isoformat() if k.created_at else None,
     }
@@ -88,12 +92,40 @@ def _get_owned(db: Session, key_id: int, user: User) -> ApiKey:
     return k
 
 
-def list_api_keys(db: Session, params: PageParams, user: User) -> dict:
-    """分页列出 Key 元信息：admin 看全部，developer 只看本人创建的。"""
+def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is_enabled: bool = None,
+                  owner_id: int = None, sort: SortParams = None) -> dict:
+    """分页列出 Key 元信息：admin 看全部（可按创建人过滤），developer 只看本人创建的；名称模糊、启用状态过滤，白名单排序。
+    创建人用户名一次 IN 查询装配。"""
     query = db.query(ApiKey)
     if user.role != "admin":
         query = query.filter(ApiKey.user_id == user.id)
-    return paginate(query.order_by(ApiKey.id.desc()), params, _to_dict)
+    elif owner_id:
+        query = query.filter(ApiKey.user_id == owner_id)
+    if q:
+        query = query.filter(ApiKey.name.ilike(f"%{q}%"))
+    if is_enabled is not None:
+        query = query.filter(ApiKey.is_enabled.is_(is_enabled))
+    page = paginate(apply_sort(query, sort, SORTABLE, [ApiKey.id.desc()]), params)
+    user_ids = {k.user_id for k in page["items"]}
+    names = dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
+    page["items"] = [_to_dict(k, names.get(k.user_id)) for k in page["items"]]
+    return page
+
+
+def set_api_key_enabled(db: Session, key_id: int, enabled: bool, user: User) -> dict:
+    """设置启用状态（批量启停用；toggle 也走这里），幂等。"""
+    k = _get_owned(db, key_id, user)
+    k.is_enabled = enabled
+    db.commit()
+    return {"id": k.id, "is_enabled": k.is_enabled}
+
+
+def apply_batch_action(db: Session, key_id: int, action: str, user: User) -> None:
+    """批量操作的单条执行（enable / disable / delete），归属校验与单条接口相同。"""
+    if action == "delete":
+        delete_api_key(db, key_id, user)
+    else:
+        set_api_key_enabled(db, key_id, action == "enable", user)
 
 
 def create_api_key(db: Session, data, user: User) -> dict:

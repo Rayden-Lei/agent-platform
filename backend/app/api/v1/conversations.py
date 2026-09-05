@@ -19,11 +19,12 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 def list_conversations(
     params: PageParams = Depends(page_params),
     agent_id: int | None = Query(None),
+    q: str | None = Query(None, max_length=64, description="标题模糊匹配"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """当前用户的会话列表（分页），可按 agent_id 过滤。"""
-    return conversation_service.list_conversations(db, user, params, agent_id)
+    """当前用户的会话列表（分页），可按 agent_id 过滤、按标题搜索；附消息数与智能体名。"""
+    return conversation_service.list_conversations(db, user, params, agent_id, q)
 
 
 @router.get("/{conversation_id}/messages")

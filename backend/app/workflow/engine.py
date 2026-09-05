@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import operator
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
 import httpx
@@ -83,6 +84,7 @@ def _start_node(run_id: int, node_id: str, node_type: str, input_data: Any = Non
         rn = RunNode(
             run_id=run_id, node_id=node_id, node_type=node_type, status="running",
             input={"data": json.dumps(input_data, ensure_ascii=False, default=str)[:500]},
+            started_at=datetime.now(timezone.utc),
         )
         db.add(rn)
         db.commit()
@@ -105,6 +107,9 @@ def _finish_node(rn_id: int, status: str, output: Any = None, error: str = None)
                 rn.output = {"data": json.dumps(output, ensure_ascii=False, default=str)[:500]}
             if error:
                 rn.error = str(error)[:1000]
+            # awaiting_review 不是结束：resume 后同一节点会另起一条日志，这里只给终态与成功写结束时间
+            if status != "awaiting_review":
+                rn.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
         db.close()
@@ -246,6 +251,8 @@ def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | 
                 out = {"output": json.dumps({"error": f"工具不存在: {tool_name}"}, ensure_ascii=False)}
                 _finish_node(rn_id, "failed", out["output"], "工具不存在")
                 return out
+            if not tool_db.is_enabled:
+                raise ValueError(f"工具已停用: {tool_name}")
             if fixed_args:
                 args = fixed_args
             else:

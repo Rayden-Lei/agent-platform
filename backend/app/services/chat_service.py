@@ -156,7 +156,7 @@ def get_published_agent(db: Session, agent_id: int) -> Agent:
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None) -> tuple[int, int]:
     """校验智能体，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。"""
-    get_published_agent(db, agent_id)
+    agent = get_published_agent(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
@@ -170,7 +170,11 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
         db.refresh(conversation)
 
     db.add(Message(conversation_id=conversation.id, role="user", content=message))
-    run = run_service.create_run(db, "chat", user_id, agent_id=agent_id, input_data={"message": message})
+    # model_id / conversation_id 是统计与追溯用的快照：智能体后来换模型不影响这条运行的归属
+    run = run_service.create_run(
+        db, "chat", user_id, agent_id=agent_id, model_id=agent.model_id, conversation_id=conversation.id,
+        input_data={"message": message, "source": "chat"},
+    )
     return conversation.id, run.id
 
 

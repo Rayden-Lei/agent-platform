@@ -1,18 +1,25 @@
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.exceptions import BizError
-from app.core.pagination import PageParams, paginate
+from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import hash_password
 from app.db.models import Agent, KnowledgeBase, ModelConfig, User, Workflow
 from app.schemas import UserCreate, UserUpdate
 
+SORTABLE = {"id": User.id, "username": User.username, "created_at": User.created_at}
 
-def list_users(db: Session, params: PageParams, q: str = None) -> dict:
-    """分页列出用户，q 对用户名模糊匹配。"""
+
+def list_users(db: Session, params: PageParams, q: str = None, role: str = None, is_active: bool = None, sort: SortParams = None) -> dict:
+    """分页列出用户：q 用户名模糊，可按角色、启用状态过滤，白名单排序。"""
     query = db.query(User)
     if q:
         query = query.filter(User.username.ilike(f"%{q}%"))
-    return paginate(query.order_by(User.id), params)
+    if role:
+        query = query.filter(User.role == role)
+    if is_active is not None:
+        query = query.filter(User.is_active.is_(is_active))
+    return paginate(apply_sort(query, sort, SORTABLE, [User.id.asc()]), params)
 
 
 def create_user(db: Session, data: UserCreate) -> User:
@@ -34,9 +41,11 @@ def get_user(db: Session, user_id: int) -> User:
     return u
 
 
-def update_user(db: Session, user_id: int, data: UserUpdate) -> User:
-    """更新用户：只处理显式传入的字段（role / is_active），其余保持不动。"""
+def update_user(db: Session, user_id: int, data: UserUpdate, operator: User = None) -> User:
+    """更新用户：只处理显式传入的字段（role / is_active），其余保持不动。管理员不能停用或降级自己，避免把自己锁在门外。"""
     u = get_user(db, user_id)
+    if operator is not None and operator.id == user_id and (data.is_active is False or (data.role is not None and data.role != "admin")):
+        raise BizError(400, "不能停用或降级当前登录的管理员账号")
     if data.role is not None:
         u.role = data.role
     if data.is_active is not None:
@@ -46,9 +55,19 @@ def update_user(db: Session, user_id: int, data: UserUpdate) -> User:
     return u
 
 
-def delete_user(db: Session, user_id: int) -> None:
-    """删除用户：先检查其名下配置类资源，有引用则拒绝删除（RESTRICT 保护）。"""
+def reset_password(db: Session, user_id: int, new_password: str, operator: User) -> None:
+    """管理员重置用户密码（只存哈希），写审计但不记录密码。"""
     u = get_user(db, user_id)
+    u.password_hash = hash_password(new_password)
+    db.commit()
+    record_audit(db, operator, "reset_password", "user", u.id, detail={"username": u.username})
+
+
+def delete_user(db: Session, user_id: int, operator: User = None) -> None:
+    """删除用户：先检查其名下配置类资源，有引用则拒绝删除（RESTRICT 保护）；不能删除自己。"""
+    u = get_user(db, user_id)
+    if operator is not None and operator.id == user_id:
+        raise BizError(400, "不能删除当前登录的账号")
     # 配置类引用（created_by）使用 RESTRICT，删除前给出友好提示
     refs = []
     if db.query(ModelConfig).filter(ModelConfig.created_by == user_id).first():
@@ -63,3 +82,11 @@ def delete_user(db: Session, user_id: int) -> None:
         raise BizError(409, "该用户仍关联配置资源（" + "、".join(refs) + "），无法删除")
     db.delete(u)
     db.commit()
+
+
+def apply_batch_action(db: Session, user_id: int, action: str, operator: User) -> None:
+    """批量操作的单条执行（enable / disable / delete），对自己的停用 / 删除按 400 进失败清单。"""
+    if action == "delete":
+        delete_user(db, user_id, operator)
+    else:
+        update_user(db, user_id, UserUpdate(is_active=(action == "enable")), operator)

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入
     CHAT_SUMMARY_BATCH_MESSAGES: int = 10
     CHAT_TITLE_MAX_LEN: int = 30
+    # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉
+    REPORT_TIMEZONE: str = "Asia/Shanghai"
+    STATS_MAX_DAYS: int = 90
     TOOL_CALL_MAX_ROUNDS: int = 8
     LOOP_MAX_ITERATIONS: int = 20
     EMBEDDING_API_BASE: str = ""

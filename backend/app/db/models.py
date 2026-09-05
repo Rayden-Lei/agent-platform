@@ -168,7 +168,7 @@ class WorkflowNode(Base):
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
     workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=True)
@@ -194,8 +194,8 @@ class Run(Base):
     __tablename__ = "runs"
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     run_type = Column(String(16), nullable=False, index=True)
-    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
-    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
+    workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(16), nullable=False, default="running", index=True)
     input = Column(JSONB, nullable=False, default=dict)
@@ -203,8 +203,13 @@ class Run(Base):
     error = Column(Text, nullable=True)
     token_usage = Column(JSONB, nullable=False, default=dict)
     latency_ms = Column(Integer, nullable=False, default=0)
-    started_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    started_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # 运营统计快照（页面深度优化）：model_id 记发起时智能体绑定的模型（智能体换模型后旧运行仍归旧模型）；
+    # cost 在收尾时按当时单价折算落库，改单价不追溯，趋势图不会被重写；conversation_id 让运行记录能跳回会话
+    model_id = Column(BigInteger, ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True)
+    conversation_id = Column(BigInteger, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
+    cost = Column(Float, nullable=True)
 
 
 class ScheduledJob(Base):

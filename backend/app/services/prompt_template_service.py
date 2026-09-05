@@ -3,12 +3,13 @@
 版本语义与智能体一致：content / variables 变化才升版本并写快照；回滚也是一次新版本，历史不可篡改。
 渲染是纯字符串替换（core/prompt_render），保存时就校验"内容引用的变量都已声明"。
 """
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
-from app.core.pagination import PageParams, paginate
+from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import extract_variables, render
 from app.db.models import Agent, PromptTemplate, PromptTemplateVersion, User
 
@@ -49,12 +50,31 @@ def _name_taken(db: Session, name: str, exclude_id: int | None = None) -> bool:
     return db.query(query.exists()).scalar()
 
 
-def list_templates(db: Session, params: PageParams, q: str | None = None) -> dict:
-    """分页列出模板，q 对名称模糊匹配；列表不含 content。"""
+SORTABLE = {"id": PromptTemplate.id, "name": PromptTemplate.name, "version": PromptTemplate.version, "updated_at": PromptTemplate.updated_at}
+
+
+def list_templates(db: Session, params: PageParams, q: str | None = None, sort: SortParams | None = None) -> dict:
+    """分页列出模板，q 对名称模糊匹配，白名单排序；列表不含 content，附绑定智能体数与创建人（各一次查询）。"""
     query = db.query(PromptTemplate)
     if q:
         query = query.filter(PromptTemplate.name.ilike(f"%{q}%"))
-    return paginate(query.order_by(PromptTemplate.id), params, _summary)
+    page = paginate(apply_sort(query, sort, SORTABLE, [PromptTemplate.id.asc()]), params)
+    rows = page["items"]
+    ids = {t.id for t in rows}
+    bound = dict(db.query(Agent.prompt_template_id, func.count(Agent.id)).filter(Agent.prompt_template_id.in_(ids)).group_by(Agent.prompt_template_id).all()) if ids else {}
+    creator_ids = {t.created_by for t in rows if t.created_by}
+    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    page["items"] = [{**_summary(t), "agents_count": int(bound.get(t.id, 0)), "created_by_username": creators.get(t.created_by)} for t in rows]
+    return page
+
+
+def get_template_agents(db: Session, template_id: int) -> list[dict]:
+    """绑定该模板的智能体清单（含是否落后于模板当前版本）。"""
+    t = get_template(db, template_id)
+    return [
+        {"id": a.id, "name": a.name, "status": a.status, "prompt_template_version": a.prompt_template_version, "outdated": bool(a.prompt_template_version is not None and t.version > a.prompt_template_version)}
+        for a in db.query(Agent).filter(Agent.prompt_template_id == template_id).order_by(Agent.id).all()
+    ]
 
 
 def get_template(db: Session, template_id: int) -> PromptTemplate:

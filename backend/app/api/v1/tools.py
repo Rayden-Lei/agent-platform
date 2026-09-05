@@ -1,14 +1,17 @@
-"""工具（Tool）路由：工具的增删改查与连通性测试。
+"""工具（Tool）路由：工具的增删改查、启停、批量操作与连通性测试。
 
 本模块仅允许 admin / developer 角色访问。
 """
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.orm import Session
 
+from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
-from app.core.pagination import PageParams, page_params
+from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
 from app.services import tool_service
@@ -48,15 +51,22 @@ class ToolTestIn(BaseModel):
     args: dict = {}
 
 
+class ToolBatchIn(BatchIn):
+    action: Literal["enable", "disable", "delete"]
+
+
 @router.get("")
 def list_tools(
     params: PageParams = Depends(page_params),
+    sort: SortParams = Depends(sort_params),
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    type: Literal["builtin", "http"] | None = Query(None),
+    is_enabled: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    """工具列表（分页），支持名称模糊匹配。"""
-    return tool_service.list_tools(db, params, q)
+    """工具列表（分页），支持名称模糊、类型、启用状态过滤；sort 可选 id / name / type / timeout；附引用智能体数。"""
+    return tool_service.list_tools(db, params, q, type, is_enabled, sort)
 
 
 @router.post("")
@@ -65,10 +75,30 @@ def create_tool(data: ToolIn, db: Session = Depends(get_db), user: User = Depend
     return tool_service.create_tool(db, data)
 
 
+# 固定路径必须声明在 /{tool_id} 之前
+@router.post("/batch")
+def batch_tools(data: ToolBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """批量启用 / 停用 / 删除：逐条独立执行并返回成功与失败清单。"""
+    return run_batch(db, data.unique_ids(), lambda tool_id: tool_service.apply_batch_action(db, tool_id, data.action))
+
+
+@router.get("/{tool_id}")
+def get_tool(tool_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """工具详情（含引用它的智能体清单）。"""
+    return tool_service.get_tool_detail(db, tool_id)
+
+
 @router.put("/{tool_id}")
 def update_tool(tool_id: int, data: ToolIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """按 ID 更新工具配置。"""
     return tool_service.update_tool(db, tool_id, data)
+
+
+@router.post("/{tool_id}/toggle")
+def toggle_tool(tool_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """启用 / 停用工具（开关切换）。停用后不再暴露给模型，工作流 tool 节点调用它会失败。"""
+    current = tool_service.get_tool(db, tool_id)
+    return tool_service.set_tool_enabled(db, tool_id, not current.is_enabled)
 
 
 @router.delete("/{tool_id}")

@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 _scheduler = None
 
 
-def _run_scheduled_job(job_id: int) -> None:
-    """定时触发一次工作流。
+def _run_scheduled_job(job_id: int, force: bool = False) -> None:
+    """定时触发一次工作流。force=True 是"立即执行"入口：停用的任务也跑，便于验证配置。
 
     与接口触发共用 workflow_service.execute_workflow，thread_id、节点日志、收尾（finished_at/latency_ms）
     行为完全一致。历史上这里自己调 graph.ainvoke 且没传 thread_id，图又绑了 checkpointer，
@@ -31,7 +31,7 @@ def _run_scheduled_job(job_id: int) -> None:
     run = None
     try:
         sj = db.get(ScheduledJob, job_id)
-        if sj is None or not sj.is_enabled:
+        if sj is None or (not sj.is_enabled and not force):
             logger.info("定时任务 %s 不存在或已停用，跳过", job_id)
             return
         wf = db.get(Workflow, sj.workflow_id)
@@ -46,7 +46,8 @@ def _run_scheduled_job(job_id: int) -> None:
 
         input_text = (sj.input or {}).get("input", "")
         run = run_service.create_run(
-            db, "workflow", user.id, workflow_id=wf.id, input_data={"scheduled": True, "input": input_text},
+            db, "workflow", user.id, workflow_id=wf.id,
+            input_data={"scheduled": True, "source": "schedule", "schedule_id": sj.id, "input": input_text},
         )
         result = workflow_service.execute_workflow(db, wf, run, {"input": input_text, "steps": []}, role=user.role)
         sj.last_run_at = datetime.now(timezone.utc)
@@ -100,6 +101,33 @@ def add_schedule_job(sj: ScheduledJob) -> None:
     cron 表达式非法时只记日志不抛异常，避免单条坏数据影响调度器启动与其余任务。
     """
     _add_job(get_scheduler(), sj)
+
+
+def is_valid_cron(expr: str) -> bool:
+    """cron 表达式是否可被调度器解析（五段 crontab 语法）。"""
+    try:
+        CronTrigger.from_crontab(expr)
+        return True
+    except ValueError:
+        return False
+
+
+def next_run_times(job_ids: list[int]) -> dict[int, datetime | None]:
+    """一次读取多个任务的下次触发时间；未注册（停用 / cron 非法 / 调度器未启动）为 None。只反映本进程的调度器。"""
+    sched = get_scheduler()
+    result: dict[int, datetime | None] = {}
+    for job_id in job_ids:
+        job = sched.get_job(str(job_id))
+        result[job_id] = job.next_run_time if job else None
+    return result
+
+
+def trigger_now(job_id: int, force: bool = False) -> None:
+    """立即执行一次定时任务（在调度器线程池里跑，不阻塞请求）；force 让停用的任务也能手动跑一次。"""
+    get_scheduler().add_job(
+        _run_scheduled_job, args=[job_id], kwargs={"force": force},
+        id=f"manual-{job_id}-{datetime.now(timezone.utc).timestamp()}", replace_existing=False,
+    )
 
 
 def remove_schedule_job(job_id: int) -> None:

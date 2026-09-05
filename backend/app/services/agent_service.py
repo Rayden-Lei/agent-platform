@@ -1,37 +1,54 @@
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
-from app.core.pagination import PageParams, paginate
+from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
-from app.db.models import Agent, AgentVersion, PromptTemplate, User
+from app.db.models import Agent, AgentVersion, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
 from app.schemas import AgentIn
 
-
-def _template_versions(db: Session, agents: list[Agent]) -> dict[int, int]:
-    """一次 IN 查询取这批智能体绑定模板的当前版本（禁止逐行查）。"""
-    ids = {a.prompt_template_id for a in agents if a.prompt_template_id}
-    if not ids:
-        return {}
-    rows = db.query(PromptTemplate.id, PromptTemplate.version).filter(PromptTemplate.id.in_(ids)).all()
-    return {tid: version for tid, version in rows}
+SORTABLE = {"id": Agent.id, "name": Agent.name, "status": Agent.status, "version": Agent.version, "updated_at": Agent.updated_at}
 
 
-def _to_out(a: Agent, template_versions: dict[int, int]) -> dict:
-    """智能体输出：附带 prompt_template_outdated（模板当前版本 > 绑定时版本）。"""
-    current = template_versions.get(a.prompt_template_id) if a.prompt_template_id else None
-    outdated = bool(current is not None and a.prompt_template_version is not None and current > a.prompt_template_version)
-    return {
-        "id": a.id, "name": a.name, "description": a.description, "system_prompt": a.system_prompt, "model_id": a.model_id,
-        "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "workflow_id": a.workflow_id,
-        "status": a.status, "version": a.version,
-        "prompt_template_id": a.prompt_template_id, "prompt_template_version": a.prompt_template_version,
-        "prompt_variables": a.prompt_variables or {}, "prompt_template_outdated": outdated,
-    }
+class _Related:
+    """一页智能体的关联信息：模板版本、模型名、模板名、创建人、最近 7 天运行数与最近运行时间，各一次查询。"""
+
+    def __init__(self, db: Session, agents: list[Agent]):
+        ids = {a.id for a in agents}
+        template_ids = {a.prompt_template_id for a in agents if a.prompt_template_id}
+        model_ids = {a.model_id for a in agents if a.model_id}
+        creator_ids = {a.created_by for a in agents if a.created_by}
+        self.templates = {t.id: t for t in db.query(PromptTemplate).filter(PromptTemplate.id.in_(template_ids)).all()} if template_ids else {}
+        self.models = dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
+        self.creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+        rows = db.query(Run.agent_id, func.count(Run.id), func.max(Run.started_at)).filter(Run.agent_id.in_(ids), Run.started_at >= since).group_by(Run.agent_id).all() if ids else []
+        self.runs = {agent_id: (count, last) for agent_id, count, last in rows}
+
+    def to_dict(self, a: Agent) -> dict:
+        template = self.templates.get(a.prompt_template_id) if a.prompt_template_id else None
+        current = template.version if template else None
+        outdated = bool(current is not None and a.prompt_template_version is not None and current > a.prompt_template_version)
+        runs_7d, last_run = self.runs.get(a.id, (0, None))
+        return {
+            "id": a.id, "name": a.name, "description": a.description, "system_prompt": a.system_prompt, "model_id": a.model_id,
+            "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "workflow_id": a.workflow_id,
+            "status": a.status, "version": a.version,
+            "prompt_template_id": a.prompt_template_id, "prompt_template_version": a.prompt_template_version,
+            "prompt_variables": a.prompt_variables or {}, "prompt_template_outdated": outdated,
+            "model_name": self.models.get(a.model_id), "prompt_template_name": template.name if template else None,
+            "created_by": a.created_by, "created_by_username": self.creators.get(a.created_by),
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+            "runs_7d": int(runs_7d), "last_run_at": last_run.isoformat() if last_run else None,
+        }
 
 
 def _single_out(db: Session, a: Agent) -> dict:
-    return _to_out(a, _template_versions(db, [a]))
+    return _Related(db, [a]).to_dict(a)
 
 
 def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
@@ -57,17 +74,26 @@ def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
         a.prompt_variables = {}
 
 
-def list_agents(db: Session, params: PageParams, q: str = None, status: str = None) -> dict:
-    """分页列出智能体：q 对名称模糊匹配，status 精确过滤（如 published / draft）。
-    outdated 标记用一次 IN 查询批量算，不逐行查模板。"""
+def list_agents(db: Session, params: PageParams, q: str = None, status: str = None, model_id: int = None,
+                kb_id: int = None, tool_id: int = None, prompt_template_id: int = None, sort: SortParams = None) -> dict:
+    """分页列出智能体：q 名称模糊，status / model_id / prompt_template_id 精确，kb_id / tool_id 按 JSONB 数组包含过滤；
+    白名单排序；关联信息批量装配，不逐行查库。"""
     query = db.query(Agent)
     if q:
         query = query.filter(Agent.name.ilike(f"%{q}%"))
     if status:
         query = query.filter(Agent.status == status)
-    page = paginate(query.order_by(Agent.id), params)
-    versions = _template_versions(db, page["items"])
-    page["items"] = [_to_out(a, versions) for a in page["items"]]
+    if model_id:
+        query = query.filter(Agent.model_id == model_id)
+    if prompt_template_id:
+        query = query.filter(Agent.prompt_template_id == prompt_template_id)
+    if kb_id:
+        query = query.filter(Agent.kb_ids.contains([kb_id]))
+    if tool_id:
+        query = query.filter(Agent.tool_ids.contains([tool_id]))
+    page = paginate(apply_sort(query, sort, SORTABLE, [Agent.id.asc()]), params)
+    related = _Related(db, page["items"])
+    page["items"] = [related.to_dict(a) for a in page["items"]]
     return page
 
 
@@ -99,8 +125,25 @@ def get_agent(db: Session, agent_id: int) -> Agent:
 
 
 def get_agent_detail(db: Session, agent_id: int) -> dict:
-    """详情（含 prompt_template_outdated）。"""
-    return _single_out(db, get_agent(db, agent_id))
+    """详情：基础字段 + 关联对象（模型、工具、知识库、工作流、模板）与悬空引用清单。
+    kb_ids / tool_ids 是 JSONB 数组无外键，知识库或工具删除后 ID 会残留，这里把查不到的 ID 显式列出。"""
+    a = get_agent(db, agent_id)
+    model = db.get(ModelConfig, a.model_id) if a.model_id else None
+    tools = db.query(Tool).filter(Tool.id.in_(a.tool_ids)).order_by(Tool.id).all() if a.tool_ids else []
+    kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(a.kb_ids)).order_by(KnowledgeBase.id).all() if a.kb_ids else []
+    workflow = db.get(Workflow, a.workflow_id) if a.workflow_id else None
+    template = db.get(PromptTemplate, a.prompt_template_id) if a.prompt_template_id else None
+    found_tools, found_kbs = {t.id for t in tools}, {k.id for k in kbs}
+    return {
+        **_single_out(db, a),
+        "model": {"id": model.id, "name": model.name, "provider": model.provider, "model_name": model.model_name, "is_enabled": model.is_enabled} if model else None,
+        "tools": [{"id": t.id, "name": t.name, "type": t.type, "is_enabled": t.is_enabled} for t in tools],
+        "missing_tool_ids": [i for i in (a.tool_ids or []) if i not in found_tools],
+        "knowledge_bases": [{"id": k.id, "name": k.name, "is_public": k.is_public} for k in kbs],
+        "missing_kb_ids": [i for i in (a.kb_ids or []) if i not in found_kbs],
+        "workflow": {"id": workflow.id, "name": workflow.name, "status": workflow.status} if workflow else None,
+        "prompt_template": {"id": template.id, "name": template.name, "version": template.version, "variables": template.variables} if template else None,
+    }
 
 
 def update_agent(db: Session, agent_id: int, data: AgentIn) -> dict:
@@ -154,6 +197,14 @@ def publish_agent(db: Session, agent_id: int, user: User) -> dict:
     db.refresh(a)
     record_audit(db, user, "publish", "agent", a.id, detail={"name": a.name, "version": a.version})
     return _single_out(db, a)
+
+
+def apply_batch_action(db: Session, agent_id: int, action: str, user: User) -> None:
+    """批量操作的单条执行（publish / delete）。"""
+    if action == "delete":
+        delete_agent(db, agent_id)
+    else:
+        publish_agent(db, agent_id, user)
 
 
 def list_versions(db: Session, agent_id: int, params: PageParams) -> dict:

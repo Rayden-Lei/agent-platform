@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Generic, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +26,8 @@ class UserOut(BaseModel):
     username: str
     role: str
     is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class TokenOut(BaseModel):
@@ -65,6 +68,12 @@ class ModelOut(BaseModel):
     is_enabled: bool
     price_input: Optional[float] = None
     price_output: Optional[float] = None
+    # 列表附带的关联信息（页面深度优化）：引用该模型的智能体数、创建人、时间
+    agents_count: int = 0
+    created_by: Optional[int] = None
+    created_by_username: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class AgentIn(BaseModel):
@@ -101,3 +110,24 @@ class AgentOut(BaseModel):
     prompt_variables: dict = Field(default_factory=dict)
     # 模板当前版本高于绑定时版本；模板改版不自动传播，由开发者重新保存
     prompt_template_outdated: bool = False
+    # 列表附带的关联信息（页面深度优化）：模型名、模板名、创建人、时间、最近 7 天运行数与最近运行时间
+    model_name: Optional[str] = None
+    prompt_template_name: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_username: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    runs_7d: int = 0
+    last_run_at: Optional[str] = None
+
+
+class AgentDetailOut(AgentOut):
+    """详情：在列表字段之上附关联对象（供详情页展示与跳转）与悬空引用清单。"""
+
+    model: Optional[dict] = None
+    tools: list = Field(default_factory=list)
+    missing_tool_ids: list = Field(default_factory=list)
+    knowledge_bases: list = Field(default_factory=list)
+    missing_kb_ids: list = Field(default_factory=list)
+    workflow: Optional[dict] = None
+    prompt_template: Optional[dict] = None

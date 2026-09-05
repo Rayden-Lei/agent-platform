@@ -3,14 +3,15 @@
 本模块仅允许 admin / developer 角色访问，不接受 API Key（管理接口）。
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
-from app.core.pagination import PageParams, page_params
+from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.core.prompt_render import VARIABLE_NAME_RE
 from app.db.models import User
 from app.db.session import get_db
@@ -55,21 +56,39 @@ class PromptRenderIn(BaseModel):
     variables: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemplateBatchIn(BatchIn):
+    action: Literal["delete"]
+
+
 @router.get("")
 def list_templates(
     params: PageParams = Depends(page_params),
+    sort: SortParams = Depends(sort_params),
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    """模板列表（分页，不含 content），支持名称模糊匹配。"""
-    return prompt_template_service.list_templates(db, params, q)
+    """模板列表（分页，不含 content），支持名称模糊匹配；sort 可选 id / name / version / updated_at；附绑定智能体数。"""
+    return prompt_template_service.list_templates(db, params, q, sort)
 
 
 @router.post("")
 def create_template(data: PromptTemplateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """新建模板；响应含 unused_variables（声明了但内容未使用）。409 重名；400 引用未声明变量。"""
     return prompt_template_service.create_template(db, data, user)
+
+
+# 固定路径必须声明在 /{template_id} 之前
+@router.post("/batch")
+def batch_templates(data: TemplateBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """批量删除：逐条独立执行，仍被绑定的模板 409 进失败清单。"""
+    return run_batch(db, data.unique_ids(), lambda template_id: prompt_template_service.delete_template(db, template_id, user))
+
+
+@router.get("/{template_id}/agents")
+def template_agents(template_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """绑定该模板的智能体清单（含是否落后于当前版本）。"""
+    return prompt_template_service.get_template_agents(db, template_id)
 
 
 @router.get("/{template_id}")

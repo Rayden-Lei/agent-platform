@@ -62,9 +62,10 @@ def _build_http_tool(t: Tool):
 
 
 def build_tools(tool_dbs: list) -> list:
-    """组装 Agent 可用的工具列表：内置工具（current_time/calculator）恒有，DB 中 http 类型工具追加进来。"""
+    """组装 Agent 可用的工具列表：内置工具（current_time/calculator）恒有，DB 中启用的 http 类型工具追加进来。
+    停用的工具仍绑定在智能体上，但不暴露给模型（工具页的启停开关就是靠这里生效）。"""
     tools = [current_time, calculator]
     for t in tool_dbs:
-        if t.type == "http":
+        if t.type == "http" and t.is_enabled:
             tools.append(_build_http_tool(t))
     return tools
