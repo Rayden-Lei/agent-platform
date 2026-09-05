@@ -10,8 +10,17 @@ from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, Run, User, Workflow
 from app.services import run_service
 from app.workflow.engine import build_workflow
+from app.workflow.validation import validate_graph
 
 logger = logging.getLogger(__name__)
+
+
+def _check_graph(graph: dict) -> None:
+    """图校验（FR-029）：保存与运行前显式调用。不能只靠 build_workflow 内部抛错 ——
+    test_run_workflow / execute_workflow 会把执行期异常吞成 failed，400 到不了调用方，还会白建一条 failed 运行记录。"""
+    errors = validate_graph(graph or {})
+    if errors:
+        raise BizError(400, "图校验失败：" + "；".join(errors))
 
 
 def list_workflows(db: Session, params: PageParams, q: str = None) -> dict:
@@ -25,7 +34,8 @@ def list_workflows(db: Session, params: PageParams, q: str = None) -> dict:
 
 
 def create_workflow(db: Session, data, user) -> dict:
-    """新建工作流（graph 为图定义 JSON），记录创建人。"""
+    """新建工作流（graph 为图定义 JSON），记录创建人。图结构不合法 400。"""
+    _check_graph(data.graph)
     w = Workflow(name=data.name, description=data.description, graph=data.graph, created_by=user.id)
     db.add(w)
     db.commit()
@@ -48,7 +58,8 @@ def get_workflow_detail(db: Session, workflow_id: int) -> dict:
 
 
 def update_workflow(db: Session, workflow_id: int, data) -> dict:
-    """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。"""
+    """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。图结构不合法 400。"""
+    _check_graph(data.graph)
     w = get_workflow(db, workflow_id)
     w.name = data.name
     w.description = data.description
@@ -81,7 +92,8 @@ def _interrupt_value(result: dict):
 
 
 async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> dict:
-    """编辑器内测试运行：用当前图直接执行，不落库。"""
+    """编辑器内测试运行：用当前图直接执行，不落库。图结构不合法 400（在 try 之外，不能被吞成 failed）。"""
+    _check_graph(graph)
     try:
         g = build_workflow(graph, role=role)
         thread_id = "test-" + uuid.uuid4().hex[:12]
@@ -124,8 +136,9 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
 
 
 async def run_workflow(db: Session, workflow_id: int, input_text: str, user) -> dict:
-    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。"""
+    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构不合法 400 且不建运行记录。"""
     w = get_workflow(db, workflow_id)
+    _check_graph(w.graph)
     run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text})
     return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
 

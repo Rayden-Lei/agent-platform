@@ -11,12 +11,14 @@ from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from app.core.exceptions import BizError
 from app.db.models import Agent, ModelConfig, RunNode, Tool
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
 from app.tools.executor import execute_tool
 from app.tools.schema import check_tool_args
+from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
 
 logger = logging.getLogger(__name__)
 
@@ -185,17 +187,18 @@ def _finalize_node_output(node_id: str, raw_output: Any, config: dict) -> dict:
     return {"output": out, "node_outputs": {node_id: out}}
 
 
-def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """Agent 节点工厂：按 config.agent_id 查智能体，用其 system_prompt（可被 config.prompt 覆盖）调 LLM。
 
     节点函数签名 (state) -> dict；agent 不存在时写 failed 节点日志并返回错误文案，
     其他异常经 _node_failed 记录后重新抛出，由上层把整条运行置为 failed。
+    default_ref（所有工厂同义）：并行分支内由编译期给出的前驱节点 id，未配 input_ref 时默认取它的输出。
     """
     agent_id = config.get("agent_id")
     prompt_override = config.get("prompt")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "agent", input_val)
         db = SessionLocal()
         try:
@@ -224,7 +227,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """工具节点工厂：按 config.tool_name 查工具；配了固定 args 用固定参数，否则把输入按 JSON 解析为参数。
 
     工具执行是异步的（execute_tool），而 LangGraph 节点是同步函数，这里用 asyncio.run 桥接；
@@ -234,7 +237,7 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
     fixed_args = config.get("args")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "tool", input_val)
         db = SessionLocal()
         try:
@@ -263,7 +266,7 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_condition_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """条件节点工厂：对 config.expression 求值，结果写进 state.condition_result 供条件边路由。
 
     表达式异常按 false 处理（见 _eval_condition），因此上游字段拼写错误时，
@@ -272,7 +275,7 @@ def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
     expr = config.get("expression", "")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "condition", input_val)
         result = _eval_condition(expr, state)
         out = {"condition_result": result, "steps": [f"condition:{bool(result)}"]}
@@ -282,7 +285,7 @@ def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> Callable:
+def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None, default_ref: str | None = None) -> Callable:
     """知识库检索节点工厂：按 config.kb_id/top_k 调用 retrieve，检索结果作为节点输出。
 
     role 用于检索层的权限过滤（与 retriever 的 ACL 两道闸门一致），
@@ -292,7 +295,7 @@ def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> 
     top_k = config.get("top_k")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "kb_retrieval", input_val)
         try:
             results = retrieve(kb_id, str(input_val), top_k, role=role)
@@ -307,7 +310,7 @@ def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> 
     return run
 
 
-def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_code_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """代码节点工厂：在受限命名空间里 exec 用户配置的代码，取 result（缺省用 output）作为节点输出。
 
     注意：这里放行完整 __builtins__（区别于条件表达式的白名单），属设计内的高风险能力，
@@ -316,7 +319,7 @@ def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
     code = config.get("code", "")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "code", input_val)
         try:
             namespace = {"input": input_val, "output": input_val, "result": None}
@@ -333,7 +336,7 @@ def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_http_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """HTTP 节点工厂：按 config.url/method 调用外部接口（GET 参数走 query，其余走 JSON body）。
 
     30 秒超时；非 2xx 响应 raise_for_status 抛异常走失败分支；响应按纯文本返回，
@@ -343,7 +346,7 @@ def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
     method = config.get("method", "POST")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "http", input_val)
         try:
             with httpx.Client(timeout=30) as client:
@@ -364,11 +367,11 @@ def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_loop_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_loop_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """循环节点：递增 loop_index。由 build_workflow 添加条件边决定回环(loop)还是退出(exit)。"""
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "loop", input_val)
         idx = (state.get("loop_index") or 0) + 1
         out = {"loop_index": idx, "steps": [f"loop:{idx}"]}
@@ -378,12 +381,12 @@ def _make_loop_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_review_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """人工审核节点：interrupt 暂停，等待外部 resume(approve/reject)。"""
     instruction = config.get("instruction", "请审核")
 
     def run(state: WorkflowState) -> dict:
-        input_val = _get_node_input(state, config)
+        input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "human_review", input_val)
         try:
             decision = interrupt({
@@ -409,7 +412,7 @@ def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_start_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_start_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """开始节点工厂：不改状态，只落一条 start 节点日志。
 
     返回空增量而不是整个 state：steps 带 reducer，回传整个 state 会把已有轨迹再追加一遍。
@@ -423,13 +426,44 @@ def _make_start_node(config: dict, run_id: int, node_id: str) -> Callable:
     return run
 
 
-def _make_end_node(config: dict, run_id: int, node_id: str) -> Callable:
+def _make_end_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """结束节点工厂：不改状态，只落一条 end 节点日志（同 start，返回空增量）。"""
 
     def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "end", state.get("output"))
         _finish_node(rn_id, "success", state.get("output"))
         return {}
+
+    return run
+
+
+def _make_parallel_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
+    """并行节点（FR-029）：把输入透传为输出，各分支首节点默认取它；扇出由 build_workflow 按出边连线完成。"""
+
+    def run(state: WorkflowState) -> dict:
+        input_val = _get_node_input(state, config, default_ref)
+        rn_id = _start_node(run_id, node_id, "parallel", input_val)
+        _finish_node(rn_id, "success", input_val)
+        return {"output": input_val, "node_outputs": {node_id: input_val}, "steps": ["parallel"]}
+
+    return run
+
+
+def _make_join_node(config: dict, run_id: int, node_id: str, predecessors: list[str]) -> Callable:
+    """汇聚节点（FR-029）：等全部分支完成后（build_workflow 用列表边连入），
+    把各分支末节点的输出收集成 {末节点 id: 输出} 作为本节点输出，并覆盖 state.output，
+    之后的节点默认输入即该字典；output_field 仍可用于从中提取字段。
+    并行超步内各分支对 output 的写入顺序不确定，所以 join 一定要重写 output，不能依赖"最后一个分支"。
+    """
+
+    def run(state: WorkflowState) -> dict:
+        outputs = state.get("node_outputs") or {}
+        collected = {pid: outputs.get(pid) for pid in predecessors}
+        rn_id = _start_node(run_id, node_id, "join", collected)
+        out = _finalize_node_output(node_id, collected, config)
+        out["steps"] = ["join"]
+        _finish_node(rn_id, "success", out["output"])
+        return out
 
     return run
 
@@ -446,29 +480,44 @@ NODE_BUILDERS = {
     "http": _make_http_node,
     "loop": _make_loop_node,
     "human_review": _make_review_node,
+    "parallel": _make_parallel_node,
+    # join 需要前驱列表，在 build_workflow 里单独构造
 }
 
 
 def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
-    """把数据库 graph JSON（nodes/edges）编译成 LangGraph 可执行图。"""
+    """把数据库 graph JSON（nodes/edges）编译成 LangGraph 可执行图。
+
+    图校验（并行 / 汇聚结构）在这里兜底：服务层保存与运行前已显式校验并返回 400，
+    这里抛出的 BizError 只会被 execute_workflow 吞成 failed（定时任务等无调用方的路径）。
+    """
+    errors = validate_graph(graph_data)
+    if errors:
+        raise BizError(400, "图校验失败：" + "；".join(errors))
     nodes = graph_data.get("nodes") or []
     edges = graph_data.get("edges") or []
     by_id = {n["id"]: n for n in nodes}
+    # 并行分支内节点的默认输入来源（分支首节点 → parallel，其余 → 本分支前驱）；分支外的节点没有，走 output 回退
+    default_refs = branch_predecessors(graph_data)
+    join_preds = join_predecessors(graph_data)
 
     g = StateGraph(WorkflowState)
     for n in nodes:
-        ntype = n.get("type")
+        ntype, nid, config = n.get("type"), n["id"], n.get("config") or {}
         if ntype == "kb_retrieval":
             # 知识库检索节点需要携带触发者角色做权限过滤
-            g.add_node(n["id"], _make_kb_node(n.get("config") or {}, run_id, n["id"], role))
+            g.add_node(nid, _make_kb_node(config, run_id, nid, role, default_ref=default_refs.get(nid)))
+        elif ntype == "join":
+            g.add_node(nid, _make_join_node(config, run_id, nid, join_preds.get(nid, [])))
         else:
             builder = NODE_BUILDERS.get(ntype, _make_start_node)
-            g.add_node(n["id"], builder(n.get("config") or {}, run_id, n["id"]))
+            g.add_node(nid, builder(config, run_id, nid, default_ref=default_refs.get(nid)))
 
     start_ids = [n["id"] for n in nodes if n.get("type") == "start"]
     end_ids = [n["id"] for n in nodes if n.get("type") == "end"]
     cond_ids = {n["id"] for n in nodes if n.get("type") == "condition"}
     loop_ids = {n["id"] for n in nodes if n.get("type") == "loop"}
+    join_ids = set(join_preds)
 
     # 先把条件/循环节点的出边按 when 收集成路由映射；这两类节点的边不直接连，见下方条件边/循环边
     cond_routes: dict[str, dict[str, str]] = {}
@@ -487,7 +536,15 @@ def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
         if src in cond_ids or src in loop_ids:
             # 条件/循环节点的边已在上面收集，跳过以免重复连接
             continue
+        if dst in join_ids:
+            # 汇聚节点的入边下面按列表一次性连：逐条 add_edge 会让 join 在每条分支完成时各跑一次
+            continue
+        # parallel 的多条出边就是普通直连边：LangGraph 对同一节点的多条出边天然在下一超步并发执行
         g.add_edge(src, dst)
+
+    for jid, preds in join_preds.items():
+        # 列表边：等全部前驱（各分支末节点）完成后再执行 join
+        g.add_edge(preds, jid)
 
     for cid, routes in cond_routes.items():
         # 条件边：按 state.condition_result 路由 true/false；映射里指向不存在节点的出口被过滤掉
