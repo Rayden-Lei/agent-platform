@@ -12,7 +12,8 @@ body {
 
 /* ===== 登录页 ===== */
 .login-page {
-  min-height: 100vh;
+  min-height: 100%;
+  overflow: auto;
   position: relative;
   background: #111827;
   display: flex;
@@ -88,12 +89,17 @@ body {
 }
 
 /* ===== 自适应 ===== */
+/* 壳层用 100% 高度链填满视口、文档本身永不滚动（docs/07 第 1 节：外层 overflow:hidden 堵死"整页一起滚"）。
+   不用 100vh：使用者的 Chrome 里出现过 100vh 与真实视口差几十像素、滚轮一动整页位移的情况（2026-09-06）。 */
 html, body, #root {
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  height: 100%;
+  overflow: hidden;
 }
-/* ===== 表格内部滚动，分页固定底部 ===== */
+/* ===== 表格内部滚动，分页固定底部 =====
+   只传 scroll.x 时 antd 的滚动容器是 .ant-table-content（内联 overflow: auto hidden，要 !important 才能改成纵向也滚），
+   没有 .ant-table-header / .ant-table-body；表头用 position: sticky 钉在容器顶部。 */
 .fixed-table-wrapper {
   flex: 1;
   min-height: 0;
@@ -121,12 +127,19 @@ html, body, #root {
   display: flex;
   flex-direction: column;
 }
-.fixed-table-wrapper .ant-table-header {
-  flex-shrink: 0;
-}
-.fixed-table-wrapper .ant-table-body {
+.fixed-table-wrapper .ant-table-content {
   flex: 1;
+  min-height: 0;
   overflow: auto !important;
+}
+.fixed-table-wrapper .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.fixed-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-right,
+.fixed-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-left {
+  z-index: 4;
 }
 .fixed-table-wrapper .ant-table-pagination {
   flex-shrink: 0;

@@ -31,18 +31,18 @@ export default function AppLayout() {
   }, [dirty])
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ height: '100%', overflow: 'hidden' }}>
       {/* 移动端用抽屉承载导航，桌面端用固定 Sider */}
       {isMobile ? (
         <Drawer placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} width={230} styles={{ body: { padding: 0, background: '#1f2937' } }} title={null}>
           <SideNav onNavigate={() => setDrawerOpen(false)} />
         </Drawer>
       ) : (
-        <Sider theme="dark" width={220} style={{ background: '#1f2937' }}>
+        <Sider theme="dark" width={220} style={{ background: '#1f2937', height: '100%', overflowY: 'auto' }}>
           <SideNav />
         </Sider>
       )}
-      <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+      <Layout style={{ height: '100%', overflow: 'hidden', minWidth: 0 }}>
         {/* 顶部栏：左侧为移动端菜单按钮/页面标题，右侧为当前用户信息与退出登录 */}
         <Header style={{ height: 56, flexShrink: 0, background: '#fff', padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', zIndex: 10 }}>
           {isMobile ? (
