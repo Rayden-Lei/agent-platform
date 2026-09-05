@@ -1,7 +1,8 @@
 import asyncio
 import json
 import logging
-from typing import Any, Callable, TypedDict
+import operator
+from typing import Annotated, Any, Callable, TypedDict
 
 import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -20,14 +21,28 @@ from app.tools.schema import check_tool_args
 logger = logging.getLogger(__name__)
 
 
+def _merge_dict(current: dict, update: dict) -> dict:
+    return {**(current or {}), **(update or {})}
+
+
+def _last_write(current: Any, update: Any) -> Any:
+    return update
+
+
 class WorkflowState(TypedDict, total=False):
+    """图状态。节点只返回增量，由 reducer 合并：steps 追加、node_outputs 合并、output 取最后一次写入。
+
+    没有 reducer 的键在同一超步被两个节点写入会抛 InvalidUpdateError，并行分支（FR-029）靠这三个 reducer 才能跑；
+    串行图下合并结果与"整体覆盖"完全相同。其余键只有单个写者，保持普通覆盖。
+    """
+
     input: Any
-    output: Any
+    output: Annotated[Any, _last_write]
     condition_result: bool
     loop_index: int
     review_result: str
-    node_outputs: dict
-    steps: list
+    node_outputs: Annotated[dict, _merge_dict]
+    steps: Annotated[list, operator.add]
 
 
 # 条件表达式可用的内置函数白名单：收窄 eval 的能力面，杜绝 import/open 等危险内置
@@ -153,19 +168,21 @@ def _resolve_ref(state: WorkflowState, ref: str) -> Any:
     return _extract_field(value, ".".join(parts[1:])) if len(parts) > 1 else value
 
 
-def _get_node_input(state: WorkflowState, config: dict) -> Any:
-    """按 config.input_ref 解析节点输入；未指定则取上一节点 output，再回退 input。"""
+def _get_node_input(state: WorkflowState, config: dict, default_ref: str | None = None) -> Any:
+    """按 config.input_ref 解析节点输入；未指定时取 default_ref 指向的节点输出（并行分支内由编译期给出前驱），
+    再退到上一节点 output，最后回退 input。"""
     ref = (config or {}).get("input_ref")
     if ref:
         return _resolve_ref(state, ref)
+    if default_ref:
+        return (state.get("node_outputs") or {}).get(default_ref)
     return state.get("output") if state.get("output") is not None else state.get("input")
 
 
-def _finalize_node_output(state: WorkflowState, node_id: str, raw_output: Any, config: dict) -> dict:
-    """把节点输出写入 state.output，并按 config.output_field 提取字段，同时记录 node_outputs。"""
+def _finalize_node_output(node_id: str, raw_output: Any, config: dict) -> dict:
+    """按 config.output_field 提取字段，返回写入 output 与 node_outputs 的增量（由 reducer 合并进 state）。"""
     out = _extract_field(raw_output, (config or {}).get("output_field"))
-    node_outputs = {**(state.get("node_outputs") or {}), node_id: out}
-    return {"output": out, "node_outputs": node_outputs}
+    return {"output": out, "node_outputs": {node_id: out}}
 
 
 def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
@@ -194,8 +211,8 @@ def _make_agent_node(config: dict, run_id: int, node_id: str) -> Callable:
                 SystemMessage(content=prompt_override or agent.system_prompt),
                 HumanMessage(content=str(input_val)),
             ])
-            out = _finalize_node_output(state, node_id, resp.content, config)
-            out["steps"] = [*state.get("steps", []), f"agent:{agent.name}"]
+            out = _finalize_node_output(node_id, resp.content, config)
+            out["steps"] = [f"agent:{agent.name}"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
@@ -233,8 +250,8 @@ def _make_tool_node(config: dict, run_id: int, node_id: str) -> Callable:
             # HTTP 工具按参数声明校验（FR-030）：不合法抛 ValueError → 节点 failed，错误文本"参数校验失败：..."
             args = check_tool_args(tool_db, args)
             result = asyncio.run(execute_tool(tool_db, args))
-            out = _finalize_node_output(state, node_id, result, config)
-            out["steps"] = [*state.get("steps", []), f"tool:{tool_name}"]
+            out = _finalize_node_output(node_id, result, config)
+            out["steps"] = [f"tool:{tool_name}"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
@@ -258,7 +275,7 @@ def _make_condition_node(config: dict, run_id: int, node_id: str) -> Callable:
         input_val = _get_node_input(state, config)
         rn_id = _start_node(run_id, node_id, "condition", input_val)
         result = _eval_condition(expr, state)
-        out = {"condition_result": result, "steps": [*state.get("steps", []), f"condition:{bool(result)}"]}
+        out = {"condition_result": result, "steps": [f"condition:{bool(result)}"]}
         _finish_node(rn_id, "success", result)
         return out
 
@@ -279,8 +296,8 @@ def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None) -> 
         rn_id = _start_node(run_id, node_id, "kb_retrieval", input_val)
         try:
             results = retrieve(kb_id, str(input_val), top_k, role=role)
-            out = _finalize_node_output(state, node_id, results, config)
-            out["steps"] = [*state.get("steps", []), f"kb_retrieval:{len(results)}"]
+            out = _finalize_node_output(node_id, results, config)
+            out["steps"] = [f"kb_retrieval:{len(results)}"]
             _finish_node(rn_id, "success", json.dumps(out["output"], ensure_ascii=False))
             return out
         except Exception as e:
@@ -305,8 +322,8 @@ def _make_code_node(config: dict, run_id: int, node_id: str) -> Callable:
             namespace = {"input": input_val, "output": input_val, "result": None}
             exec(code, {"__builtins__": __builtins__}, namespace)
             raw = namespace.get("result") if namespace.get("result") is not None else namespace.get("output", "")
-            out = _finalize_node_output(state, node_id, raw, config)
-            out["steps"] = [*state.get("steps", []), "code"]
+            out = _finalize_node_output(node_id, raw, config)
+            out["steps"] = ["code"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
@@ -336,8 +353,8 @@ def _make_http_node(config: dict, run_id: int, node_id: str) -> Callable:
                     resp = client.post(url, json={"input": input_val})
                 resp.raise_for_status()
                 raw = resp.text
-            out = _finalize_node_output(state, node_id, raw, config)
-            out["steps"] = [*state.get("steps", []), "http"]
+            out = _finalize_node_output(node_id, raw, config)
+            out["steps"] = ["http"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
@@ -354,7 +371,7 @@ def _make_loop_node(config: dict, run_id: int, node_id: str) -> Callable:
         input_val = _get_node_input(state, config)
         rn_id = _start_node(run_id, node_id, "loop", input_val)
         idx = (state.get("loop_index") or 0) + 1
-        out = {"loop_index": idx, "steps": [*state.get("steps", []), f"loop:{idx}"]}
+        out = {"loop_index": idx, "steps": [f"loop:{idx}"]}
         _finish_node(rn_id, "success", idx)
         return out
 
@@ -383,9 +400,9 @@ def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
             _node_failed(rn_id, run_id, node_id, "human_review", e)
             raise
         decision_str = json.dumps(decision, ensure_ascii=False, default=str)
-        out = _finalize_node_output(state, node_id, decision, config)
+        out = _finalize_node_output(node_id, decision, config)
         out["review_result"] = decision_str
-        out["steps"] = [*state.get("steps", []), f"human_review:{decision_str}"]
+        out["steps"] = [f"human_review:{decision_str}"]
         _finish_node(rn_id, "success", decision_str)
         return out
 
@@ -393,23 +410,26 @@ def _make_review_node(config: dict, run_id: int, node_id: str) -> Callable:
 
 
 def _make_start_node(config: dict, run_id: int, node_id: str) -> Callable:
-    """开始节点工厂：透传 input 并落一条 start 节点日志。"""
+    """开始节点工厂：不改状态，只落一条 start 节点日志。
+
+    返回空增量而不是整个 state：steps 带 reducer，回传整个 state 会把已有轨迹再追加一遍。
+    """
 
     def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "start", state.get("input"))
         _finish_node(rn_id, "success", state.get("input"))
-        return state
+        return {}
 
     return run
 
 
 def _make_end_node(config: dict, run_id: int, node_id: str) -> Callable:
-    """结束节点工厂：透传 output 并落一条 end 节点日志。"""
+    """结束节点工厂：不改状态，只落一条 end 节点日志（同 start，返回空增量）。"""
 
     def run(state: WorkflowState) -> dict:
         rn_id = _start_node(run_id, node_id, "end", state.get("output"))
         _finish_node(rn_id, "success", state.get("output"))
-        return state
+        return {}
 
     return run
 
