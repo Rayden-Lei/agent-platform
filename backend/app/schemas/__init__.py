@@ -68,14 +68,19 @@ class ModelOut(BaseModel):
 
 
 class AgentIn(BaseModel):
+    """创建 / 更新智能体。system_prompt 与 prompt_template_id 二选一（FR-028）：
+    绑定模板时 system_prompt 必须省略或为空，服务端用模板 + prompt_variables 渲染写入。"""
+
     name: str
     description: str = ""
-    system_prompt: str
+    system_prompt: str = ""
     model_id: int
     params: dict = Field(default_factory=dict)
     kb_ids: list = Field(default_factory=list)
     tool_ids: list = Field(default_factory=list)
     workflow_id: Optional[int] = None
+    prompt_template_id: Optional[int] = None
+    prompt_variables: dict = Field(default_factory=dict)
 
 
 class AgentOut(BaseModel):
@@ -91,3 +96,8 @@ class AgentOut(BaseModel):
     workflow_id: Optional[int]
     status: str
     version: int
+    prompt_template_id: Optional[int] = None
+    prompt_template_version: Optional[int] = None
+    prompt_variables: dict = Field(default_factory=dict)
+    # 模板当前版本高于绑定时版本；模板改版不自动传播，由开发者重新保存
+    prompt_template_outdated: bool = False

@@ -10,7 +10,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, paginate
 from app.core.prompt_render import extract_variables, render
-from app.db.models import PromptTemplate, PromptTemplateVersion, User
+from app.db.models import Agent, PromptTemplate, PromptTemplateVersion, User
 
 
 def _summary(t: PromptTemplate) -> dict:
@@ -111,8 +111,11 @@ def update_template(db: Session, template_id: int, data, user: User) -> dict:
 
 
 def delete_template(db: Session, template_id: int, user: User) -> None:
-    """删除模板，版本快照随外键 CASCADE 级联删除。"""
+    """删除模板，版本快照随外键 CASCADE 级联删除；仍被智能体绑定 → 409（解绑后可删）。"""
     t = get_template(db, template_id)
+    bound = db.query(Agent).filter(Agent.prompt_template_id == template_id).count()
+    if bound:
+        raise BizError(409, f"仍有 {bound} 个智能体绑定该模板")
     name = t.name
     db.delete(t)
     db.commit()

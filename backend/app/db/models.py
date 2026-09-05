@@ -49,6 +49,10 @@ class Agent(Base, TimestampMixin):
     status = Column(String(16), nullable=False, default="draft", index=True)
     version = Column(Integer, nullable=False, default=1)
     created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    # Prompt 模板绑定（FR-028）：保存时用模板 + 变量渲染进 system_prompt 并记下模板版本；运行时仍只读 system_prompt
+    prompt_template_id = Column(BigInteger, ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True)
+    prompt_template_version = Column(Integer, nullable=True)
+    prompt_variables = Column(JSONB, nullable=False, default=dict)
 
 
 class AgentVersion(Base):

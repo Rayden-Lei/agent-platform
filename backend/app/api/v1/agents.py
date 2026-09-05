@@ -41,7 +41,7 @@ def create_agent(data: AgentIn, db: Session = Depends(get_db), user: User = Depe
 @router.get("/{agent_id}", response_model=AgentOut)
 def get_agent(agent_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """按 ID 查询单个智能体详情。"""
-    return agent_service.get_agent(db, agent_id)
+    return agent_service.get_agent_detail(db, agent_id)
 
 
 @router.put("/{agent_id}", response_model=AgentOut)
