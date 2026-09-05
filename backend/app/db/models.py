@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from pgvector.sqlalchemy import Vector
 
@@ -57,6 +57,33 @@ class AgentVersion(Base):
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     snapshot = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
+class PromptTemplate(Base, TimestampMixin):
+    """Prompt 模板（FR-028）：内容里用 {{name}} 引用 variables 声明的变量；content / variables 变化时 version + 1 并写快照。"""
+
+    __tablename__ = "prompt_templates"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    content = Column(Text, nullable=False)
+    variables = Column(JSONB, nullable=False, default=list)
+    version = Column(Integer, nullable=False, default=1)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+
+
+class PromptTemplateVersion(Base):
+    """模板版本快照：与智能体的 agent_versions 同一套语义，回滚也产生新版本，历史不可篡改。"""
+
+    __tablename__ = "prompt_template_versions"
+    __table_args__ = (UniqueConstraint("template_id", "version", name="uq_prompt_template_versions_template_version"),)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    template_id = Column(BigInteger, ForeignKey("prompt_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    variables = Column(JSONB, nullable=False, default=list)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
