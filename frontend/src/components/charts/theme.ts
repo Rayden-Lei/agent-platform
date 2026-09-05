@@ -10,5 +10,8 @@ export const STATUS_COLORS: Record<string, string> = {
   running: '#2563eb',
 }
 export const STATUS_SERIES_LABEL: Record<string, string> = { success: '成功', failed: '失败', cancelled: '已取消', awaiting_review: '待审核', running: '运行中' }
+// 序列名既可能是状态码也可能是中文标签（图例要显示中文），两种都能查到颜色
+export const statusSeriesColor = (series: string, fallback: string) =>
+  STATUS_COLORS[series] ?? STATUS_COLORS[Object.keys(STATUS_SERIES_LABEL).find((k) => STATUS_SERIES_LABEL[k] === series) ?? ''] ?? fallback
 
 export const CHART_HEIGHT = 260

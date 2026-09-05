@@ -1,145 +1,67 @@
-import { useEffect, useState } from 'react'
-import { Table, Tag, message, Card, Col, Row, Statistic, Modal, Descriptions, Button, Space, Typography, Select } from 'antd'
-import { EyeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
-import { listRuns, getRun, resumeWorkflow, getRunsSummary, RunsSummary } from '../api'
+import { useMemo } from 'react'
+import { Table } from 'antd'
+import { HistoryOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
+import { getRunsSummary, listRuns, type RunRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
+import { useAsyncData } from '../hooks/useAsyncData'
+import { useQueryState } from '../hooks/useQueryState'
+import ListPage from '../components/layout/ListPage'
+import PageHeader from '../components/layout/PageHeader'
+import EmptyState from '../components/common/EmptyState'
+import RunFilters, { type RunFilterValues } from '../components/runs/RunFilters'
+import RunStatCards from '../components/runs/RunStatCards'
+import { buildRunColumns } from '../components/runs/runColumns'
+import { useReview } from '../components/runs/useReview'
+import { exportCsv } from '../utils/csv'
+import { statusLabel } from '../constants/status'
+import { formatDateTime } from '../utils/time'
 
-// 运行记录页：对话/工作流两类运行明细。顶部为汇总统计卡片，表格支持按类型/状态筛选；
-// 详情弹窗展示输入输出与节点日志；处于 awaiting_review（待审核）的运行可在此通过/拒绝。
-const runTypeLabel: Record<string, string> = { chat: '对话', workflow: '工作流' }
-const statusOptions = [
-  { value: 'running', label: '运行中' }, { value: 'success', label: '成功' }, { value: 'failed', label: '失败' },
-  { value: 'cancelled', label: '已取消' }, { value: 'awaiting_review', label: '待审核' },
-]
+const DEFAULTS: RunFilterValues = { run_type: undefined, status: undefined, source: undefined, agent_id: undefined, workflow_id: undefined, started_from: undefined, started_to: undefined }
 
-const statusColor = (v: string) => v === 'success' ? 'green' : v === 'running' ? 'blue' : v === 'awaiting_review' ? 'orange' : v === 'failed' ? 'red' : 'default'
-
+// 运行记录页：筛选（同步到 URL）→ 统计卡随筛选联动（点卡即筛状态）→ 服务端排序的表格 → 行点击进详情页；待审核的行内直接通过 / 拒绝。
 export default function Runs() {
-  // 筛选条件：状态与类型变化时，usePagedList 会带这两个参数重新请求列表
-  const [status, setStatus] = useState<string | undefined>()
-  const [runType, setRunType] = useState<string | undefined>()
-  const { tableProps, reload } = usePagedList(listRuns, { filters: { status, run_type: runType } })
-  // 汇总统计独立于列表加载；detail 为当前查看的运行详情；resuming 标记审核提交中
-  const [summary, setSummary] = useState<RunsSummary | null>(null)
-  const [detail, setDetail] = useState<any>(null)
-  const [resuming, setResuming] = useState(false)
+  const navigate = useNavigate()
+  const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
+  const list = usePagedList<RunRow>(listRuns, {
+    filters,
+    defaultSort: { field: 'id', order: 'desc' },
+    emptyText: <EmptyState description="当前筛选下没有运行记录。运行记录由对话、工作流运行与定时任务自动产生。" />,
+  })
+  // 统计不随 status 变化：状态卡本身就是按状态切分的
+  const summaryFilters = useMemo(() => ({ ...filters, status: undefined }), [filters])
+  const summary = useAsyncData(() => getRunsSummary(summaryFilters), [JSON.stringify(summaryFilters)], { errorText: '加载统计失败' })
+  const { reviewing, review } = useReview(() => { list.reload(); summary.reload(true) })
+  const columns = useMemo(() => buildRunColumns({ sortProps: list.sortProps, onReview: review, reviewing }), [list.sortProps, review, reviewing])
 
-  const loadSummary = () => {
-    getRunsSummary().then(setSummary).catch((e: any) => message.error(e.response?.data?.detail || '加载统计失败'))
-  }
-  useEffect(() => { loadSummary() }, [])
-
-  // 人工审核：把 approved/rejected 决策提交给后端，恢复被中断的工作流继续执行
-  const doResume = async (decision: any) => {
-    if (!detail?.workflow_id) return
-    setResuming(true)
-    try {
-      await resumeWorkflow(detail.workflow_id, detail.id, decision)
-      message.success('已提交审核结果')
-      setDetail(null)
-      reload()
-      loadSummary()
-    } catch (e: any) { message.error(e.response?.data?.detail || '操作失败') } finally { setResuming(false) }
-  }
-
-  const viewDetail = async (id: number) => {
-    try {
-      const res: any = await getRun(id)
-      setDetail(res)
-    } catch (e: any) { message.error(e.response?.data?.detail || '加载详情失败') }
-  }
-
-  // 表格列：token 取自嵌套字段 token_usage.total_tokens（dataIndex 数组路径写法）
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 70 },
-    { title: '类型', dataIndex: 'run_type', width: 90, render: (v: string) => runTypeLabel[v] || v },
-    { title: '状态', dataIndex: 'status', width: 110, render: (v: string) => <Tag color={statusColor(v)}>{v}</Tag> },
-    { title: 'Token', dataIndex: ['token_usage', 'total_tokens'], width: 90, render: (v: number) => v || '-' },
-    { title: '成本(元)', dataIndex: 'cost', width: 100, render: (v: number) => v != null ? v.toFixed(4) : '-' },
-    { title: '耗时(ms)', dataIndex: 'latency_ms', width: 100 },
-    { title: '开始时间', dataIndex: 'started_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    { title: '错误', dataIndex: 'error', ellipsis: true },
-    { title: '操作', width: 80, render: (_: any, r: any) => <Button size="small" icon={<EyeOutlined />} onClick={() => viewDetail(r.id)}>详情</Button> },
-  ]
+  const exportPage = () => exportCsv('运行记录', [
+    { title: 'ID', value: (r: RunRow) => r.id },
+    { title: '类型', value: (r) => statusLabel('runType', r.run_type) },
+    { title: '状态', value: (r) => statusLabel('run', r.status) },
+    { title: '归属', value: (r) => r.agent_name || r.workflow_name || '' },
+    { title: '触发人', value: (r) => r.username || '' },
+    { title: '来源', value: (r) => statusLabel('runSource', r.source) },
+    { title: '模型', value: (r) => r.model_name || '' },
+    { title: 'Token', value: (r) => r.token_usage?.total_tokens ?? '' },
+    { title: '成本', value: (r) => r.cost ?? '' },
+    { title: '耗时(ms)', value: (r) => r.latency_ms },
+    { title: '开始时间', value: (r) => formatDateTime(r.started_at, '') },
+    { title: '错误', value: (r) => r.error || '' },
+  ], list.items)
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ margin: 0 }}>运行记录</h2>
-          <Space>
-            <Select allowClear placeholder="类型" style={{ width: 120 }} value={runType} onChange={setRunType}
-              options={[{ value: 'chat', label: '对话' }, { value: 'workflow', label: '工作流' }]} />
-            <Select allowClear placeholder="状态" style={{ width: 130 }} value={status} onChange={setStatus} options={statusOptions} />
-          </Space>
-        </div>
-        <Row gutter={[16, 16]}>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总运行" value={summary?.total ?? 0} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="成功" value={summary?.success ?? 0} valueStyle={{ color: '#16a34a' }} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="失败" value={summary?.failed ?? 0} valueStyle={{ color: '#dc2626' }} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="Token 消耗" value={summary?.total_tokens ?? 0} /></Card></Col>
-          <Col xs={12} md={6}><Card className="tech-card"><Statistic title="总成本(元)" value={summary?.total_cost ?? 0} precision={4} /></Card></Col>
-        </Row>
-      </div>
-
-      <div className="fixed-table-wrapper">
-        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      </div>
-
-      <Modal title={'运行详情 #' + (detail?.id || '')} open={!!detail} onCancel={() => setDetail(null)} footer={null} width={720}>
-        {detail && (
-          <div>
-            <Descriptions column={2} size="small" bordered style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="类型">{runTypeLabel[detail.run_type] || detail.run_type}</Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={statusColor(detail.status)}>{detail.status}</Tag></Descriptions.Item>
-              <Descriptions.Item label="耗时">{detail.latency_ms} ms</Descriptions.Item>
-              <Descriptions.Item label="Token">{JSON.stringify(detail.token_usage || {})}</Descriptions.Item>
-              <Descriptions.Item label="开始">{detail.started_at ? new Date(detail.started_at).toLocaleString() : '-'}</Descriptions.Item>
-              <Descriptions.Item label="结束">{detail.finished_at ? new Date(detail.finished_at).toLocaleString() : '-'}</Descriptions.Item>
-            </Descriptions>
-            <Typography.Text strong>输入：</Typography.Text>
-            <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.input, null, 2)}</pre>
-            <Typography.Text strong>输出：</Typography.Text>
-            <pre style={{ background: '#f8fafc', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12 }}>{JSON.stringify(detail.output, null, 2)}</pre>
-            {detail.status === 'awaiting_review' && (
-              <>
-                {/* 待审核：展示中断原因（output.interrupt），并给出通过/拒绝按钮 */}
-                <Typography.Text strong type="warning">等待人工审核：</Typography.Text>
-                <pre style={{ background: '#fffbeb', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12, color: '#92400e' }}>{JSON.stringify(detail.output?.interrupt, null, 2)}</pre>
-                <Space style={{ marginTop: 8 }}>
-                  <Button type="primary" size="small" icon={<CheckOutlined />} loading={resuming} onClick={() => doResume({ decision: 'approved' })}>通过</Button>
-                  <Button danger size="small" icon={<CloseOutlined />} loading={resuming} onClick={() => doResume({ decision: 'rejected' })}>拒绝</Button>
-                </Space>
-              </>
-            )}
-            {detail.error && (
-              <>
-                <Typography.Text strong type="danger">错误：</Typography.Text>
-                <pre style={{ background: '#fef2f2', padding: 12, borderRadius: 6, maxHeight: 150, overflow: 'auto', fontSize: 12, color: '#dc2626' }}>{detail.error}</pre>
-              </>
-            )}
-            {detail.nodes && detail.nodes.length > 0 && (
-              <>
-                {/* 节点级执行日志：工作流运行才可能有；key 用 node_id+status 拼接 */}
-                <Typography.Text strong>节点日志：</Typography.Text>
-                <Table
-                  size="small"
-                  style={{ marginTop: 8 }}
-                  rowKey={(r: any) => r.node_id + r.status}
-                  dataSource={detail.nodes}
-                  pagination={false}
-                  columns={[
-                    { title: '节点', dataIndex: 'node_id' },
-                    { title: '类型', dataIndex: 'node_type' },
-                    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={v === 'success' ? 'green' : 'red'}>{v}</Tag> },
-                    { title: '错误', dataIndex: 'error', ellipsis: true },
-                  ]}
-                />
-              </>
-            )}
-          </div>
-        )}
-      </Modal>
-    </div>
+    <ListPage
+      header={<PageHeader icon={<HistoryOutlined />} title="运行记录" description="对话与工作流的每次运行留痕；统计随筛选联动，成本为各运行收尾时的快照合计。" />}
+      stats={<RunStatCards summary={summary.data} loading={summary.loading && !summary.data} activeStatus={filters.status} onPickStatus={(status) => setFilters({ status })} />}
+      filters={<RunFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={() => { list.reload(); summary.reload(true) }} onExport={exportPage} loading={list.loading} />}
+    >
+      <Table
+        rowKey="id"
+        {...list.tableProps}
+        columns={columns}
+        scroll={{ x: 'max-content' }}
+        onRow={(r) => ({ onClick: () => navigate(`/runs/${r.id}`), style: { cursor: 'pointer' } })}
+      />
+    </ListPage>
   )
 }

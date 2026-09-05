@@ -1,68 +1,66 @@
-import { useEffect, useState } from 'react'
-import { Card, Col, Row, Statistic, Typography, Button, Space, message } from 'antd'
-import { RobotOutlined, ThunderboltOutlined, PartitionOutlined, DatabaseOutlined, PlusOutlined, MessageOutlined } from '@ant-design/icons'
+import { useState } from 'react'
+import { Button, Col, Row, Space, Typography } from 'antd'
+import { MessageOutlined, PartitionOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth'
-import { listAgents, listModels, listWorkflows, listKBs } from '../api'
+import { getDailyRunStats, getModelUsage, getStatsOverview } from '../api'
+import { useAsyncData } from '../hooks/useAsyncData'
+import ErrorState from '../components/common/ErrorState'
+import KpiCards from '../components/dashboard/KpiCards'
+import TrendSection from '../components/dashboard/TrendSection'
+import ConsumptionSection from '../components/dashboard/ConsumptionSection'
+import TodoPanel from '../components/dashboard/TodoPanel'
+import RecentRuns from '../components/dashboard/RecentRuns'
+import ResourceSummary from '../components/dashboard/ResourceSummary'
 
-// 首页仪表盘：欢迎横幅 + 四类核心资源的数量统计卡片 + 快捷操作入口。
-// 统计只展示各资源总数，不承载业务操作，纯跳转导航。
+// 工作台：横幅与快捷入口 → 今日指标（环比）→ 运行趋势与状态分布 → 待处理与最近运行 → 模型消耗 → 资源概览。
+// 整页可滚是 docs/07 第 1 节的唯一例外；数据来自 /stats/overview、/stats/runs/daily、/stats/models。
 export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [stats, setStats] = useState({ agents: 0, models: 0, workflows: 0, kbs: 0 })
-
-  useEffect(() => {
-    // 只要 total，不拉列表本体；page_size=1 让后端只回一条数据，四类资源并发各取总数
-    const one = { page: 1, page_size: 1 }
-    Promise.all([listAgents(one), listModels(one), listWorkflows(one), listKBs(one)])
-      .then(([a, m, w, k]) => setStats({ agents: a.total, models: m.total, workflows: w.total, kbs: k.total }))
-      .catch((e: any) => message.error(e.response?.data?.detail || '加载统计失败'))
-  }, [])
-
-  const cards = [
-    { title: '智能体', value: stats.agents, icon: <RobotOutlined />, color: '#1e40af', path: '/agents' },
-    { title: '模型', value: stats.models, icon: <ThunderboltOutlined />, color: '#0e7490', path: '/models' },
-    { title: '工作流', value: stats.workflows, icon: <PartitionOutlined />, color: '#b45309', path: '/workflows' },
-    { title: '知识库', value: stats.kbs, icon: <DatabaseOutlined />, color: '#15803d', path: '/knowledge-bases' },
-  ]
+  const [days, setDays] = useState(7)
+  const overview = useAsyncData(() => getStatsOverview(), [], { errorText: '加载工作台概览失败' })
+  const daily = useAsyncData(() => getDailyRunStats({ days }), [days], { errorText: '加载运行趋势失败' })
+  const models = useAsyncData(() => getModelUsage({ days }), [days], { errorText: '加载模型用量失败' })
+  const isManager = user?.role === 'admin' || user?.role === 'developer'
 
   const quickActions = [
     { label: '创建智能体', icon: <PlusOutlined />, path: '/agents' },
     { label: '新建工作流', icon: <PartitionOutlined />, path: '/workflows/new' },
+    { label: '上传文档', icon: <UploadOutlined />, path: '/knowledge-bases' },
     { label: '开始对话', icon: <MessageOutlined />, path: '/chat' },
   ]
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12, paddingRight: 2 }}>
       <div className="dash-banner">
         <div style={{ position: 'relative', zIndex: 1 }}>
-          <Typography.Title level={3} style={{ color: '#fff', margin: '0 0 8px' }}>
-            欢迎回来，{user?.username}
-          </Typography.Title>
-          <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.85)', marginBottom: 20, fontSize: 14 }}>
-            统一管理你的智能体、模型、工作流与知识库，快速构建 AI 应用。
+          <Typography.Title level={3} style={{ color: '#fff', margin: '0 0 6px' }}>欢迎回来，{user?.username}</Typography.Title>
+          <Typography.Paragraph style={{ color: 'rgba(255,255,255,0.85)', marginBottom: 16, fontSize: 14 }}>
+            {isManager ? '这里汇总今天的运行、消耗与待处理事项；点击卡片可进入对应列表。' : '选择一个已发布的智能体开始对话。'}
           </Typography.Paragraph>
           <Space wrap>
-            {quickActions.map((a) => (
+            {quickActions.filter((a) => isManager || a.path === '/chat').map((a) => (
               <Button key={a.label} ghost icon={a.icon} onClick={() => navigate(a.path)}>{a.label}</Button>
             ))}
           </Space>
         </div>
       </div>
 
-      <Row gutter={[16, 16]}>
-        {cards.map((c) => (
-          <Col xs={12} md={6} key={c.title}>
-            <Card className="tech-card" onClick={() => navigate(c.path)} style={{ cursor: 'pointer' }} styles={{ body: { padding: 20 } }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div className="stat-icon" style={{ background: c.color }}>{c.icon}</div>
-                <Statistic title={c.title} value={c.value} />
-              </div>
-            </Card>
-          </Col>
-        ))}
-      </Row>
+      {!isManager ? null : overview.error ? (
+        <ErrorState message={overview.error} onRetry={() => overview.reload()} />
+      ) : (
+        <>
+          <KpiCards today={overview.data?.today ?? null} daily={daily.data?.items ?? []} loading={overview.loading && !overview.data} onGo={navigate} />
+          <TrendSection daily={daily.data?.items ?? []} days={days} onDaysChange={setDays} loading={daily.loading && !daily.data} error={daily.error} onRetry={() => daily.reload()} />
+          <Row gutter={[12, 12]}>
+            <Col xs={24} lg={8}><TodoPanel pending={overview.data?.pending ?? null} loading={overview.loading && !overview.data} /></Col>
+            <Col xs={24} lg={16}><RecentRuns runs={overview.data?.recent_runs ?? []} loading={overview.loading && !overview.data} /></Col>
+          </Row>
+          <ConsumptionSection models={models.data?.items ?? []} daily={daily.data?.items ?? []} loading={models.loading && !models.data} error={models.error} onRetry={() => models.reload()} />
+          <ResourceSummary resources={overview.data?.resources ?? null} loading={overview.loading && !overview.data} onGo={navigate} />
+        </>
+      )}
     </div>
   )
 }

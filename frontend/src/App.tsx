@@ -14,6 +14,7 @@ const Workflows = lazy(() => import('./pages/Workflows'))
 const WorkflowEditor = lazy(() => import('./pages/WorkflowEditor'))
 const Tools = lazy(() => import('./pages/Tools'))
 const Runs = lazy(() => import('./pages/Runs'))
+const RunDetail = lazy(() => import('./pages/RunDetail'))
 const Users = lazy(() => import('./pages/Users'))
 const AuditLogs = lazy(() => import('./pages/AuditLogs'))
 const ApiKeys = lazy(() => import('./pages/ApiKeys'))
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="workflows/new" element={<WorkflowEditor />} />
         <Route path="workflows/:id/edit" element={<WorkflowEditor />} />
         <Route path="runs" element={<Runs />} />
+        <Route path="runs/:id" element={<RunDetail />} />
         <Route path="users" element={<Users />} />
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="api-keys" element={<ApiKeys />} />
