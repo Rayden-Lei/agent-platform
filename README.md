@@ -37,12 +37,20 @@
     <td align="center">工作流编辑器</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/knowledge-bases.png" alt="知识库" /></td>
+    <td><img src="docs/screenshots/kb-detail.png" alt="知识库详情" /></td>
     <td><img src="docs/screenshots/runs.png" alt="运行记录" /></td>
   </tr>
   <tr>
-    <td align="center">知识库</td>
-    <td align="center">运行记录与成本统计</td>
+    <td align="center">知识库详情：文档、检索评测、统计</td>
+    <td align="center">运行记录：筛选、耗时分布、导出</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/agent-stats.png" alt="智能体运行统计" /></td>
+    <td><img src="docs/screenshots/run-detail.png" alt="运行详情" /></td>
+  </tr>
+  <tr>
+    <td align="center">智能体详情：运行统计与版本对比</td>
+    <td align="center">运行详情：节点日志、Token 与成本</td>
   </tr>
 </table>
 
