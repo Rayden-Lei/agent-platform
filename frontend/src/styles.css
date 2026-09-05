@@ -224,3 +224,28 @@ html, body, #root {
 .context-card-index { color: #1e40af; font-weight: 600; }
 
 .usage-footer { font-size: 12px; color: #94a3b8; padding-top: 2px; }
+
+/* ===== 页面深度优化：列表页 / 详情页骨架 ===== */
+.page-header { display: flex; flex-direction: column; }
+.page-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.filter-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.batch-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px; }
+.stat-card { padding: 14px 16px; }
+.stat-card-clickable { cursor: pointer; }
+.stat-card-active { border-color: #1e40af; box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.15); }
+.detail-header { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
+.detail-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.detail-tabs > .ant-tabs-nav { flex-shrink: 0; margin-bottom: 0; }
+.detail-tabs > .ant-tabs-content-holder { flex: 1; min-height: 0; overflow: auto; }
+.detail-tab-body { padding: 12px 2px; }
+.chart-card .ant-card-head { min-height: 40px; }
+.json-view { border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
+.json-view-bar { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 2px 10px; border-bottom: 1px solid #e5e7eb; }
+.json-view pre { margin: 0; padding: 10px 12px; font-size: 12.5px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.diff-view { margin: 0; font-size: 12.5px; border: 1px solid #e5e7eb; border-radius: 6px; overflow: auto; max-height: 420px; }
+.diff-line { padding: 1px 8px; white-space: pre-wrap; word-break: break-all; }
+.diff-sign { display: inline-block; width: 14px; color: #9ca3af; }
+.diff-add { background: #ecfdf5; }
+.diff-remove { background: #fef2f2; }
+.search-stats { margin-bottom: 8px; }
+.search-result-card { margin-bottom: 8px; }

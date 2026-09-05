@@ -1,21 +1,24 @@
+import { lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './store/auth'
 import AppLayout from './components/AppLayout'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Models from './pages/Models'
-import Agents from './pages/Agents'
-import Chat from './pages/Chat'
-import KnowledgeBases from './pages/KnowledgeBases'
-import Workflows from './pages/Workflows'
-import WorkflowEditor from './pages/WorkflowEditor'
-import Tools from './pages/Tools'
-import Runs from './pages/Runs'
-import Users from './pages/Users'
-import AuditLogs from './pages/AuditLogs'
-import ApiKeys from './pages/ApiKeys'
-import Schedules from './pages/Schedules'
-import PromptTemplates from './pages/PromptTemplates'
+
+// 页面按路由懒加载：首屏只带布局与登录；AppLayout 的 <Outlet> 外套了 Suspense 骨架
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Models = lazy(() => import('./pages/Models'))
+const Agents = lazy(() => import('./pages/Agents'))
+const Chat = lazy(() => import('./pages/Chat'))
+const KnowledgeBases = lazy(() => import('./pages/KnowledgeBases'))
+const Workflows = lazy(() => import('./pages/Workflows'))
+const WorkflowEditor = lazy(() => import('./pages/WorkflowEditor'))
+const Tools = lazy(() => import('./pages/Tools'))
+const Runs = lazy(() => import('./pages/Runs'))
+const Users = lazy(() => import('./pages/Users'))
+const AuditLogs = lazy(() => import('./pages/AuditLogs'))
+const ApiKeys = lazy(() => import('./pages/ApiKeys'))
+const Schedules = lazy(() => import('./pages/Schedules'))
+const PromptTemplates = lazy(() => import('./pages/PromptTemplates'))
 
 // 路由守卫：未登录（无 token）时重定向到 /login，已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {

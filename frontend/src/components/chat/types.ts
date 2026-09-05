@@ -22,9 +22,9 @@ export interface ToolStep {
 
 // 模型 token 用量统计（对应后端返回的 usage 字段）
 export interface ChatUsage {
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
 }
 
 // 聊天消息统一结构：user 消息通常只有 content，assistant 消息可携带 citations / tools / usage

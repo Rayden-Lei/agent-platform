@@ -7,6 +7,7 @@ import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import 'antd/dist/reset.css'
 import './styles.css'
+import './utils/time' // 初始化 dayjs 中文与相对时间插件
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   // 全局 antd 配置：zh_CN 文案 + 统一主题（品牌蓝 #1e40af、圆角 6、字号 14、链接色、布局底色），并覆盖 Menu/Table 的局部样式
