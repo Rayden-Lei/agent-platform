@@ -6,8 +6,10 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    // 只反代 /api/ 前缀（正则）：写成 '/api' 会按前缀把前端路由 /api-keys 也转给后端，刷新页面时看到的是后端 404。
+    // vite preview 默认沿用 server.proxy，线上（preview 反代）同样受此影响。
     proxy: {
-      '/api': {
+      '^/api/': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },

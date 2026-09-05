@@ -1,79 +1,71 @@
-import { useEffect, useState } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag } from 'antd'
-import { PlusOutlined, ClockCircleOutlined } from '@ant-design/icons'
-import { listSchedules, createSchedule, toggleSchedule, deleteSchedule, listWorkflows, OPTIONS_PAGE } from '../api'
+import { useMemo, useState } from 'react'
+import { Alert, Button, Select, Table, Tag, message } from 'antd'
+import { ClockCircleOutlined, PlusOutlined } from '@ant-design/icons'
+import { batchSchedules, deleteSchedule, listSchedules, listWorkflows, OPTIONS_PAGE, runScheduleNow, toggleSchedule, type ScheduleRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
+import { useQueryState } from '../hooks/useQueryState'
+import { useBatchAction } from '../hooks/useBatchAction'
+import { useOpenParam } from '../hooks/useOpenParam'
+import { useAsyncData } from '../hooks/useAsyncData'
+import { useSystemStatus } from '../hooks/useSystemStatus'
+import ListPage from '../components/layout/ListPage'
+import PageHeader from '../components/layout/PageHeader'
+import FilterBar from '../components/layout/FilterBar'
+import SearchInput from '../components/common/SearchInput'
+import EmptyState from '../components/common/EmptyState'
+import BatchActionBar from '../components/common/BatchActionBar'
+import BatchResultModal from '../components/common/BatchResultModal'
+import ScheduleForm from '../components/admin/ScheduleForm'
+import ScheduleDrawer from '../components/admin/ScheduleDrawer'
+import { buildScheduleColumns } from '../components/admin/scheduleColumns'
+import { errorText } from '../utils/errors'
 
-// 定时任务页：绑定工作流 + cron 表达式，按计划触发执行；支持启用/禁用与删除。
-// 创建时输入 JSON 作为工作流的固定入参；表里只存 workflow_id，展示时反查名称。
+type Filters = { q?: string; workflow_id?: string; is_enabled?: string }
+const DEFAULTS: Filters = { q: undefined, workflow_id: undefined, is_enabled: undefined }
+const ENABLED_OPTIONS = [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]
+
+// 定时任务：筛选 / 排序 / 启停开关 / 批量 / 立即运行 / 编辑 / 详情抽屉；页头显示调度器状态，未运行时给醒目提示。
 export default function Schedules() {
-  const { tableProps, reload } = usePagedList(listSchedules)
-  // 工作流下拉选项：取前 100 条，同时供表格列反查名称
-  const [workflows, setWorkflows] = useState<any[]>([])
-  const [open, setOpen] = useState(false)
-  const [form] = Form.useForm()
+  const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<ScheduleRow | null>(null)
+  const [current, setCurrent] = useState<ScheduleRow | null>(null)
+  const { status } = useSystemStatus()
+  const scheduler = status?.scheduler
+  const schedulerRunning = scheduler?.running ?? true // 状态未知时不误报
+  const workflows = useAsyncData(() => listWorkflows(OPTIONS_PAGE), [])
+  const list = usePagedList<ScheduleRow>(listSchedules, { filters, selectable: true, emptyText: <EmptyState description="还没有定时任务。选一个工作流、写好 cron，就能按计划自动运行。" action={{ label: '新建定时任务', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
+  const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
+  useOpenParam((id) => { const row = list.items.find((s) => s.id === id); if (row) setCurrent(row); else message.warning('该任务不在当前列表里') })
 
-  useEffect(() => {
-    listWorkflows(OPTIONS_PAGE).then((r) => setWorkflows(r.items)).catch((e: any) => message.error(e.response?.data?.detail || '加载工作流失败'))
-  }, [])
-
-  // 创建：输入框里的 JSON 字符串先解析成对象再提交；JSON 不合法直接拦截，不发请求
-  const onSubmit = async (values: any) => {
-    try {
-      let input = {}
-      if (values.inputStr) { try { input = JSON.parse(values.inputStr) } catch { message.error('输入 JSON 格式错误'); return } }
-      await createSchedule({ name: values.name, workflow_id: values.workflow_id, cron: values.cron, input })
-      message.success('创建成功')
-      setOpen(false)
-      form.resetFields()
-      reload()
-    } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
-  }
-
-  const act = async (fn: () => Promise<unknown>, errorText: string) => {
-    try { await fn(); reload() } catch (e: any) { message.error(e.response?.data?.detail || errorText) }
-  }
-
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: '名称', dataIndex: 'name' },
-    { title: '工作流', dataIndex: 'workflow_id', render: (v: number) => workflows.find((w) => w.id === v)?.name || v },
-    { title: 'Cron', dataIndex: 'cron', render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
-    { title: '状态', dataIndex: 'is_enabled', width: 90, render: (v: boolean) => <Tag color={v ? 'green' : 'red'}>{v ? '启用' : '禁用'}</Tag> },
-    { title: '最后运行', dataIndex: 'last_run_at', width: 170, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    { title: '操作', render: (_: any, r: any) => (
-      <Space>
-        {/* 同一按钮做启用/禁用切换（toggle 接口） */}
-        <Button size="small" onClick={() => act(() => toggleSchedule(r.id), '操作失败')}>{r.is_enabled ? '禁用' : '启用'}</Button>
-        <Popconfirm title="确定删除？" onConfirm={() => act(() => deleteSchedule(r.id), '删除失败')}><Button size="small" danger>删除</Button></Popconfirm>
-      </Space>
-    ) },
-  ]
+  const onToggle = async (s: ScheduleRow) => { await toggleSchedule(s.id); list.reload() }
+  const onDelete = async (s: ScheduleRow) => { try { await deleteSchedule(s.id); list.reload(); setCurrent(null) } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onRunNow = async (s: ScheduleRow) => { try { await runScheduleNow(s.id); message.success('已触发，稍后在运行记录里查看'); setTimeout(list.reload, 1500) } catch (e) { message.error(errorText(e, '触发失败')) } }
+  const onEdit = (s: ScheduleRow) => { setEditing(s); setFormOpen(true) }
+  const columns = useMemo(() => buildScheduleColumns({ sortProps: list.sortProps, schedulerRunning, onOpen: setCurrent, onToggle, onRunNow, onEdit, onDelete }), [list.sortProps, schedulerRunning]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ClockCircleOutlined /> 定时任务</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true) }}>新建定时任务</Button>
-      </div>
-      <div className="fixed-table-wrapper">
-        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      </div>
-
-      <Modal title="新建定时任务" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden>
-        <Form form={form} layout="vertical" onFinish={onSubmit}>
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="workflow_id" label="工作流" rules={[{ required: true }]}>
-            <Select showSearch optionFilterProp="label" options={workflows.map((w: any) => ({ value: w.id, label: w.name }))} />
-          </Form.Item>
-          <Form.Item name="cron" label="Cron 表达式" rules={[{ required: true }]} tooltip="分 时 日 月 周，如 */5 * * * * 表示每5分钟">
-            <Input placeholder="*/5 * * * *" />
-          </Form.Item>
-          <Form.Item name="inputStr" label="输入(JSON)">
-            <Input.TextArea rows={3} placeholder='{"input": "工作流输入"}' />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
+    <ListPage
+      header={<PageHeader icon={<ClockCircleOutlined />} title="定时任务" description="按 cron 计划触发工作流；输入固定，运行记录来源标为「定时任务」。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新建定时任务</Button>} />}
+      alert={scheduler && !scheduler.running ? <Alert type="warning" showIcon message="调度器未运行，所有定时任务都不会触发" description={scheduler.reason || '请检查后端 SCHEDULER_ENABLED 配置或进程日志'} /> : undefined}
+      filters={
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+          extra={scheduler && <Tag color={scheduler.running ? 'success' : 'error'}>{scheduler.running ? `调度器运行中 · 已注册 ${scheduler.registered_jobs} / 启用 ${scheduler.enabled_jobs}` : '调度器未运行'}</Tag>}>
+          <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索任务名称" />
+          <Select allowClear showSearch optionFilterProp="label" placeholder="工作流" style={{ width: 170 }} value={filters.workflow_id} onChange={(v) => setFilters({ workflow_id: v })} options={(workflows.data?.items ?? []).map((w) => ({ value: String(w.id), label: w.name }))} />
+          <Select allowClear placeholder="状态" style={{ width: 100 }} value={filters.is_enabled} onChange={(v) => setFilters({ is_enabled: v })} options={ENABLED_OPTIONS} />
+        </FilterBar>
+      }
+      batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
+        { key: 'enable', label: '批量启用', run: () => batch.run(() => batchSchedules(list.selectedKeys, 'enable'), '已启用') },
+        { key: 'disable', label: '批量停用', confirm: `停用选中的 ${list.selectedKeys.length} 个任务？`, run: () => batch.run(() => batchSchedules(list.selectedKeys, 'disable'), '已停用') },
+        { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个任务？`, run: () => batch.run(() => batchSchedules(list.selectedKeys, 'delete'), '已删除') },
+      ]} />}
+    >
+      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <ScheduleForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
+      <ScheduleDrawer schedule={current} schedulerRunning={schedulerRunning} onClose={() => setCurrent(null)} onRunNow={onRunNow} onEdit={onEdit} />
+      <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((s) => s.id === id)?.name} />
+    </ListPage>
   )
 }

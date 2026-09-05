@@ -1,37 +1,52 @@
-import { Table, Tag } from 'antd'
+import { useMemo } from 'react'
+import { Table } from 'antd'
 import { AuditOutlined } from '@ant-design/icons'
-import { listAuditLogs } from '../api'
+import { listAuditLogs, type AuditLogRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
+import { useQueryState } from '../hooks/useQueryState'
+import ListPage from '../components/layout/ListPage'
+import PageHeader from '../components/layout/PageHeader'
+import EmptyState from '../components/common/EmptyState'
+import JsonView from '../components/common/JsonView'
+import AuditFilters, { type AuditFilterValues } from '../components/admin/AuditFilters'
+import { auditSummary, buildAuditColumns } from '../components/admin/auditColumns'
+import { exportCsv } from '../utils/csv'
+import { formatDateTime } from '../utils/time'
+import { statusLabel } from '../constants/status'
 
-// 审计日志页：只读表格，无增删改。记录登录、增删改、发布/回滚、RAG 检索等操作轨迹，
-// 按操作类型着色；detail 是对象，直接 JSON 序列化展示。
-const actionColor: Record<string, string> = {
-  login: 'green', login_failed: 'red', create: 'blue', delete: 'red',
-  publish: 'orange', update: 'orange', rollback: 'orange', rag_retrieve: 'cyan',
-}
+const DEFAULTS: AuditFilterValues = { username: undefined, action: undefined, resource: undefined, resource_id: undefined, ip: undefined, created_from: undefined, created_to: undefined }
 
+// 审计日志（只读）：多条件筛选同步 URL、服务端排序、展开看完整 detail、导出当前页 CSV。
 export default function AuditLogs() {
-  const { tableProps } = usePagedList(listAuditLogs)
-
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 70 },
-    { title: '时间', dataIndex: 'created_at', width: 180, render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
-    { title: '用户', dataIndex: 'username', width: 120 },
-    { title: '操作', dataIndex: 'action', width: 110, render: (v: string) => <Tag color={actionColor[v] || 'default'}>{v}</Tag> },
-    { title: '资源', dataIndex: 'resource', width: 110 },
-    { title: '资源ID', dataIndex: 'resource_id', width: 90 },
-    { title: '详情', dataIndex: 'detail', ellipsis: true, render: (v: any) => JSON.stringify(v) },
-    { title: 'IP', dataIndex: 'ip', width: 130, render: (v: string) => v || '-' },
-  ]
+  const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
+  const list = usePagedList<AuditLogRow>(listAuditLogs, { filters, defaultSort: { field: 'id', order: 'desc' }, emptyText: <EmptyState description="没有匹配的审计记录；登录、增删改、发布 / 回滚、检索都会留痕" /> })
+  const columns = useMemo(() => buildAuditColumns({ sortProps: list.sortProps }), [list.sortProps])
+  const exportPage = () => exportCsv('审计日志', [
+    { title: 'ID', value: (r) => r.id },
+    { title: '时间', value: (r) => formatDateTime(r.created_at) },
+    { title: '用户', value: (r) => r.username },
+    { title: '操作', value: (r) => statusLabel('auditAction', r.action) },
+    { title: '资源', value: (r) => statusLabel('auditResource', r.resource) },
+    { title: '资源 ID', value: (r) => r.resource_id },
+    { title: '详情', value: (r) => JSON.stringify(r.detail) },
+    { title: 'IP', value: (r) => r.ip },
+  ], list.items)
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ flexShrink: 0 }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}><AuditOutlined /> 审计日志</h2>
-      </div>
-      <div className="fixed-table-wrapper">
-        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      </div>
-    </div>
+    <ListPage
+      header={<PageHeader icon={<AuditOutlined />} title="审计日志" description="谁在什么时候对哪条数据做了什么；只读，不可删改。导出只含当前页。" />}
+      filters={<AuditFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} onExport={exportPage} loading={list.loading} />}
+    >
+      <Table
+        rowKey="id"
+        {...list.tableProps}
+        columns={columns}
+        scroll={{ x: 'max-content' }}
+        expandable={{
+          rowExpandable: (r) => !!r.detail && Object.keys(r.detail).length > 0,
+          expandedRowRender: (r) => <JsonView title={auditSummary(r.detail, 2)} value={r.detail} maxHeight={320} />,
+        }}
+      />
+    </ListPage>
   )
 }

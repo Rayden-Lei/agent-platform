@@ -1,60 +1,69 @@
-import { useState } from 'react'
-import { Table, Button, Modal, Form, Input, Select, message, Popconfirm, Space, Tag, Switch } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
-import { listUsers, createUser, updateUser, deleteUser } from '../api'
+import { useMemo, useState } from 'react'
+import { Button, Select, Table, message } from 'antd'
+import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
+import { batchUsers, deleteUser, listUsers, updateUser, type UserRow } from '../api'
+import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
+import { useQueryState } from '../hooks/useQueryState'
+import { useBatchAction } from '../hooks/useBatchAction'
+import { useOpenParam } from '../hooks/useOpenParam'
+import { statusOptions } from '../constants/status'
+import ListPage from '../components/layout/ListPage'
+import PageHeader from '../components/layout/PageHeader'
+import FilterBar from '../components/layout/FilterBar'
+import SearchInput from '../components/common/SearchInput'
+import EmptyState from '../components/common/EmptyState'
+import BatchActionBar from '../components/common/BatchActionBar'
+import BatchResultModal from '../components/common/BatchResultModal'
+import UserForm from '../components/admin/UserForm'
+import ResetPasswordModal from '../components/admin/ResetPasswordModal'
+import UserDrawer from '../components/admin/UserDrawer'
+import { buildUserColumns } from '../components/admin/userColumns'
+import { errorText } from '../utils/errors'
 
-// 用户管理页：账号的增删改与角色分配（admin/developer/caller）。
-// 注意：编辑模式只允许改角色与启用状态，不提供修改用户名/密码的入口（新增时才填写）。
+type Filters = { q?: string; role?: string; is_active?: string }
+const DEFAULTS: Filters = { q: undefined, role: undefined, is_active: undefined }
+const ACTIVE_OPTIONS = [{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]
+
+// 用户管理（仅管理员）：筛选 / 排序 / 启停开关 / 批量启停删除 / 改角色 / 重置密码 / 详情抽屉（含最近审计）。
 export default function Users() {
-  const { tableProps, reload } = usePagedList(listUsers)
-  const [open, setOpen] = useState(false)
-  // editing 非空表示当前弹窗处于编辑模式（提交时走 update），否则为新增（走 create）
-  const [editing, setEditing] = useState<any>(null)
-  const [form] = Form.useForm()
+  const meId = useAuth((s) => s.user?.id as number | undefined)
+  const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<UserRow | null>(null)
+  const [resetting, setResetting] = useState<UserRow | null>(null)
+  const [current, setCurrent] = useState<UserRow | null>(null)
+  const list = usePagedList<UserRow>(listUsers, { filters, selectable: true, emptyText: <EmptyState description="没有匹配的用户" /> })
+  const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
+  useOpenParam((id) => { const row = list.items.find((u) => u.id === id); if (row) setCurrent(row); else message.warning('该用户不在当前列表里，请调整筛选') })
 
-  // 新增/编辑共用提交：编辑时只提交角色与启用状态（不回传用户名/密码），否则走创建
-  const onSubmit = async (values: any) => {
-    try {
-      if (editing) await updateUser(editing.id, { role: values.role, is_active: values.is_active })
-      else await createUser(values)
-      message.success('保存成功')
-      setOpen(false)
-      reload()
-    } catch (e: any) { message.error(e.response?.data?.detail || '保存失败') }
-  }
-
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: '用户名', dataIndex: 'username' },
-    { title: '角色', dataIndex: 'role', render: (v: string) => <Tag color={v === 'admin' ? 'red' : v === 'developer' ? 'blue' : 'default'}>{v}</Tag> },
-    { title: '状态', dataIndex: 'is_active', render: (v: boolean) => v ? '启用' : '停用' },
-    { title: '操作', render: (_: any, r: any) => (
-      <Space>
-        <Button size="small" onClick={() => { setEditing(r); form.setFieldsValue({ role: r.role, is_active: r.is_active }); setOpen(true) }}>编辑</Button>
-        <Popconfirm title="确定删除？" onConfirm={async () => { try { await deleteUser(r.id); reload() } catch (e: any) { message.error(e.response?.data?.detail || '删除失败') } }}><Button size="small" danger>删除</Button></Popconfirm>
-      </Space>
-    ) },
-  ]
+  const onToggle = async (u: UserRow) => { await updateUser(u.id, { is_active: !u.is_active }); list.reload() }
+  const onDelete = async (u: UserRow) => { try { await deleteUser(u.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onEdit = (u: UserRow) => { setEditing(u); setFormOpen(true) }
+  const selectedOthers = list.selectedKeys.filter((id) => id !== meId)
+  const columns = useMemo(() => buildUserColumns({ sortProps: list.sortProps, meId, onOpen: setCurrent, onToggle, onEdit, onResetPassword: setResetting, onDelete }), [list.sortProps, meId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
-        <h2>用户管理</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setOpen(true) }}>新增用户</Button>
-      </div>
-      <div className="fixed-table-wrapper">
-        <Table rowKey="id" {...tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      </div>
-      <Modal title={editing ? '编辑用户' : '新增用户'} open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} destroyOnHidden>
-        <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ role: 'caller', is_active: true }}>
-          {/* 仅新增模式显示用户名/密码输入；编辑模式不提供，避免误改登录凭据 */}
-          {!editing && <Form.Item name="username" label="用户名" rules={[{ required: true }]}><Input /></Form.Item>}
-          {!editing && <Form.Item name="password" label="密码" rules={[{ required: true }]}><Input.Password /></Form.Item>}
-          <Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'developer', label: '开发者' }, { value: 'caller', label: '调用者' }]} /></Form.Item>
-          <Form.Item name="is_active" label="启用" valuePropName="checked"><Switch /></Form.Item>
-        </Form>
-      </Modal>
-    </div>
+    <ListPage
+      header={<PageHeader icon={<TeamOutlined />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
+      filters={
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+          <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />
+          <Select allowClear placeholder="角色" style={{ width: 110 }} value={filters.role} onChange={(v) => setFilters({ role: v })} options={statusOptions('role')} />
+          <Select allowClear placeholder="状态" style={{ width: 100 }} value={filters.is_active} onChange={(v) => setFilters({ is_active: v })} options={ACTIVE_OPTIONS} />
+        </FilterBar>
+      }
+      batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
+        { key: 'enable', label: '批量启用', run: () => batch.run(() => batchUsers(selectedOthers, 'enable'), '已启用') },
+        { key: 'disable', label: '批量停用', confirm: `停用选中的 ${selectedOthers.length} 个用户？（自动跳过自己）`, run: () => batch.run(() => batchUsers(selectedOthers, 'disable'), '已停用') },
+        { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${selectedOthers.length} 个用户？（自动跳过自己）`, run: () => batch.run(() => batchUsers(selectedOthers, 'delete'), '已删除') },
+      ]} />}
+    >
+      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <UserForm open={formOpen} editing={editing} meId={meId} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
+      <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} />
+      <UserDrawer user={current} onClose={() => setCurrent(null)} onEdit={onEdit} onResetPassword={setResetting} />
+      <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((u) => u.id === id)?.username} />
+    </ListPage>
   )
 }
