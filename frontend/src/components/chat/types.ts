@@ -1,4 +1,4 @@
-// Chat 对话页共享类型定义：描述一条聊天消息除正文外的附加信息（引用、工具步骤、Token 用量）
+// Chat 对话页共享类型定义：描述一条聊天消息除正文外的附加信息（引用、工具步骤、Token 用量、所属运行）
 
 // 知识库检索命中的引用片段：kb_id 来源知识库、doc_name 文档名、content 片段内容、score 相关度得分
 export interface Citation {
@@ -27,11 +27,14 @@ export interface ChatUsage {
   total_tokens?: number
 }
 
-// 聊天消息统一结构：user 消息通常只有 content，assistant 消息可携带 citations / tools / usage
+// 聊天消息统一结构：user 消息通常只有 content，assistant 消息可携带 citations / tools / usage / runId（本轮运行记录，可跳详情）
 export interface Msg {
+  id?: number
   role: 'user' | 'assistant'
   content: string
   citations?: Citation[]
   tools?: ToolStep[]
   usage?: ChatUsage
+  runId?: number
+  createdAt?: string
 }

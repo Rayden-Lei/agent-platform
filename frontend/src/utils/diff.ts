@@ -29,10 +29,18 @@ export function diffLines(oldText: string, newText: string): DiffLine[] {
 
 export interface FieldChange { field: string; before: unknown; after: unknown }
 
+// 空值归一：undefined / null / {} / [] / '' 视为同一种"空"，旧快照缺键与当前值为空对象不算差异
+function normalize(value: unknown): unknown {
+  if (value === undefined || value === null || value === '') return null
+  if (Array.isArray(value) && value.length === 0) return null
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0) return null
+  return value
+}
+
 // 对象快照的字段级差异：只列值不同的字段（深比较用 JSON 序列化，快照都是可序列化数据）
 export function diffFields(before: Record<string, unknown>, after: Record<string, unknown>, fields?: string[]): FieldChange[] {
   const keys = fields ?? Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after || {})]))
   return keys
-    .filter((k) => JSON.stringify(before?.[k] ?? null) !== JSON.stringify(after?.[k] ?? null))
+    .filter((k) => JSON.stringify(normalize(before?.[k])) !== JSON.stringify(normalize(after?.[k])))
     .map((k) => ({ field: k, before: before?.[k], after: after?.[k] }))
 }

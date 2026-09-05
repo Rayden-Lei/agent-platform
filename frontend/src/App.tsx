@@ -8,6 +8,7 @@ import Login from './pages/Login'
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Models = lazy(() => import('./pages/Models'))
 const Agents = lazy(() => import('./pages/Agents'))
+const AgentDetail = lazy(() => import('./pages/AgentDetail'))
 const Chat = lazy(() => import('./pages/Chat'))
 const KnowledgeBases = lazy(() => import('./pages/KnowledgeBases'))
 const Workflows = lazy(() => import('./pages/Workflows'))
@@ -36,6 +37,7 @@ export default function App() {
       <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="agents" element={<Agents />} />
+        <Route path="agents/:id" element={<AgentDetail />} />
         <Route path="prompt-templates" element={<PromptTemplates />} />
         <Route path="chat" element={<Chat />} />
         <Route path="models" element={<Models />} />
