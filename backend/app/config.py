@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入
     CHAT_SUMMARY_BATCH_MESSAGES: int = 10
+    # RAG 查询改写：默认关闭。开启后每条消息多一次模型调用（DeepSeek 类模型实测 4～9 秒），只在召回质量明显不足时打开
+    RAG_QUERY_REWRITE_ENABLED: bool = False
+    RAG_QUERY_REWRITE_TIMEOUT_SECONDS: int = 3
     CHAT_TITLE_MAX_LEN: int = 30
     # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉
     REPORT_TIMEZONE: str = "Asia/Shanghai"

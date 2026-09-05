@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Generic, Optional, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -55,6 +55,15 @@ class ModelIn(BaseModel):
     default_params: dict = Field(default_factory=dict)
     price_input: Optional[float] = None
     price_output: Optional[float] = None
+
+    @field_validator("default_params")
+    @classmethod
+    def _check_default_params(cls, value: dict) -> dict:
+        """thinking 只接受 disabled / enabled（或不设）；其余键由网关按需取用。"""
+        thinking = value.get("thinking")
+        if thinking is not None and thinking not in ("disabled", "enabled"):
+            raise ValueError("default_params.thinking 只能是 disabled 或 enabled")
+        return value
 
 
 class ModelOut(BaseModel):

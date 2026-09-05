@@ -1,4 +1,7 @@
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -10,6 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
+from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
@@ -30,6 +34,7 @@ class ChatContext:
     citations: list
     history_messages: list
     acl_rejected: int = 0
+    summary_pending: bool = False  # 待折叠消息已攒够一批：响应结束后在后台刷新会话摘要，不占用本轮首字节
 
 
 def _history_to_messages(rows: list) -> list:
@@ -73,36 +78,72 @@ def _summarize_history(model: ModelConfig, llm: Any, previous_summary: str, pend
     return summary or None
 
 
-def _build_history_messages(db: Session, model: ModelConfig, llm: Any, conversation: Conversation, rows: list, max_messages: int) -> list:
-    """有界历史（FR-031）：保留最近 max_messages 条原文，更早的按批折叠进会话上持久化的摘要。
+def _split_history(conversation: Conversation, rows: list, max_messages: int) -> tuple[list, list, list]:
+    """把会话消息切成 (待折叠的更早消息, 最近 max_messages 条, 已折叠摘要文本)。
 
-    更早消息里 id 大于 summary_upto_message_id 的是"待折叠"：攒够 CHAT_SUMMARY_BATCH_MESSAGES 条才调一次模型，
-    把旧摘要与它们压成新摘要并落库；不足一批时按原文注入。摘要调用因此从每轮一次降为每批一次，且输入有界。
-    摘要失败时旧摘要与边界不动、本轮待折叠消息退回截断原文，下一轮再试；截断文本不当摘要落库。
-    注入顺序：[摘要] + 未折叠的更早消息原文 + 最近 max_messages 条。
+    更早消息里 id 大于 summary_upto_message_id 的是"待折叠"（还没并进摘要）。
     """
     if len(rows) <= max_messages:
-        return _history_to_messages(rows)
+        return [], rows, conversation.summary or ""
     older_rows, recent_rows = rows[:-max_messages], rows[-max_messages:]
     upto = conversation.summary_upto_message_id or 0
-    summary = conversation.summary or ""
-    pending_rows = [r for r in older_rows if r.id > upto]
+    return [r for r in older_rows if r.id > upto], recent_rows, conversation.summary or ""
+
+
+def _build_history_messages(conversation: Conversation, rows: list, max_messages: int) -> tuple[list, bool]:
+    """有界历史（FR-031）：保留最近 max_messages 条原文，更早的用会话上持久化的摘要代替。返回 (消息列表, 是否需要后台刷新摘要)。
+
+    本函数不调用模型（2026-09-06 起）：摘要生成是一次完整的模型调用，放在请求路径上会让首字节多等好几秒。
+    待折叠消息不足一批时按原文注入；攒够 CHAT_SUMMARY_BATCH_MESSAGES 条时本轮先注入截断原文，
+    并返回 summary_pending=True，由对话路由在响应结束后调用 refresh_conversation_summary 在后台压缩落库，下一轮生效。
+    注入顺序：[摘要] + 未折叠的更早消息原文 + 最近 max_messages 条。
+    """
+    pending_rows, recent_rows, summary = _split_history(conversation, rows, max_messages)
     pending = _history_to_messages(pending_rows)
-    if len(pending_rows) >= settings.CHAT_SUMMARY_BATCH_MESSAGES:
-        new_summary = _summarize_history(model, llm, summary, pending)
-        if new_summary:
-            conversation.summary = new_summary
-            conversation.summary_upto_message_id = pending_rows[-1].id
-            conversation.summary_updated_at = datetime.now(timezone.utc)
-            db.commit()
-            summary, pending = new_summary, []
-        else:
-            pending = [SystemMessage(content="以下是更早对话的原文节选（摘要暂不可用，已截断）：\n" + _plain_text(pending)[:SUMMARY_FALLBACK_CHARS])]
+    needs_refresh = len(pending_rows) >= settings.CHAT_SUMMARY_BATCH_MESSAGES
+    if needs_refresh:
+        pending = [SystemMessage(content="以下是更早对话的原文节选（摘要更新中，已截断）：\n" + _plain_text(pending)[:SUMMARY_FALLBACK_CHARS])]
     messages = [SystemMessage(content="以下是更早对话的摘要（非逐字历史）：\n" + summary)] if summary else []
-    return messages + pending + _history_to_messages(recent_rows)
+    return messages + pending + _history_to_messages(recent_rows), needs_refresh
 
 
-REWRITE_TIMEOUT_SECONDS = 10
+def refresh_conversation_summary(db: Session, model: ModelConfig, llm: Any, conversation: Conversation, max_messages: int | None = None) -> bool:
+    """把攒够一批的待折叠消息并进会话摘要并落库。返回是否更新了摘要。
+
+    失败时旧摘要与边界不动（下一轮再试），截断文本不当摘要落库。既可由对话路由在响应后异步调用，也可直接调用（测试）。
+    """
+    max_messages = max_messages or settings.CHAT_HISTORY_MAX_MESSAGES
+    rows = db.query(Message).filter(Message.conversation_id == conversation.id).order_by(Message.id).all()
+    pending_rows, _, summary = _split_history(conversation, rows, max_messages)
+    if len(pending_rows) < settings.CHAT_SUMMARY_BATCH_MESSAGES:
+        return False
+    new_summary = _summarize_history(model, llm, summary, _history_to_messages(pending_rows))
+    if not new_summary:
+        return False
+    conversation.summary = new_summary
+    conversation.summary_upto_message_id = pending_rows[-1].id
+    conversation.summary_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return True
+
+
+def schedule_summary_refresh(model_id: int, conversation_id: int) -> threading.Thread:
+    """响应结束后在后台线程刷新摘要：自己开会话，失败只记日志。返回线程对象便于测试等待。"""
+    def _run():
+        db = SessionLocal()
+        try:
+            model = db.get(ModelConfig, model_id)
+            conversation = db.get(Conversation, conversation_id)
+            if model is None or conversation is None:
+                return
+            refresh_conversation_summary(db, model, build_llm(model), conversation)
+        except Exception:
+            logger.exception("后台刷新会话摘要失败 conversation_id=%s", conversation_id)
+        finally:
+            db.close()
+    thread = threading.Thread(target=_run, name=f"summary-{conversation_id}", daemon=True)
+    thread.start()
+    return thread
 
 
 def _rewrite_queries(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
@@ -128,7 +169,7 @@ def _rewrite_queries(model: ModelConfig, llm: Any, message_text: str) -> list[st
     # 这里显式 shutdown(wait=False)，超时即放弃，慢调用在后台线程自行结束。
     executor = ThreadPoolExecutor(max_workers=1)
     try:
-        resp = executor.submit(_invoke).result(timeout=REWRITE_TIMEOUT_SECONDS)
+        resp = executor.submit(_invoke).result(timeout=settings.RAG_QUERY_REWRITE_TIMEOUT_SECONDS)
         lines = [l.strip() for l in (resp.content or "").split("\n") if l.strip()]
         queries = [q.lstrip("1234567890.-)（） ").strip() for q in lines[:3]]
         queries = [q for q in queries if q]
@@ -142,6 +183,37 @@ def _rewrite_queries(model: ModelConfig, llm: Any, message_text: str) -> list[st
     finally:
         executor.shutdown(wait=False)
     return queries or [message_text]
+
+
+def _queries_for(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
+    """检索用的查询集合：默认只用原问题；开启 RAG_QUERY_REWRITE_ENABLED 才让模型改写（多一次模型调用）。"""
+    if not settings.RAG_QUERY_REWRITE_ENABLED:
+        return [message_text]
+    return _rewrite_queries(model, llm, message_text)
+
+
+def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, int]:
+    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。返回 (引用列表, 鉴权剔除数)。"""
+    pairs = [(kb_id, q) for kb_id in kb_ids for q in queries]
+
+    def _one(pair):
+        return pair[0], retrieve_with_stats(pair[0], pair[1], settings.RAG_TOP_K, role=role)
+
+    if len(pairs) == 1:
+        results = [_one(pairs[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(8, len(pairs))) as ex:
+            results = list(ex.map(_one, pairs))
+    merged: dict = {}
+    acl_rejected = 0
+    for kb_id, stats in results:
+        acl_rejected += stats["stats"].get("acl_rejected", 0)
+        for item in stats["items"]:
+            key = (kb_id, item["chunk_id"])
+            if key not in merged or item["score"] > merged[key]["score"]:
+                merged[key] = {"kb_id": kb_id, "chunk_id": item["chunk_id"], "doc_name": item["doc_name"], "content": item["content"], "score": item["score"]}
+    citations = sorted(merged.values(), key=lambda x: -x["score"])[: settings.RAG_TOP_K * len(kb_ids)]
+    return citations, acl_rejected
 
 
 def get_published_agent(db: Session, agent_id: int) -> Agent:
@@ -192,18 +264,10 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     kb_context = ""
     citations = []
     acl_rejected = 0
+    started = time.perf_counter()
     if agent.kb_ids:
-        queries = _rewrite_queries(model, llm, message_text)
-        merged: dict = {}
-        for kb_id in agent.kb_ids:
-            for q in queries:
-                stats = retrieve_with_stats(kb_id, q, settings.RAG_TOP_K, role=role)
-                acl_rejected += stats["stats"].get("acl_rejected", 0)
-                for s in stats["items"]:
-                    key = (kb_id, s["chunk_id"])
-                    if key not in merged or s["score"] > merged[key]["score"]:
-                        merged[key] = {"kb_id": kb_id, "chunk_id": s["chunk_id"], "doc_name": s["doc_name"], "content": s["content"], "score": s["score"]}
-        citations = sorted(merged.values(), key=lambda x: -x["score"])[: settings.RAG_TOP_K * len(agent.kb_ids)]
+        queries = _queries_for(model, llm, message_text)
+        citations, acl_rejected = _retrieve_all(agent.kb_ids, queries, role)
         if citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
@@ -211,6 +275,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
                 + "\n".join(f"[{i + 1}] {c['content']}" for i, c in enumerate(citations))
                 + "\n\n约束：参考片段未覆盖的内容，如实回答『知识库中没有相关信息』，禁止编造。"
             )
+    retrieval_ms = int((time.perf_counter() - started) * 1000)
     system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
     conversation = db.get(Conversation, conversation_id)
@@ -218,10 +283,12 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     # prepare_chat 已把本轮用户消息落库，历史里的最后一行就是它；不剔除会让模型收到两条相同的用户消息
     if history and history[-1].role == "user" and history[-1].content == message_text:
         history = history[:-1]
-    lc_messages = _build_history_messages(db, model, llm, conversation, history, settings.CHAT_HISTORY_MAX_MESSAGES)
+    lc_messages, summary_pending = _build_history_messages(conversation, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
+    logger.info("对话上下文就绪 agent_id=%s 检索 %dms 引用 %d 条 历史 %d 条", agent_id, retrieval_ms, len(citations), len(lc_messages) - 1)
 
-    return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations, history_messages=lc_messages, acl_rejected=acl_rejected)
+    return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations,
+                       history_messages=lc_messages, acl_rejected=acl_rejected, summary_pending=summary_pending)
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:

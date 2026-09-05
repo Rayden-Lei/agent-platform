@@ -5,10 +5,12 @@
 
 import json
 import logging
+import time
 import warnings
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -48,7 +50,8 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
     返回 SSE 事件流，事件类型包括 citations / delta / tool_call / tool_result / done / error；
     客户端中断（停止按钮 / 断网）时生成器被关闭，由 event_stream 的 finally 收尾。
     """
-    conversation_id, run_id = chat_service.prepare_chat(db, user.id, agent_id, data.message, data.conversation_id)
+    # 同步的库操作与上下文构建都放线程池：对话链路里的检索、历史装配要几百毫秒到几秒，直接跑在事件循环上会拖住所有其他请求
+    conversation_id, run_id = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id)
     message_text = data.message
 
     async def event_stream():
@@ -59,9 +62,11 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
         citations: list = []
         # 已正常收尾（done / failed）。finally 里据此判断是否为客户端中断（停止按钮/断网）导致生成器被关闭。
         finished = False
+        started = time.perf_counter()
+        first_token_ms: int | None = None
         try:
             try:
-                ctx = chat_service.build_chat_context(db2, agent_id, message_text, conversation_id, role=user.role)
+                ctx = await run_in_threadpool(chat_service.build_chat_context, db2, agent_id, message_text, conversation_id, role=user.role)
             except BizError as e:
                 chat_service.finalize_run(db2, run_id, "failed", error=e.detail)
                 finished = True
@@ -80,7 +85,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                 user_id=user.id, username=user.username, action="rag_retrieve", resource="agent", resource_id=agent_id,
                 detail={"query": message_text, "recalled_chunk_ids": [c["chunk_id"] for c in ctx.citations], "acl_rejected": ctx.acl_rejected},
             ))
-            db2.commit()
+            await run_in_threadpool(db2.commit)
 
             yield _sse({"type": "citations", "citations": ctx.citations})
 
@@ -94,6 +99,8 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                     if isinstance(chunk, AIMessageChunk):
                         delta = chunk.content
                         if isinstance(delta, str) and delta:
+                            if first_token_ms is None:
+                                first_token_ms = int((time.perf_counter() - started) * 1000)
                             final_content += delta
                             yield _sse({"type": "delta", "content": delta})
                         for tc in getattr(chunk, "tool_call_chunks", None) or []:
@@ -138,11 +145,15 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
                         tool_calls_list.append({"id": tc_id or (entry or {}).get("id"), "name": tool_name, "args": args, "result": result})
                         yield _sse({"type": "tool_result", "content": result, "tool_call_id": tc_id})
 
-                assistant_msg = chat_service.save_assistant_message(db2, conversation_id, final_content, ctx.citations, usage_total, tool_calls_list)
-                chat_service.finalize_run(db2, run_id, "success", content=final_content, usage=usage_total)
+                assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db2, conversation_id, final_content, ctx.citations, usage_total, tool_calls_list)
+                await run_in_threadpool(chat_service.finalize_run, db2, run_id, "success", content=final_content, usage=usage_total)
                 finished = True
+                logger.info("对话完成 run_id=%s 首字节 %sms 总 %dms", run_id, first_token_ms if first_token_ms is not None else "-", int((time.perf_counter() - started) * 1000))
                 yield _sse({"type": "done", "message_id": assistant_msg.id, "run_id": run_id,
                             "conversation_id": conversation_id, "usage": usage_total})
+                if ctx.summary_pending:
+                    # 摘要压缩是一次完整的模型调用，放到响应之后的后台线程，下一轮对话用到新摘要
+                    chat_service.schedule_summary_refresh(ctx.model.id, conversation_id)
             except Exception as e:
                 logger.exception("对话生成失败 run_id=%s agent_id=%s", run_id, agent_id)
                 chat_service.finalize_run(db2, run_id, "failed", error=str(e))

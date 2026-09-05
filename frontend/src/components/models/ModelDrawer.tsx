@@ -40,7 +40,8 @@ export default function ModelDrawer({ model, breaker, testing, canManage, onClos
             { key: 'model_name', label: '模型名', children: <Typography.Text copyable>{model.model_name}</Typography.Text> },
             { key: 'api_base', label: 'API 地址', children: <Typography.Text copyable ellipsis style={{ maxWidth: 260 }}>{model.api_base}</Typography.Text> },
             { key: 'price', label: '价格（元 / 百万 token）', children: priceText(model.price_input, model.price_output) },
-            { key: 'params', label: '默认参数', children: Object.keys(model.default_params || {}).length ? <Typography.Text code>{JSON.stringify(model.default_params)}</Typography.Text> : '-' },
+            { key: 'thinking', label: '思考模式', children: model.default_params?.thinking ? <StatusTag domain="thinking" value={String(model.default_params.thinking)} /> : <Typography.Text type="secondary">跟随模型默认</Typography.Text> },
+            { key: 'params', label: '其他默认参数', children: Object.keys(model.default_params || {}).filter((k) => k !== 'thinking').length ? <Typography.Text code>{JSON.stringify(Object.fromEntries(Object.entries(model.default_params).filter(([k]) => k !== 'thinking')))}</Typography.Text> : '-' },
             { key: 'creator', label: '创建人', children: model.created_by_username || '-' },
             { key: 'updated', label: '更新时间', children: <TimeCell value={model.updated_at} /> },
           ]} />

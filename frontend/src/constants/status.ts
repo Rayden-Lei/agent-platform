@@ -2,7 +2,7 @@
 // running/processing 蓝，failed 红）。筛选下拉与标签同源，页面里不许再各写一份映射。
 export type StatusDomain =
   | 'run' | 'runType' | 'runSource' | 'agent' | 'workflow' | 'document' | 'enabled' | 'role'
-  | 'toolType' | 'auditAction' | 'auditResource' | 'breaker' | 'nodeStatus' | 'provider' | 'visibility'
+  | 'toolType' | 'auditAction' | 'auditResource' | 'breaker' | 'nodeStatus' | 'provider' | 'visibility' | 'thinking'
 
 export interface StatusMeta { label: string; color: string }
 
@@ -74,6 +74,8 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     zhipu: { label: '智谱', color: 'default' },
   },
   visibility: { true: { label: '公开', color: 'success' }, false: { label: '受限', color: 'warning' } },
+  // 模型思考模式（default_params.thinking）：不设 = 跟随模型默认
+  thinking: { disabled: { label: '关闭（更快）', color: 'success' }, enabled: { label: '开启', color: 'processing' } },
 }
 
 export const statusLabel = (domain: StatusDomain, value: string | boolean | null | undefined): string => {

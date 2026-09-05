@@ -144,15 +144,18 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
     enriched=True 时附加向量分/关键词分与命中关键词，供评测与调试接口使用。
     """
     items = []
-    for c in ranked[:top_k]:
+    top = ranked[:top_k]
+    # 文档名一次 IN 查询装配，不逐条 db.get（远程库上每次往返几十毫秒）
+    doc_ids = {c["chunk"].doc_id for c in top}
+    doc_names = {d.id: d.name for d in db.execute(select(Document).where(Document.id.in_(doc_ids))).scalars()} if doc_ids else {}
+    for c in top:
         chunk = c["chunk"]
-        doc = db.get(Document, chunk.doc_id)
         item = {
             "content": chunk.content,  # 完整文本块，不截断
             "score": c["score"],
             "chunk_id": chunk.id,
             "doc_id": chunk.doc_id,
-            "doc_name": doc.name if doc else "",
+            "doc_name": doc_names.get(chunk.doc_id, ""),
             "meta": chunk.meta or {},
         }
         if enriched:

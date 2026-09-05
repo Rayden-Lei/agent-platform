@@ -179,7 +179,7 @@ def test_summary_degrades_when_breaker_open():
 
 
 def test_rewrite_timeout_counts_toward_breaker(monkeypatch):
-    monkeypatch.setattr(chat_service, "REWRITE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(settings, "RAG_QUERY_REWRITE_TIMEOUT_SECONDS", 0.05)
     release = threading.Event()
 
     class _SlowLLM:
