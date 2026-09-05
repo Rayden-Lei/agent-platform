@@ -9,6 +9,7 @@
 5. 运行记录只走 `run_service.create_run / finalize_run`。
 6. 路由不写业务，业务在 `services/`，服务层抛 `BizError(status, detail)`。
 7. 表结构变更必落 `scripts/migrations/` 幂等脚本并更新 `docs/03`。
-8. 接口变更同批改 `docs/04` 与 `frontend/src/api/index.ts`。
+8. 接口变更同批改 `docs/04` 与 `frontend/src/api/<域>.ts`。
 9. 密钥不进仓库、不进日志；共享库上的破坏性操作先确认。
 10. 测试脚本写成 `.py` 文件，不用 shell 内联 JSON。
+11. 列表接口的排序走 `core/pagination.apply_sort` 白名单（带 `id` 副键）、时间区间走 `time_range`（必须带时区、左闭右开）、批量写口走 `core/batch.run_batch`（逐条执行、逐条返回）；关联名称一页一次 `IN` 装配，禁止逐行查。

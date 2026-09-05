@@ -22,8 +22,9 @@
 | 知识库 | 文档上传到 MinIO，按文件类型差异化分片，pgvector 向量检索与关键词检索混合召回，知识库级与切片级权限控制 |
 | 工作流 | React Flow 画布拖拽编排，LangGraph 执行，12 类节点（含并行 / 汇聚），人工审核节点可暂停后续跑 |
 | 工具 | 内置工具供智能体与工作流调用，HTTP 工具按参数声明（JSON Schema 子集）以结构化参数暴露给模型，可按统一契约扩展 |
-| 运行记录 | 对话与工作流的每次运行留痕，Token、成本、耗时统计，中断与失败统一收尾 |
-| 管理 | 用户与角色、审计日志、API Key 与配额、定时任务（APScheduler） |
+| 运行记录 | 对话与工作流的每次运行留痕；模型、会话与成本在收尾时快照；按类型 / 状态 / 来源 / 智能体 / 工作流 / 模型 / 时间区间筛选，成功率、P50 / P95 与耗时分布随筛选联动；详情页看节点日志、输入输出与 Token |
+| 管理 | 用户与角色（启停、重置密码）、审计日志（多条件筛选、展开明细、导出）、API Key（配额进度、来源白名单、限速）、定时任务（cron 校验、下次运行、立即触发、调度器状态） |
+| 控制台 | 工作台的今日指标与环比、按状态趋势、待处理项、模型消耗；所有列表统一筛选同步 URL、服务端排序、行选择批量；智能体 / 工作流 / 知识库 / 运行记录有详情页承载运营统计与关联跳转，其余对象用抽屉并支持 `?open=` 深链 |
 
 ## 界面预览
 
@@ -84,6 +85,7 @@
 - **流式对话**：SSE 事件契约固定为 `citations`、`delta`、`tool_call`、`tool_result`、`done`、`error` 六类；客户端中断后服务端在 `finally` 里把已生成内容落库并将运行记录置为 `cancelled`，不留永久 running；中间件用纯 ASGI 实现，避免 `BaseHTTPMiddleware` 破坏流式响应。
 - **API Key 与配额**：API Key 与 JWT 共用 Bearer 头按前缀分流，库里只存哈希；配额扣减用带前置条件的 `UPDATE ... WHERE used < quota` 按影响行数判断，并发下不会超扣，用尽返回 429；管理类接口默认拒绝 API Key。
 - **可观测性**：每个请求分配 `X-Request-Id`，贯穿日志、响应头与错误体；三类异常统一出口；`/system/status` 汇总向量后端、登录限流、数据库、调度器的降级状态，前端据此提示。
+- **运营统计与列表契约**：`/stats/*` 在数据库侧按 `REPORT_TIMEZONE` 切天聚合，缺失日期补零；运行成本在收尾时按当时单价写入 `runs.cost`，改价不追溯；列表排序走白名单并带 `id` 副键，时间区间必须带时区且左闭右开，批量接口逐条执行、逐条返回成功与失败清单。
 - **工程约束**：列表接口统一服务端分页且每页上限 100；前端用请求序号丢弃过期响应；数据库变更全部落幂等迁移脚本；文档与代码同批更新。
 
 ## 技术栈
@@ -92,7 +94,7 @@
 |---|---|
 | 后端 | Python 3.12、FastAPI、SQLAlchemy 2.0、Pydantic 2、LangGraph、LangChain、APScheduler |
 | 数据 | PostgreSQL 16 + pgvector、Redis 7、MinIO |
-| 前端 | React 18、TypeScript、Vite、Ant Design 5、React Flow、zustand、axios |
+| 前端 | React 18、TypeScript、Vite、Ant Design 5、@ant-design/plots、React Flow、zustand、axios、dayjs |
 | 部署 | Docker Compose 一键部署，或裸机 uvicorn + Nginx |
 | 质量 | pytest、GitHub Actions CI、tsc 类型检查 |
 
@@ -105,7 +107,7 @@ cp .env.example .env        # 修改数据库密码、SECRET_KEY、AES_KEY 与�
 docker compose up -d --build
 ```
 
-启动 api（8000）、web（18056）、postgres、redis、minio 五个容器，浏览器打开 `http://<主机>:18056`。默认管理员 `admin / admin123`，首次登录后请修改密码。
+启动 api（8000）、web（18056）、postgres、redis、minio 五个容器，浏览器打开 `http://<主机>:18056`。默认管理员 `admin / admin123`，首次登录后请修改密码；登录页不显示默认账号，演示环境可用构建变量 `VITE_LOGIN_HINT` 加页脚提示。
 
 ### 本地开发
 
@@ -126,7 +128,7 @@ npm install
 npm run dev -- --port 18056 --host 0.0.0.0
 ```
 
-Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。环境变量、迁移脚本与排障见 [docs/08-运行与部署.md](docs/08-运行与部署.md)。
+Vite 会把 `^/api/` 代理到 `http://127.0.0.1:8000`（键必须是带尾斜杠的正则，否则前端路由 `/api-keys` 会被转给后端）。环境变量、迁移脚本与排障见 [docs/08-运行与部署.md](docs/08-运行与部署.md)。
 
 ### 测试
 
@@ -154,7 +156,13 @@ agent-platform/
 │   ├── scripts/             # 建库、幂等迁移、联调脚本
 │   ├── tests/               # pytest
 │   └── .env.example
-├── frontend/src/            # api / components / pages / store
+├── frontend/src/
+│   ├── api/                 # 按领域拆分的接口函数与类型，index.ts 只 re-export
+│   ├── pages/               # 一路由一页面，含四类核心对象的详情页
+│   ├── components/          # common 通用件、layout 骨架、charts 图表、各领域子组件
+│   ├── hooks/               # usePagedList / useAsyncData / useQueryState 等
+│   ├── constants/           # 状态字典、资源注册表、导航
+│   ├── utils/  store/       # 纯函数；登录态、系统状态轮询、未保存标记
 ├── docs/                    # 需求、架构、数据库、接口、规范、部署、路线
 │   └── screenshots/         # 界面截图
 ├── docker-compose.yml
@@ -172,13 +180,14 @@ agent-platform/
 | [05-开发规范](docs/05-开发规范.md) · [06-后端规范](docs/06-后端规范.md) · [07-前端规范](docs/07-前端规范.md) | 开发纪律与写法约定 |
 | [08-运行与部署](docs/08-运行与部署.md) | 本地开发、环境变量、迁移、两种部署、排障 |
 | [09-演进路线](docs/09-演进路线.md) | 改进优先级与已知问题 |
-| [10-差距分析](docs/10-差距分析.md) · [11-差距补齐PRD](docs/11-差距补齐PRD.md) · [12-差距补齐开发计划](docs/12-差距补齐开发计划.md) | 面向企业级中台的差距盘点与补齐计划 |
+| [10-差距分析](docs/10-差距分析.md) · [11-差距补齐PRD](docs/11-差距补齐PRD.md) · [12-差距补齐开发计划](docs/12-差距补齐开发计划.md) · [13-差距补齐评审报告](docs/13-差距补齐评审报告.md) | 面向企业级中台的差距盘点、补齐计划与评审 |
+| [14-页面深度优化方案](docs/14-页面深度优化方案.md) | 页面从"表格 + 弹窗"改造为统计 / 详情 / 筛选批量的记录，含上线踩坑 |
 
 完整索引见 [docs/README.md](docs/README.md)。
 
 ## 已知局限
 
-当前定位是单团队使用的 MVP，尚未做多租户隔离；已知问题与改进优先级见 [docs/09-演进路线.md](docs/09-演进路线.md)，与企业级中台的差距盘点见 [docs/10-差距分析.md](docs/10-差距分析.md)。
+当前定位是单团队使用的 MVP，尚未做多租户隔离；代码执行节点无沙箱、HTTP 工具可访问内网地址，仅限可信内部用户使用。已知问题与改进优先级见 [docs/09-演进路线.md](docs/09-演进路线.md)，与企业级中台的差距盘点见 [docs/10-差距分析.md](docs/10-差距分析.md)。
 
 ## License
 
