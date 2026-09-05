@@ -15,6 +15,7 @@ import Users from './pages/Users'
 import AuditLogs from './pages/AuditLogs'
 import ApiKeys from './pages/ApiKeys'
 import Schedules from './pages/Schedules'
+import PromptTemplates from './pages/PromptTemplates'
 
 // 路由守卫：未登录（无 token）时重定向到 /login，已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="agents" element={<Agents />} />
+        <Route path="prompt-templates" element={<PromptTemplates />} />
         <Route path="chat" element={<Chat />} />
         <Route path="models" element={<Models />} />
         <Route path="tools" element={<Tools />} />

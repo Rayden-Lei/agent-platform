@@ -30,13 +30,70 @@ export const deleteModel = (id: number) => client.delete(`/models/${id}`)
 export const testModel = (id: number) => client.post(`/models/${id}/test`) as unknown as Promise<{ code: number; message: string; data: { ok: boolean; reply?: string; error?: string } }>
 
 // ===== 智能体（含发布、版本历史与回滚）=====
-export const listAgents = (params?: PageQuery) => get<Page>('/agents', params)
-export const createAgent = (data: any) => client.post('/agents', data)
-export const updateAgent = (id: number, data: any) => client.put(`/agents/${id}`, data)
+export interface AgentRow {
+  id: number
+  name: string
+  description: string | null
+  system_prompt: string
+  model_id: number
+  params: Record<string, unknown>
+  kb_ids: number[]
+  tool_ids: number[]
+  workflow_id: number | null
+  status: string
+  version: number
+  // Prompt 模板绑定（docs/04 4.4）：绑定时 system_prompt 是渲染结果；outdated = 模板当前版本高于绑定时版本
+  prompt_template_id: number | null
+  prompt_template_version: number | null
+  prompt_variables: Record<string, string>
+  prompt_template_outdated: boolean
+}
+// system_prompt 与 prompt_template_id 二选一：绑定模板时 system_prompt 传空串，由后端渲染
+export interface AgentInput {
+  name: string
+  description?: string
+  system_prompt?: string
+  model_id: number
+  params?: Record<string, unknown>
+  kb_ids?: number[]
+  tool_ids?: number[]
+  workflow_id?: number | null
+  prompt_template_id?: number | null
+  prompt_variables?: Record<string, string>
+}
+export const listAgents = (params?: PageQuery) => get<Page<AgentRow>>('/agents', params)
+export const createAgent = (data: AgentInput) => client.post('/agents', data)
+export const updateAgent = (id: number, data: AgentInput) => client.put(`/agents/${id}`, data)
 export const deleteAgent = (id: number) => client.delete(`/agents/${id}`)
 export const publishAgent = (id: number) => client.post(`/agents/${id}/publish`)
 export const getAgentVersions = (id: number, params?: PageQuery) => get<Page>(`/agents/${id}/versions`, params)
 export const rollbackAgent = (id: number, versionId: number) => client.post(`/agents/${id}/rollback/${versionId}`)
+
+// ===== 提示词模板（docs/04 4.16）=====
+export interface PromptVariable { name: string; description?: string; required?: boolean; default?: string | null }
+export interface PromptTemplateRow {
+  id: number
+  name: string
+  description: string | null
+  variables: PromptVariable[]
+  version: number
+  created_by: number | null
+  updated_at: string
+  content?: string // 列表不下发，详情 / 保存响应才有
+  unused_variables?: string[] // 保存响应：声明了但内容未使用的变量
+}
+export interface PromptTemplateInput { name: string; description?: string; content: string; variables: PromptVariable[] }
+export interface PromptTemplateVersionRow { id: number; version: number; content: string; variables: PromptVariable[]; created_at: string }
+export interface PromptRenderResult { content: string; missing: string[]; unused: string[] }
+export const listPromptTemplates = (params?: PageQuery) => get<Page<PromptTemplateRow>>('/prompt-templates', params)
+export const getPromptTemplate = (id: number) => client.get(`/prompt-templates/${id}`) as unknown as Promise<PromptTemplateRow>
+export const createPromptTemplate = (data: PromptTemplateInput) => client.post('/prompt-templates', data) as unknown as Promise<PromptTemplateRow>
+export const updatePromptTemplate = (id: number, data: PromptTemplateInput) => client.put(`/prompt-templates/${id}`, data) as unknown as Promise<PromptTemplateRow>
+export const deletePromptTemplate = (id: number) => client.delete(`/prompt-templates/${id}`)
+export const getPromptTemplateVersions = (id: number, params?: PageQuery) => get<Page<PromptTemplateVersionRow>>(`/prompt-templates/${id}/versions`, params)
+export const rollbackPromptTemplate = (id: number, versionId: number) => client.post(`/prompt-templates/${id}/rollback/${versionId}`) as unknown as Promise<PromptTemplateRow>
+// 渲染预览：缺必填变量 400 "缺少必填变量：x"
+export const renderPromptTemplate = (id: number, variables: Record<string, string>) => client.post(`/prompt-templates/${id}/render`, { variables }) as unknown as Promise<PromptRenderResult>
 
 // ===== 会话与消息 =====
 export const listConversations = (params?: PageQuery) => get<Page>('/conversations', params)

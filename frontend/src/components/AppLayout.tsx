@@ -15,6 +15,7 @@ import {
   ClockCircleOutlined,
   MenuOutlined,
   ThunderboltOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../store/auth'
@@ -34,13 +35,15 @@ export default function AppLayout() {
   const isMobile = !screens.md // md 以下视为移动端：侧边栏改为抽屉
   const [drawerOpen, setDrawerOpen] = useState(false) // 移动端抽屉是否展开
 
-  // 导航菜单项：key 即路由路径；API Key 对管理员与开发者可见（开发者只看到本人创建的），
+  // 导航菜单项：key 即路由路径；提示词模板与 API Key 对管理员与开发者可见（开发者只看到本人创建的 Key），
   // 用户管理/审计日志/定时任务仅管理员可见
   const isAdmin = user?.role === 'admin'
-  const canManageKeys = isAdmin || user?.role === 'developer'
+  const isDeveloperOrAdmin = isAdmin || user?.role === 'developer'
+  const canManageKeys = isDeveloperOrAdmin
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/agents', icon: <RobotOutlined />, label: '智能体' },
+    ...(isDeveloperOrAdmin ? [{ key: '/prompt-templates', icon: <FileTextOutlined />, label: '提示词模板' }] : []),
     { key: '/chat', icon: <ApiOutlined />, label: '对话' },
     { key: '/models', icon: <ThunderboltOutlined />, label: '模型' },
     { key: '/tools', icon: <ToolOutlined />, label: '工具' },
