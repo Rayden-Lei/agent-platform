@@ -1,4 +1,4 @@
-"""ASGI 中间件：请求 ID 与访问日志。
+"""ASGI 中间件：请求 ID、客户端 IP 与访问日志。
 
 刻意不用 Starlette 的 BaseHTTPMiddleware：它会把响应重新包一层，
 对 SSE 流式响应与客户端中断的语义有影响（对话接口依赖生成器的 finally 做运行记录收尾）。
@@ -12,8 +12,11 @@ from starlette.datastructures import Headers
 from app.core.request_context import (
     REQUEST_ID_HEADER,
     new_request_id,
+    reset_client_ip,
     reset_request_id,
+    resolve_client_ip,
     sanitize_request_id,
+    set_client_ip,
     set_request_id,
 )
 
@@ -24,16 +27,16 @@ _QUIET_PATHS = {"/health"}
 
 
 class RequestContextMiddleware:
-    """为每个 HTTP 请求分配追踪 ID，回写响应头，并记录一条访问日志。"""
+    """为每个 HTTP 请求分配追踪 ID、解析客户端 IP，回写响应头，并记录一条访问日志。"""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        """请求链路：取/生成 request_id → 写入 contextvar 与 scope → 包装 send 回写响应头 → 记访问日志。
+        """请求链路：取/生成 request_id、解析客户端 IP → 写入 contextvar 与 scope → 包装 send 回写响应头 → 记访问日志。
 
         异常向上传播交给外层 ServerErrorMiddleware（本中间件不吞异常）；
-        finally 中必须 reset contextvar，否则同线程的后续任务会串用上一个请求的 ID。
+        finally 中必须 reset contextvar，否则同线程的后续任务会串用上一个请求的 ID 与 IP。
         """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -42,9 +45,13 @@ class RequestContextMiddleware:
         incoming = Headers(scope=scope).get(REQUEST_ID_HEADER)
         request_id = sanitize_request_id(incoming) or new_request_id()
         token = set_request_id(request_id)
+        # 客户端 IP 只在这里解析一次；内层的 IP 黑名单、审计、限流都从 contextvar 取
+        client_ip = resolve_client_ip(scope)
+        ip_token = set_client_ip(client_ip)
         # 同时写进 ASGI scope：未处理异常的 handler 由更外层的 ServerErrorMiddleware 调用，
         # 那时本中间件的 finally 已经把 contextvar 重置了，只能从 scope 里取回同一个 ID。
         scope.setdefault("state", {})["request_id"] = request_id
+        scope["state"]["client_ip"] = client_ip
         started = time.perf_counter()
         method = scope.get("method", "-")
         path = scope.get("path", "-")
@@ -69,4 +76,5 @@ class RequestContextMiddleware:
             elapsed_ms = (time.perf_counter() - started) * 1000
             level = logging.DEBUG if path in _QUIET_PATHS else logging.INFO
             logger.log(level, "%s %s %s %.0fms", method, path, status_code, elapsed_ms)
+            reset_client_ip(ip_token)
             reset_request_id(token)

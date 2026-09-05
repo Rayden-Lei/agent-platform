@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.core.exceptions import BizError
+from app.core.ip_filter import IpFilterMiddleware
 from app.core.middleware import RequestContextMiddleware
 from app.core.request_context import REQUEST_ID_HEADER, RequestIdFilter, get_request_id
 from app.config import settings
@@ -84,16 +85,18 @@ def _configure_logging() -> None:
 _configure_logging()
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
-# 跨域：allow_origins=* 与 allow_credentials=True 并存时浏览器不允许通配符+凭据，
-# Starlette 会回显请求方 Origin 使其可用；正式环境建议收敛为明确白名单
+# 中间件顺序（后 add 的在外层）：IP 黑名单 → CORS → 请求 ID。
+# 黑名单放在 CORS 内层，403 才会带跨域头；请求 ID 放最外层，CORS 预检与鉴权失败的响应也带追踪 ID。
+app.add_middleware(IpFilterMiddleware)
+# 跨域按白名单放行（CORS_ORIGINS）：浏览器直连后端时才需要，经同源反代不涉及。
+# allow_credentials=True 时浏览器不接受通配符 *，所以必须是明确的源列表
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 请求 ID 中间件放在最外层：CORS 预检与鉴权失败的响应也要带上追踪 ID
 app.add_middleware(RequestContextMiddleware)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
