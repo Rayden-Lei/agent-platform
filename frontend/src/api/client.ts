@@ -26,6 +26,11 @@ client.interceptors.response.use(
     if (err.response?.status >= 500 && traceId && err.response?.data?.detail) {
       err.response.data.detail = `${err.response.data.detail}（trace: ${traceId}）`
     }
+    // 429：服务端 detail 已写明等待秒数（入口限流）或时长（登录锁定）；只有缺少提示时才用 Retry-After 头补上
+    const retryAfter = err.response?.headers?.['retry-after']
+    if (err.response?.status === 429 && retryAfter && err.response?.data?.detail && !/重试|再试/.test(err.response.data.detail)) {
+      err.response.data.detail = `${err.response.data.detail}（${retryAfter} 秒后可重试）`
+    }
     // 401：凭证失效，清掉本地登录态并跳回登录页（统一处理，各页面无需重复写）
     if (err.response?.status === 401) {
       localStorage.removeItem('token')

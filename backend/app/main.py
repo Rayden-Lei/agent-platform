@@ -117,7 +117,11 @@ async def biz_error_handler(request, exc: BizError):
     业务失败是预期内的（校验不通过、状态不允许），记 INFO 不记堆栈；只有故障才值得 ERROR。
     """
     logger.info("业务异常 %s %s status=%s detail=%s", request.method, request.url.path, exc.status_code, exc.detail)
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "trace_id": _trace_id(request)})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "trace_id": _trace_id(request)},
+        headers=exc.headers,  # 429 的 Retry-After / X-RateLimit-* 由此透传
+    )
 
 
 @app.exception_handler(StarletteHTTPException)

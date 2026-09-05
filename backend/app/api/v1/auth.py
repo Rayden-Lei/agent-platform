@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.deps import anonymous_rate_limit, get_current_user
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas import LoginIn, TokenOut, UserOut
@@ -12,9 +12,9 @@ from app.services import auth_service
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/login", response_model=TokenOut)
+@router.post("/login", response_model=TokenOut, dependencies=[Depends(anonymous_rate_limit)])
 def login(data: LoginIn, db: Session = Depends(get_db)):
-    """登录接口（公开，无需鉴权）。用户名密码校验通过后返回 Token。"""
+    """登录接口（公开，无需鉴权）。按来源 IP 限流；用户名密码校验通过后返回 Token。"""
     return auth_service.login(db, data.username, data.password)
 
 

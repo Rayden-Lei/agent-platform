@@ -56,7 +56,7 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey, RateLimitResu
     limit = ak.rate_limit_per_minute or settings.RATE_LIMIT_API_KEY_PER_MINUTE
     rate_limit = rate_limiter.check("ak", str(ak.id), limit)
     if not rate_limit.allowed:
-        raise BizError(429, f"请求过于频繁，请 {rate_limit.retry_after} 秒后重试")
+        raise rate_limiter.limit_exceeded(rate_limit)
 
     consumed = (
         db.query(ApiKey)

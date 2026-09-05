@@ -5,6 +5,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.core import rate_limiter
+from app.core.request_context import get_client_ip
 from app.core.security import decode_token
 from app.db.models import User
 from app.db.session import get_db
@@ -49,8 +52,21 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号不可用")
+    # 登录用户维度限流：先鉴权再计数，无效 token 不占用户的额度
+    rate_limit = rate_limiter.check("user", str(user.id), settings.RATE_LIMIT_USER_PER_MINUTE)
+    if not rate_limit.allowed:
+        raise rate_limiter.limit_exceeded(rate_limit)
     request.state.auth_via = "jwt"
+    request.state.rate_limit = rate_limit
     return user
+
+
+def anonymous_rate_limit(request: Request) -> None:
+    """匿名接口（登录）按来源 IP 限流：暴力破解与撞库的第一道闸，在登录失败锁定之前生效。"""
+    rate_limit = rate_limiter.check("ip", get_client_ip() or "unknown", settings.RATE_LIMIT_IP_PER_MINUTE)
+    if not rate_limit.allowed:
+        raise rate_limiter.limit_exceeded(rate_limit)
+    request.state.rate_limit = rate_limit
 
 
 def is_api_key_request(request: Request) -> bool:

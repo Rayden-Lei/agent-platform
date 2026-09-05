@@ -34,7 +34,10 @@ export default function AppLayout() {
   const isMobile = !screens.md // md 以下视为移动端：侧边栏改为抽屉
   const [drawerOpen, setDrawerOpen] = useState(false) // 移动端抽屉是否展开
 
-  // 导航菜单项：key 即路由路径；用户管理/审计日志/API Key/定时任务仅管理员可见
+  // 导航菜单项：key 即路由路径；API Key 对管理员与开发者可见（开发者只看到本人创建的），
+  // 用户管理/审计日志/定时任务仅管理员可见
+  const isAdmin = user?.role === 'admin'
+  const canManageKeys = isAdmin || user?.role === 'developer'
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/agents', icon: <RobotOutlined />, label: '智能体' },
@@ -44,7 +47,9 @@ export default function AppLayout() {
     { key: '/knowledge-bases', icon: <DatabaseOutlined />, label: '知识库' },
     { key: '/workflows', icon: <PartitionOutlined />, label: '工作流' },
     { key: '/runs', icon: <HistoryOutlined />, label: '运行记录' },
-    ...(user?.role === 'admin' ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }, { key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }, { key: '/api-keys', icon: <KeyOutlined />, label: 'API Key' }, { key: '/schedules', icon: <ClockCircleOutlined />, label: '定时任务' }] : []),
+    ...(isAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: '用户管理' }, { key: '/audit-logs', icon: <AuditOutlined />, label: '审计日志' }] : []),
+    ...(canManageKeys ? [{ key: '/api-keys', icon: <KeyOutlined />, label: 'API Key' }] : []),
+    ...(isAdmin ? [{ key: '/schedules', icon: <ClockCircleOutlined />, label: '定时任务' }] : []),
   ]
 
   // 品牌 Logo 区：图标 + 平台名

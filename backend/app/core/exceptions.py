@@ -3,9 +3,11 @@ class BizError(Exception):
 
     携带 HTTP 状态码与可读信息，避免 service 层依赖 FastAPI 的 HTTPException。
     对外响应保持 FastAPI 默认的 {"detail": ...} 结构，前端契约不变。
+    headers 用于需要附带响应头的场景（如 429 的 Retry-After），由全局处理器原样透传。
     """
 
-    def __init__(self, status_code: int, detail: str):
+    def __init__(self, status_code: int, detail: str, headers: dict | None = None):
         self.status_code = status_code
         self.detail = detail
+        self.headers = headers
         super().__init__(detail)

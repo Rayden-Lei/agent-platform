@@ -12,8 +12,12 @@ import redis
 
 from app.config import settings
 from app.core import redis_client
+from app.core.exceptions import BizError
 
 WINDOW_SECONDS = 60
+HEADER_LIMIT = "X-RateLimit-Limit"
+HEADER_REMAINING = "X-RateLimit-Remaining"
+HEADER_RETRY_AFTER = "Retry-After"
 
 # 可注入的时钟：测试用固定时间避免跨窗口边界的偶发失败
 _clock = time.time
@@ -63,6 +67,22 @@ def check(scope: str, key: str, limit: int) -> RateLimitResult:
     if count > limit:
         return RateLimitResult(False, limit, 0, retry_after)
     return RateLimitResult(True, limit, limit - count, 0)
+
+
+def limit_exceeded(result: RateLimitResult) -> BizError:
+    """把超限结果变成统一的 429：可展示的提示 + Retry-After + X-RateLimit-*（Remaining 恒为 0）。
+
+    三个维度共用，调用方 `raise limit_exceeded(result)` 即可，不必各自拼文案与响应头。
+    """
+    return BizError(
+        429,
+        f"请求过于频繁，请 {result.retry_after} 秒后重试",
+        headers={
+            HEADER_RETRY_AFTER: str(result.retry_after),
+            HEADER_LIMIT: str(result.limit),
+            HEADER_REMAINING: "0",
+        },
+    )
 
 
 def status() -> dict:

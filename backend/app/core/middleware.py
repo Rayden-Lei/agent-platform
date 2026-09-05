@@ -9,6 +9,7 @@ import time
 
 from starlette.datastructures import Headers
 
+from app.core.rate_limiter import HEADER_LIMIT, HEADER_REMAINING
 from app.core.request_context import (
     REQUEST_ID_HEADER,
     new_request_id,
@@ -61,9 +62,13 @@ class RequestContextMiddleware:
             nonlocal status_code
             if message["type"] == "http.response.start":
                 status_code = message["status"]
-                message["headers"] = list(message.get("headers") or []) + [
-                    (REQUEST_ID_HEADER.encode(), request_id.encode()),
-                ]
+                extra = [(REQUEST_ID_HEADER.encode(), request_id.encode())]
+                # 通过限流的请求回写剩余额度，调用方可据此自适应；429 的头由异常处理器自己带，这里不会重复
+                rate_limit = scope["state"].get("rate_limit")
+                if rate_limit is not None and rate_limit.allowed:
+                    extra.append((HEADER_LIMIT.lower().encode(), str(rate_limit.limit).encode()))
+                    extra.append((HEADER_REMAINING.lower().encode(), str(rate_limit.remaining).encode()))
+                message["headers"] = list(message.get("headers") or []) + extra
             await send(message)
 
         try:

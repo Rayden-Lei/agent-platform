@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core import rate_limiter
 from app.db.models import ScheduledJob
 from app.rag.embeddings import MODE_MODEL, embedding_status
 from app.services import auth_service
@@ -46,6 +47,7 @@ def get_system_status(db: Session) -> dict:
     database = _database_status(db)
     embedding = embedding_status()
     login_guard = auth_service.login_guard_status()
+    rate_limit = rate_limiter.status()
     scheduler = _scheduler_status(db)
 
     degraded = []
@@ -53,6 +55,9 @@ def get_system_status(db: Session) -> dict:
         degraded.append({"item": "embedding", "message": embedding["reason"]})
     if not login_guard["enabled"]:
         degraded.append({"item": "login_guard", "message": f"登录限流未生效：{login_guard['reason']}"})
+    # 配置关闭（configured=False）是有意为之，不算降级；配置打开但 Redis 故障才是
+    if rate_limit["configured"] and not rate_limit["enabled"]:
+        degraded.append({"item": "rate_limit", "message": f"入口限流未生效：{rate_limit['reason']}"})
     if not database["ok"]:
         degraded.append({"item": "database", "message": f"数据库不可用：{database['reason']}"})
     if not scheduler["running"]:
@@ -66,6 +71,7 @@ def get_system_status(db: Session) -> dict:
         "database": database,
         "embedding": embedding,
         "login_guard": login_guard,
+        "rate_limit": rate_limit,
         "scheduler": scheduler,
         "degraded": degraded,
     }

@@ -98,9 +98,29 @@ export const createUser = (data: any) => client.post('/users', data)
 export const updateUser = (id: number, data: any) => client.put(`/users/${id}`, data)
 export const deleteUser = (id: number) => client.delete(`/users/${id}`)
 export const listAuditLogs = (params?: PageQuery) => get<Page>('/audit-logs', params)
-export const listApiKeys = (params?: PageQuery) => get<Page>('/api-keys', params)
+// API Key：developer 只能看到、操作本人创建的（服务端按归属过滤，他人的一律 404）
+export interface ApiKeyRow {
+  id: number
+  name: string
+  key_prefix: string
+  quota: number
+  used: number
+  is_enabled: boolean
+  allowed_ips: string[]          // 来源白名单（IP 或 CIDR），空 = 不限制
+  rate_limit_per_minute: number  // 每分钟限速，0 = 用服务端全局默认
+  last_used_at: string | null
+  created_at: string | null
+}
+export interface ApiKeyInput {
+  name: string
+  quota: number
+  allowed_ips: string[]
+  rate_limit_per_minute: number
+}
+export const listApiKeys = (params?: PageQuery) => get<Page<ApiKeyRow>>('/api-keys', params)
 // API Key 创建时服务端会返回一次明文 key，之后不再可查（见 ApiKeys 页）
-export const createApiKey = (data: any) => client.post('/api-keys', data)
+export const createApiKey = (data: ApiKeyInput) => client.post('/api-keys', data) as unknown as Promise<ApiKeyRow & { key: string }>
+export const updateApiKey = (id: number, data: Partial<ApiKeyInput>) => client.put(`/api-keys/${id}`, data) as unknown as Promise<ApiKeyRow>
 export const toggleApiKey = (id: number) => client.post(`/api-keys/${id}/toggle`)
 export const deleteApiKey = (id: number) => client.delete(`/api-keys/${id}`)
 export const listSchedules = (params?: PageQuery) => get<Page>('/schedules', params)
@@ -122,6 +142,8 @@ export interface SystemStatus {
   database: { ok: boolean; reason: string | null }
   embedding: EmbeddingStatus
   login_guard: { enabled: boolean; reason: string | null; max_fail: number; lock_seconds: number }
+  // 入口限流：configured=false 是配置关闭（不算降级），configured=true 且 enabled=false 是 Redis 故障
+  rate_limit: { enabled: boolean; configured: boolean; reason: string | null; api_key_per_minute: number; user_per_minute: number; ip_per_minute: number }
   scheduler: { running: boolean; registered_jobs: number; enabled_jobs: number }
   degraded: { item: string; message: string }[]
 }
