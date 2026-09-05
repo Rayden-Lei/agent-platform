@@ -1,13 +1,11 @@
 """入口治理基础（`12-差距补齐开发计划.md` 1.1）：IP 黑名单、客户端 IP 解析、CORS 白名单、审计来源 IP、配置校验。"""
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.config import Settings, settings
 from app.core.request_context import resolve_client_ip
 from app.db.models import AuditLog
 from app.db.session import SessionLocal
-from app.main import app
 
 DENIED_NET = "10.9.0.0/16"
 DENIED_IP = "10.9.1.7"
@@ -15,20 +13,9 @@ ALLOWED_IP = "10.10.0.1"
 LOGIN = {"username": "admin", "password": "admin123"}
 
 
-@pytest.fixture(autouse=True)
-def _app_started(client):
-    """确保 lifespan 已跑过（建表、初始化管理员）：本文件用自建的 TestClient 模拟不同来源，不经过 with。"""
-    yield
-
-
-def _client_from(ip: str) -> TestClient:
-    """以指定对端地址建 TestClient，用来模拟不同来源。"""
-    return TestClient(app, client=(ip, 50000))
-
-
-def test_denylist_blocks_login_but_not_health(monkeypatch):
+def test_denylist_blocks_login_but_not_health(monkeypatch, client_from):
     monkeypatch.setattr(settings, "IP_DENYLIST", DENIED_NET)
-    c = _client_from(DENIED_IP)
+    c = client_from(DENIED_IP)
     r = c.post("/api/v1/auth/login", json=LOGIN)
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == "来源 IP 被拒绝"
@@ -36,35 +23,35 @@ def test_denylist_blocks_login_but_not_health(monkeypatch):
     assert c.get("/health").status_code == 200
 
 
-def test_denylist_403_carries_cors_headers(monkeypatch):
+def test_denylist_403_carries_cors_headers(monkeypatch, client_from):
     """黑名单中间件在 CORS 内层：浏览器端拿到的是可读的 403，不是"网络错误"。"""
     monkeypatch.setattr(settings, "IP_DENYLIST", DENIED_NET)
     origin = settings.cors_origins[0]
-    r = _client_from(DENIED_IP).post("/api/v1/auth/login", json=LOGIN, headers={"Origin": origin})
+    r = client_from(DENIED_IP).post("/api/v1/auth/login", json=LOGIN, headers={"Origin": origin})
     assert r.status_code == 403, r.text
     assert r.headers.get("access-control-allow-origin") == origin
 
 
-def test_ip_outside_denylist_passes(monkeypatch):
+def test_ip_outside_denylist_passes(monkeypatch, client_from):
     monkeypatch.setattr(settings, "IP_DENYLIST", DENIED_NET)
-    r = _client_from(ALLOWED_IP).post("/api/v1/auth/login", json=LOGIN)
+    r = client_from(ALLOWED_IP).post("/api/v1/auth/login", json=LOGIN)
     assert r.status_code == 200, r.text
 
 
-def test_spoofed_forwarded_headers_ignored_without_trusted_proxy(monkeypatch):
+def test_spoofed_forwarded_headers_ignored_without_trusted_proxy(monkeypatch, client_from):
     """默认不信任转发头：直连方伪造 X-Forwarded-For / X-Real-IP 不能改变来源判定。"""
     monkeypatch.setattr(settings, "IP_DENYLIST", DENIED_NET)
     monkeypatch.setattr(settings, "TRUSTED_PROXY_ENABLED", False)
-    r = _client_from(ALLOWED_IP).post(
+    r = client_from(ALLOWED_IP).post(
         "/api/v1/auth/login", json=LOGIN, headers={"X-Forwarded-For": DENIED_IP, "X-Real-IP": DENIED_IP},
     )
     assert r.status_code == 200, r.text
 
 
-def test_trusted_proxy_uses_forwarded_headers(monkeypatch):
+def test_trusted_proxy_uses_forwarded_headers(monkeypatch, client_from):
     monkeypatch.setattr(settings, "IP_DENYLIST", DENIED_NET)
     monkeypatch.setattr(settings, "TRUSTED_PROXY_ENABLED", True)
-    r = _client_from("172.16.0.2").post(
+    r = client_from("172.16.0.2").post(
         "/api/v1/auth/login", json=LOGIN, headers={"X-Forwarded-For": f"{DENIED_IP}, 172.16.0.2"},
     )
     assert r.status_code == 403, r.text
@@ -91,9 +78,9 @@ def test_resolve_client_ip_without_trusted_proxy_ignores_headers(monkeypatch):
     assert resolve_client_ip(_scope({"X-Real-IP": "1.2.3.4"})) == "172.16.0.2"
 
 
-def test_audit_log_records_client_ip():
+def test_audit_log_records_client_ip(client_from):
     """审计的 ip 列由请求上下文自动填充，调用点不必逐个传。"""
-    r = _client_from("10.10.0.9").post("/api/v1/auth/login", json=LOGIN)
+    r = client_from("10.10.0.9").post("/api/v1/auth/login", json=LOGIN)
     assert r.status_code == 200, r.text
     db = SessionLocal()
     try:

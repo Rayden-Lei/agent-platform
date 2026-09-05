@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # 只有后端确实在反向代理之后才能打开：打开后会信任 X-Real-IP / X-Forwarded-For，
     # 能直连后端的调用方就可以伪造来源 IP 绕过黑白名单
     TRUSTED_PROXY_ENABLED: bool = False
+    # 入口限流（FR-025）：按自然分钟固定窗口计数；总开关关闭或 Redis 不可用时放行并报降级。
+    # 三个维度：API Key（单 Key 可覆盖）、登录用户、匿名 IP（仅登录接口）
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_API_KEY_PER_MINUTE: int = 60
+    RATE_LIMIT_USER_PER_MINUTE: int = 300
+    RATE_LIMIT_IP_PER_MINUTE: int = 20
 
     @field_validator("CORS_ORIGINS")
     @classmethod

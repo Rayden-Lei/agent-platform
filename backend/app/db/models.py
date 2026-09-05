@@ -195,6 +195,9 @@ class ApiKey(Base):
     is_enabled = Column(Boolean, nullable=False, default=True)
     quota = Column(Integer, nullable=False, default=1000)
     used = Column(Integer, nullable=False, default=0)
+    # 入口治理（FR-025 / FR-026）：来源 IP 白名单（IP 或 CIDR 列表，空 = 不限制）；每分钟限速（0 = 用全局默认）
+    allowed_ips = Column(JSONB, nullable=False, default=list)
+    rate_limit_per_minute = Column(Integer, nullable=False, default=0)
     last_used_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 

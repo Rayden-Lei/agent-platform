@@ -26,16 +26,18 @@ def get_current_user(
 ) -> User:
     """任何已登录身份：JWT 用户，或 API Key 的归属用户。鉴权来源记在 request.state.auth_via。
 
-    同时把 API Key 的 id 记到 request.state.api_key_id（供审计/配额等场景使用）；
+    同时把 API Key 的 id 记到 request.state.api_key_id（供审计/配额等场景使用），
+    限流结果记到 request.state.rate_limit（中间件据此回写 X-RateLimit-* 响应头）；
     凭证缺失、JWT 无效/过期抛 401，用户不存在或停用抛 403。
     """
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未认证")
     token = credentials.credentials
     if token.startswith(API_KEY_PREFIX):
-        user, api_key = api_key_service.authenticate(db, token)
+        user, api_key, rate_limit = api_key_service.authenticate(db, token)
         request.state.auth_via = "api_key"
         request.state.api_key_id = api_key.id
+        request.state.rate_limit = rate_limit
         return user
     try:
         payload = decode_token(token)

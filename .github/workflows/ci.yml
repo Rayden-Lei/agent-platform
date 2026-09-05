@@ -40,6 +40,8 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: ci-test-secret
           AES_KEY: ci-test-aes-key
+          # 测试默认关闭入口限流（与 tests/conftest.py 一致）；限流用例自行用 monkeypatch 打开
+          RATE_LIMIT_ENABLED: "false"
 
   frontend-build:
     runs-on: ubuntu-latest
