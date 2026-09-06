@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button, Popconfirm, Progress, Select, Space, Table, Tag, Tooltip, Typography, Upload, message } from 'antd'
-import { FileTextOutlined, PlayCircleOutlined, RedoOutlined, UploadOutlined } from '@ant-design/icons'
+import { FileTextOutlined, PlayCircleOutlined, RedoOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons'
 import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
 import { useBatchAction } from '../../hooks/useBatchAction'
@@ -93,6 +94,9 @@ export default function DocTable({ kbId, onChanged }: Props) {
         <SearchInput value={q} onChange={setQ} placeholder="搜索文件名" width={200} />
         <Select allowClear placeholder="状态" style={{ width: 110 }} value={status} onChange={setStatus} options={statusOptions('document')} />
         {processing && <span style={{ fontSize: 12, color: '#2563eb' }}>有文档处理中，每 3 秒自动刷新</span>}
+        <Tooltip title="调整并发向量化请求数、每批切片数等导入参数（管理员可改）">
+          <Link to="/system-settings"><Button size="small" type="link" icon={<SettingOutlined />}>导入设置</Button></Link>
+        </Tooltip>
       </FilterBar>
       <BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
         { key: 'reprocess', label: '批量重新解析', confirm: `重新解析选中的 ${list.selectedKeys.length} 个文档？旧切片会被清掉`, run: () => batch.run(() => batchDocs(kbId, list.selectedKeys, 'reprocess'), '已排队重新解析') },

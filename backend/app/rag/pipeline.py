@@ -7,7 +7,10 @@ import os
 import socket
 import tempfile
 import threading
-from datetime import datetime, timezone
+import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from sqlalchemy import func
@@ -18,14 +21,15 @@ from app.db.session import SessionLocal
 from app.rag.embeddings import embed_texts_detailed
 from app.rag.minio_client import download_file
 from app.rag.parser import parse_document
+from app.services import settings_service
 
 logger = logging.getLogger(__name__)
 
 _CN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 # 表格行里字段之间的分隔（与 parser.parse_table 一致）
 _FIELD_SEP = " | "
-# 向量化 + 写库按此批量推进并逐批提交：几万行的表格不能攒到最后一次 commit（内存、失败回滚、看不到进度）
-INGEST_BATCH_SIZE = 100
+# 向量化 + 写库按批推进并逐批提交（几万行的表格不能攒到最后一次 commit）；批大小、并发请求数、写库缓冲
+# 都是运行时参数（settings_service.ingest_options，页面"导入设置"），每篇文档开始处理时读一次
 # 本节点标识：共享库上本机与服务器各跑一个后端，文档只由创建它的节点处理与续处理
 NODE_NAME = socket.gethostname()[:128]
 # 文档处理的并发闸门：多篇同时上传时按 INGEST_CONCURRENCY 排队处理（默认串行），等待中的文档状态仍是 uploading
@@ -173,19 +177,33 @@ def _touch_heartbeat(doc_id: int) -> None:
 
 
 def resume_stalled_documents(schedule) -> list:
-    """后端启动时找出本节点上未处理完的文档（uploading / parsing / chunking），逐篇交给 schedule 续处理。返回文档 id 列表。
+    """后端启动时找出**确实已经中断**的文档，逐篇交给 schedule 续处理。返回被续处理的文档 id 列表。
 
-    只认 processing_node 等于本机的：共享库上另一台后端正在处理的文档不能抢。
+    两个条件缺一不可：
+    1. `processing_node` 是本机 —— 共享库上另一台后端的文档不能抢；
+    2. `heartbeat_at` 已经超过 `INGEST_STALL_SECONDS` 没更新 —— **同一台机器上可能还有别的进程正在处理它**
+       （开发机上的另一个后端、pytest、脚本）。2026-09-06 就是漏了这条：跑测试时启动的进程把用户正在导入的文档
+       抢过来按测试桩重新解析，删掉了一万九千片真实切片。心跳新鲜 = 有活着的进程在写，一律不碰。
     """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.INGEST_STALL_SECONDS)
     db = SessionLocal()
     try:
-        ids = [d.id for d in db.query(Document).filter(Document.status.in_(("uploading", "parsing", "chunking")), Document.processing_node == NODE_NAME).order_by(Document.id).all()]
+        candidates = db.query(Document).filter(
+            Document.status.in_(("uploading", "parsing", "chunking")),
+            Document.processing_node == NODE_NAME,
+        ).order_by(Document.id).all()
+        stalled, alive = [], []
+        for doc in candidates:
+            last = doc.heartbeat_at or doc.processing_started_at or doc.created_at
+            (stalled if last is None or last < cutoff else alive).append(doc.id)
     finally:
         db.close()
-    for doc_id in ids:
-        logger.warning("文档 %s 上次处理被中断，启动后自动续处理", doc_id)
+    if alive:
+        logger.info("跳过 %d 篇心跳仍在更新的文档（另有进程正在处理）：%s", len(alive), alive)
+    for doc_id in stalled:
+        logger.warning("文档 %s 上次处理被中断（心跳停在 %s 秒前），启动后自动续处理", doc_id, settings.INGEST_STALL_SECONDS)
         schedule(doc_id)
-    return ids
+    return stalled
 
 
 def _resume_start(db, doc: Document, chunks: list, resume: bool) -> int:
@@ -200,6 +218,72 @@ def _resume_start(db, doc: Document, chunks: list, resume: bool) -> int:
         db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc.id).delete(synchronize_session=False)
         db.commit()
     return 0
+
+
+def _write_batch(db, doc: Document, kb: KnowledgeBase, start: int, batch: list, embedded, degraded_models: set) -> None:
+    """把一批已向量化的切片写库并提交，chunk_count / heartbeat_at 随批推进（列表页据此显示进度）。"""
+    if embedded.mode != "model":
+        degraded_models.add(embedded.model)
+    for offset, (chunk, emb) in enumerate(zip(batch, embedded.vectors)):
+        db.add(DocumentChunk(
+            doc_id=doc.id,
+            kb_id=doc.kb_id,
+            content=chunk["content"],
+            embedding=emb,
+            meta={
+                **chunk["meta"],
+                "index": start + offset,
+                # chunk 级权限标签（冗余存权限真值快照，供检索过滤与审计）
+                "kb_id": kb.id,
+                "doc_id": doc.id,
+                "is_public": kb.is_public,
+                "visible_roles": list(kb.visible_roles or []),
+                "policy_version": kb.policy_version or 1,
+                # 实际使用的向量后端快照：换模型或降级后，能区分哪些切片需要重建索引
+                "embedding_mode": embedded.mode,
+                "embedding_model": embedded.model,
+                "embedding_dim": embedded.dim,
+            },
+            token_count=max(1, len(chunk["content"])),
+        ))
+    doc.chunk_count = start + len(batch)
+    doc.heartbeat_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def _embed_and_write(db, doc: Document, kb: KnowledgeBase, chunks: list, start_at: int, opts, degraded_models: set) -> int:
+    """从第 start_at 片起按 opts 流水化入库，返回本次写入的切片数。
+
+    线程池只做向量化（不碰 db）；主线程按提交顺序取最早的一批写库。窗口满了才等最早的一批，
+    所以最多有 embed_concurrency + write_buffer 批在飞（内存有界：每批 batch_size 条向量）。
+    任何一批写库失败：取消还没开始的批，已提交的批保留（续处理接着做），异常交给 _process_document 落 failed。
+    """
+    written = 0
+    pending: deque = deque()
+    max_inflight = opts.embed_concurrency + opts.write_buffer
+    pool = ThreadPoolExecutor(max_workers=opts.embed_concurrency, thread_name_prefix=f"embed-{doc.id}")
+
+    def _flush_oldest() -> None:
+        nonlocal written
+        start, batch, future = pending.popleft()
+        _write_batch(db, doc, kb, start, batch, future.result(), degraded_models)
+        written += len(batch)
+        if (start // opts.batch_size) % 20 == 19:
+            logger.info("文档 %s 入库进度 %d / %d", doc.id, doc.chunk_count, len(chunks))
+
+    try:
+        for start in range(start_at, len(chunks), opts.batch_size):
+            batch = chunks[start:start + opts.batch_size]
+            texts = [c["content"] for c in batch]
+            pending.append((start, batch, pool.submit(embed_texts_detailed, texts, opts.embedding_request_size)))
+            if len(pending) >= max_inflight:
+                _flush_oldest()
+        while pending:
+            _flush_oldest()
+    finally:
+        # 正常结束时所有批都已完成，这里只是回收线程；失败时取消尚未开始的批，正在跑的几批算完即止
+        pool.shutdown(wait=False, cancel_futures=True)
+    return written
 
 
 def _process_document(doc_id: int, resume: bool = False) -> None:
@@ -241,40 +325,13 @@ def _process_document(doc_id: int, resume: bool = False) -> None:
                 logger.info("文档 %s 解析后无有效切片，标记为 ready", doc_id)
                 return
 
-            # 逐批向量化并提交：chunk_count 随批推进，列表页能看到进度；中途失败已提交的批不丢，重新解析时整体清掉
+            # 向量化与写库流水化：线程池按 embed_concurrency 并发请求向量服务，主线程按批的先后顺序写库提交。
+            # 必须按顺序提交 —— 续处理靠"已入库的切片数"当起点，乱序提交会让这个数对不上实际缺口。
+            # 同时在飞的批数 = 并发数 + 写库缓冲：写库慢时模型不停，模型慢时写库等；两者都为最小值即退化成原来的串行。
+            opts = settings_service.ingest_options(db)
             degraded_models: set = set()
-            for start in range(start_at, len(chunks), INGEST_BATCH_SIZE):
-                batch = chunks[start:start + INGEST_BATCH_SIZE]
-                embedded = embed_texts_detailed([c["content"] for c in batch])
-                if embedded.mode != "model":
-                    degraded_models.add(embedded.model)
-                for offset, (chunk, emb) in enumerate(zip(batch, embedded.vectors)):
-                    db.add(DocumentChunk(
-                        doc_id=doc.id,
-                        kb_id=doc.kb_id,
-                        content=chunk["content"],
-                        embedding=emb,
-                        meta={
-                            **chunk["meta"],
-                            "index": start + offset,
-                            # chunk 级权限标签（冗余存权限真值快照，供检索过滤与审计）
-                            "kb_id": kb.id,
-                            "doc_id": doc.id,
-                            "is_public": kb.is_public,
-                            "visible_roles": list(kb.visible_roles or []),
-                            "policy_version": kb.policy_version or 1,
-                            # 实际使用的向量后端快照：换模型或降级后，能区分哪些切片需要重建索引
-                            "embedding_mode": embedded.mode,
-                            "embedding_model": embedded.model,
-                            "embedding_dim": embedded.dim,
-                        },
-                        token_count=max(1, len(chunk["content"])),
-                    ))
-                doc.chunk_count = start + len(batch)
-                doc.heartbeat_at = datetime.now(timezone.utc)
-                db.commit()
-                if (start // INGEST_BATCH_SIZE) % 20 == 19:
-                    logger.info("文档 %s 入库进度 %d / %d", doc_id, doc.chunk_count, len(chunks))
+            started = time.perf_counter()
+            written = _embed_and_write(db, doc, kb, chunks, start_at, opts, degraded_models)
             if degraded_models:
                 # 降级入库的切片检索质量不如真实向量，meta 里记下来，排查"检索不准"时能立刻定位
                 logger.warning("文档 %s 有切片使用 %s 向量入库（降级）", doc_id, "/".join(sorted(degraded_models)))
@@ -283,7 +340,10 @@ def _process_document(doc_id: int, resume: bool = False) -> None:
             doc.error = None
             doc.finished_at = datetime.now(timezone.utc)
             db.commit()
-            logger.info("文档 %s 处理完成：%d 个切片，向量后端 %s", doc_id, len(chunks), "/".join(sorted(degraded_models)) if degraded_models else "model")
+            elapsed = max(time.perf_counter() - started, 1e-6)
+            logger.info("文档 %s 处理完成：%d 个切片（本次入库 %d 片，%.1f 片/秒，并发 %d × 每请求 %d 条，批 %d，缓冲 %d），向量后端 %s",
+                        doc_id, len(chunks), written, written / elapsed, opts.embed_concurrency, opts.embedding_request_size, opts.batch_size, opts.write_buffer,
+                        "/".join(sorted(degraded_models)) if degraded_models else "model")
     except Exception as e:
         logger.exception("文档 %s 处理失败", doc_id)
         # 异常可能发生在 commit 中途，事务已不可用，必须先回滚再重新取一次文档写失败状态

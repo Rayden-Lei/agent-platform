@@ -23,6 +23,7 @@ const AuditLogs = lazy(() => import('./pages/AuditLogs'))
 const ApiKeys = lazy(() => import('./pages/ApiKeys'))
 const Schedules = lazy(() => import('./pages/Schedules'))
 const PromptTemplates = lazy(() => import('./pages/PromptTemplates'))
+const SystemSettings = lazy(() => import('./pages/SystemSettings'))
 
 // 路由守卫：未登录（无 token）时重定向到 /login，已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="api-keys" element={<ApiKeys />} />
         <Route path="schedules" element={<Schedules />} />
+        <Route path="system-settings" element={<SystemSettings />} />
       </Route>
       {/* 兜底：未匹配的路径统一回到首页 */}
       <Route path="*" element={<Navigate to="/" replace />} />

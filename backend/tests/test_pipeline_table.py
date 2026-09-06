@@ -6,10 +6,12 @@ import math
 
 import pytest
 
+from app.config import settings
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
 from app.rag import pipeline
 from app.rag.embeddings import EmbeddingResult
+from app.services import settings_service
 
 ROW_META = {"type": "table", "row": 2}
 
@@ -54,6 +56,24 @@ def test_table_chunking_uses_row_splitter(monkeypatch):
 
 
 @pytest.fixture
+def ingest_opts(monkeypatch):
+    """固定住本次入库用的参数，绕开 system_settings 表。
+
+    开发库是共享的：使用者可能在页面上调过并发或批大小，用例不能受它影响，更不能去改它
+    （2026-09-06 教训）。参数从库到管道的链路由 test_ingest_settings_from_page_take_effect 单独验证。
+    默认给串行（并发 1、无缓冲），断言批次顺序与"第几批失败"的用例需要这个确定性。
+    """
+    def _set(batch_size=100, embed_concurrency=1, write_buffer=0, embedding_request_size=20):
+        opts = settings_service.IngestOptions(
+            batch_size=batch_size, embed_concurrency=embed_concurrency,
+            write_buffer=write_buffer, embedding_request_size=embedding_request_size)
+        monkeypatch.setattr(settings_service, "ingest_options", lambda db: opts)
+        return opts
+
+    return _set
+
+
+@pytest.fixture
 def kb_doc(client, auth_headers):
     """一条待处理的文档行（不真的上传文件）。"""
     kb_id = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-pipeline-kb", "chunk_size": 200, "chunk_overlap": 10}).json()["id"]
@@ -71,15 +91,15 @@ def kb_doc(client, auth_headers):
         client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
 
 
-def test_ingestion_commits_in_batches_and_tracks_progress(monkeypatch, kb_doc):
+def test_ingestion_commits_in_batches_and_tracks_progress(monkeypatch, kb_doc, ingest_opts):
     kb_id, doc_id = kb_doc
     total = 250
-    monkeypatch.setattr(pipeline, "INGEST_BATCH_SIZE", 100)
+    ingest_opts(batch_size=100)
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i} | 规格: {i}mg", "meta": {"type": "table", "row": i + 2}} for i in range(total)])
     batches: list = []
 
-    def _embed(texts):
+    def _embed(texts, request_size=None):
         batches.append(len(texts))
         return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
 
@@ -101,14 +121,14 @@ def test_ingestion_commits_in_batches_and_tracks_progress(monkeypatch, kb_doc):
         db.close()
 
 
-def test_ingestion_failure_mid_way_keeps_committed_batches_and_marks_failed(monkeypatch, kb_doc):
+def test_ingestion_failure_mid_way_keeps_committed_batches_and_marks_failed(monkeypatch, kb_doc, ingest_opts):
     kb_id, doc_id = kb_doc
-    monkeypatch.setattr(pipeline, "INGEST_BATCH_SIZE", 10)
+    ingest_opts(batch_size=10)
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {"type": "table", "row": i + 2}} for i in range(35)])
     calls = {"n": 0}
 
-    def _embed(texts):
+    def _embed(texts, request_size=None):
         calls["n"] += 1
         if calls["n"] == 3:
             raise RuntimeError("向量服务断了")
@@ -132,8 +152,6 @@ def test_documents_are_processed_one_at_a_time(monkeypatch, client, auth_headers
     import threading
     import time as _time
 
-    from app.config import settings
-
     monkeypatch.setattr(settings, "INGEST_CONCURRENCY", 1)
     monkeypatch.setattr(pipeline, "_ingest_slots", None)
     kb_id = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-queue-kb", "chunk_size": 200, "chunk_overlap": 0}).json()["id"]
@@ -147,7 +165,7 @@ def test_documents_are_processed_one_at_a_time(monkeypatch, client, auth_headers
         db.close()
     windows: dict = {}
 
-    def _embed(texts):
+    def _embed(texts, request_size=None):
         start = _time.perf_counter()
         _time.sleep(0.4)
         windows[threading.get_ident()] = (start, _time.perf_counter())
@@ -180,7 +198,6 @@ def test_queued_document_keeps_heartbeat_while_waiting(monkeypatch, client, auth
     import time as _time
     from datetime import datetime, timedelta, timezone
 
-    from app.config import settings
     from app.services.kb_service import is_stalled
 
     monkeypatch.setattr(settings, "INGEST_CONCURRENCY", 1)
@@ -197,7 +214,7 @@ def test_queued_document_keeps_heartbeat_while_waiting(monkeypatch, client, auth
     finally:
         db.close()
 
-    def _slow_embed(texts):
+    def _slow_embed(texts, request_size=None):
         _time.sleep(4.0)  # 第一篇占住闸门 4 秒，第二篇在这期间一直排队
         return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
 
@@ -237,16 +254,16 @@ def test_queued_document_keeps_heartbeat_while_waiting(monkeypatch, client, auth
         client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
 
 
-def test_resume_continues_from_committed_batches_without_duplicates(monkeypatch, kb_doc):
+def test_resume_continues_from_committed_batches_without_duplicates(monkeypatch, kb_doc, ingest_opts):
     """向量化中途失败 → 续处理只补剩下的批，切片不重复、序号连续，resume_offset 记起点。"""
     kb_id, doc_id = kb_doc
     total = 35
-    monkeypatch.setattr(pipeline, "INGEST_BATCH_SIZE", 10)
+    ingest_opts(batch_size=10)
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {"type": "table", "row": i + 2}} for i in range(total)])
     calls = {"n": 0}
 
-    def _embed_then_fail(texts):
+    def _embed_then_fail(texts, request_size=None):
         calls["n"] += 1
         if calls["n"] == 3:
             raise RuntimeError("向量服务断了")
@@ -255,7 +272,7 @@ def test_resume_continues_from_committed_batches_without_duplicates(monkeypatch,
     monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed_then_fail)
     pipeline.process_document(doc_id)
     sizes: list = []
-    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
     pipeline.process_document(doc_id, resume=True)
     assert sizes == [10, 5]  # 只补 20 之后的 15 片
     db = SessionLocal()
@@ -269,15 +286,15 @@ def test_resume_continues_from_committed_batches_without_duplicates(monkeypatch,
         db.close()
 
 
-def test_resume_restarts_when_chunk_total_changed(monkeypatch, kb_doc):
+def test_resume_restarts_when_chunk_total_changed(monkeypatch, kb_doc, ingest_opts):
     """切片参数改了导致总数不一致：续处理清掉旧切片从 0 开始，不会拼出错位的切片。"""
     kb_id, doc_id = kb_doc
-    monkeypatch.setattr(pipeline, "INGEST_BATCH_SIZE", 10)
+    ingest_opts(batch_size=10)
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {}} for i in range(30)])
     calls = {"n": 0}
 
-    def _embed_then_fail(texts):
+    def _embed_then_fail(texts, request_size=None):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("断")
@@ -287,7 +304,7 @@ def test_resume_restarts_when_chunk_total_changed(monkeypatch, kb_doc):
     pipeline.process_document(doc_id)  # 落了 10 片，chunk_total=30
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {}} for i in range(25)])  # 总数变了
     sizes: list = []
-    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
     pipeline.process_document(doc_id, resume=True)
     assert sizes == [10, 10, 5]  # 从头重做
     db = SessionLocal()
@@ -341,22 +358,115 @@ def test_resume_api_rejects_live_processing_and_accepts_failed_or_stalled(client
     assert client.post(f"/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/resume", headers=auth_headers).status_code == 400  # 已完成的走重新解析
 
 
-def test_startup_resume_only_picks_own_node_documents(client, auth_headers):
+def test_startup_resume_skips_other_nodes_and_live_documents(client, auth_headers):
+    """启动自动续处理只挑"确实断了"的：别的节点的、已完成的、以及**心跳还在跳的**都不能碰。
+
+    最后一条是 2026-09-06 的事故回归用例：同一台机器上跑 pytest 时，进程启动把用户正在导入的文档抢过去，
+    按测试桩重新解析后总数对不上，删掉了 1.9 万片真实切片。"""
+    from datetime import datetime, timedelta, timezone
+
     kb_id = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-resume-kb", "chunk_size": 200, "chunk_overlap": 0}).json()["id"]
+    now = datetime.now(timezone.utc)
     db = SessionLocal()
     try:
-        mine = Document(kb_id=kb_id, name="mine.txt", file_type="txt", file_path="pytest/none", status="chunking", processing_node=pipeline.NODE_NAME)
+        mine = Document(kb_id=kb_id, name="mine.txt", file_type="txt", file_path="pytest/none", status="chunking",
+                        processing_node=pipeline.NODE_NAME, heartbeat_at=now - timedelta(seconds=settings.INGEST_STALL_SECONDS + 60))
+        live = Document(kb_id=kb_id, name="live.txt", file_type="txt", file_path="pytest/none", status="chunking",
+                        processing_node=pipeline.NODE_NAME, heartbeat_at=now)  # 另一个进程正在写
         other = Document(kb_id=kb_id, name="other.txt", file_type="txt", file_path="pytest/none", status="chunking", processing_node="another-host")
         done = Document(kb_id=kb_id, name="done.txt", file_type="txt", file_path="pytest/none", status="ready", processing_node=pipeline.NODE_NAME)
-        db.add_all([mine, other, done])
+        db.add_all([mine, live, other, done])
         db.commit()
-        mine_id, other_id, done_id = mine.id, other.id, done.id
+        mine_id, live_id, other_id, done_id = mine.id, live.id, other.id, done.id
     finally:
         db.close()
     scheduled: list = []
     try:
         ids = pipeline.resume_stalled_documents(scheduled.append)
-        assert mine_id in ids and scheduled.count(mine_id) == 1
+        assert mine_id in ids and scheduled.count(mine_id) == 1  # 心跳早就停了：确实中断，续
+        assert live_id not in ids and live_id not in scheduled  # 心跳新鲜：有活着的进程在写，不许抢
         assert other_id not in ids and done_id not in ids  # 别的节点的、已完成的都不碰
     finally:
         client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)
+
+
+def _parallel_embed_stub(sleep_seconds: float = 0.15):
+    """向量化打桩：记录每次调用的并发峰值与批大小，返回 (stub, 统计字典)。"""
+    import threading
+    import time as _time
+
+    state = {"running": 0, "peak": 0, "sizes": [], "lock": threading.Lock()}
+
+    def _embed(texts, request_size=None):
+        with state["lock"]:
+            state["running"] += 1
+            state["peak"] = max(state["peak"], state["running"])
+            state["sizes"].append((len(texts), request_size))
+        try:
+            _time.sleep(sleep_seconds)
+            return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        finally:
+            with state["lock"]:
+                state["running"] -= 1
+
+    return _embed, state
+
+
+def test_embedding_requests_run_in_parallel_and_writes_stay_ordered(monkeypatch, kb_doc, ingest_opts):
+    """并发向量化：多个请求同时在飞，但写库仍按批次顺序提交 —— 续处理靠"已入库片数"当起点，乱序会算错缺口。"""
+    kb_id, doc_id = kb_doc
+    total = 80
+    ingest_opts(batch_size=10, embed_concurrency=4, write_buffer=4, embedding_request_size=25)
+    monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
+    monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {"type": "table", "row": i + 2}} for i in range(total)])
+    stub, state = _parallel_embed_stub()
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", stub)
+
+    pipeline.process_document(doc_id)
+
+    assert state["peak"] >= 2, "并发参数没生效，仍是一次只发一个请求"
+    assert state["peak"] <= 4, "在飞的向量化请求数超过了配置的并发数"
+    assert {size for size, _ in state["sizes"]} == {10}  # 每批 10 片
+    assert {req for _, req in state["sizes"]} == {25}  # 每次请求条数按配置透传给向量化
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        assert doc.status == "ready" and doc.chunk_count == total
+        rows = db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).order_by(DocumentChunk.id).all()
+        # 按写入顺序（id 递增）读出来，切片序号必须是 0..total-1：说明并发向量化后仍是顺序提交
+        assert [r.meta["index"] for r in rows] == list(range(total))
+    finally:
+        db.close()
+
+
+def test_ingest_settings_from_page_take_effect(monkeypatch, client, auth_headers, kb_doc):
+    """页面改的参数存进 system_settings，下一篇文档处理时立刻按新值跑（不用重启后端）。
+
+    这条用例走真实的库读取路径，所以不能用 ingest_opts 打桩。改完必须**还原成运行前的样子**：
+    使用者可能正按自己调的参数导入，既不能留下测试值，也不能一律清空（2026-09-06 抹掉过使用者刚设的值）。
+    """
+    from app.db.models import SystemSetting
+
+    kb_id, doc_id = kb_doc
+    monkeypatch.setattr(settings, "INGEST_EMBED_CONCURRENCY", 8)  # .env 默认值，应当被库里的 1 覆盖
+    keys = ("ingest_embed_concurrency", "ingest_write_buffer", "ingest_batch_size")
+    db = SessionLocal()
+    try:
+        before = {r.key: r.value for r in db.query(SystemSetting).filter(SystemSetting.key.in_(keys)).all()}
+    finally:
+        db.close()
+    r = client.put("/api/v1/system/settings", headers=auth_headers,
+                   json={"values": {"ingest_embed_concurrency": 1, "ingest_write_buffer": 0, "ingest_batch_size": 10}})
+    assert r.status_code == 200, r.text
+    try:
+        monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
+        monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {}} for i in range(40)])
+        stub, state = _parallel_embed_stub(sleep_seconds=0.05)
+        monkeypatch.setattr(pipeline, "embed_texts_detailed", stub)
+        pipeline.process_document(doc_id)
+        assert state["peak"] == 1  # 库里的并发 1 生效，而不是 .env 的 8
+        assert {size for size, _ in state["sizes"]} == {10}  # 批大小同样来自库
+    finally:
+        # None = 删掉该行；原来就有值的写回原值
+        client.put("/api/v1/system/settings", headers=auth_headers,
+                   json={"values": {k: before.get(k) for k in keys}})

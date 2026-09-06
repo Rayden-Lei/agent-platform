@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # 处理中的文档多久没有心跳视为中断：可以在页面"继续处理"；后端启动时自动续本机未完成的文档
     INGEST_STALL_SECONDS: int = 180
     INGEST_AUTO_RESUME: bool = True
+    # 入库流水线的调优参数：这里是 .env 默认值，页面"导入设置"改的值存 system_settings 表并优先生效（对下一篇开始处理的文档）
+    INGEST_BATCH_SIZE: int = 100  # 每批切片数：一批向量化完成后一次提交，chunk_count 按批推进
+    INGEST_EMBED_CONCURRENCY: int = 4  # 同时向 embedding 服务发的请求数（每个请求 EMBEDDING_REQUEST_SIZE 条）
+    INGEST_WRITE_BUFFER: int = 4  # 向量化完成、等待写库的批数上限：向量化与写库流水化，0 = 向量化完一批写一批
+    EMBEDDING_REQUEST_SIZE: int = 20  # 单次 embedding 请求的条数上限（阿里云百炼 20；本地 oMLX 可更大）
     # Rerank 模型（FR-032）：provider 空 = 关闭（词法重排）；cohere = Cohere / Jina / TEI / vLLM / oMLX 共用的 POST /rerank；dashscope = 阿里云百炼
     RERANK_PROVIDER: str = ""
     RERANK_API_BASE: str = ""

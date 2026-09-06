@@ -4,11 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import defer
 
-from app.config import settings
 from app.db.models import Document, DocumentChunk
 from app.db.session import SessionLocal
 from app.rag.embeddings import embed_query
 from app.rag.rerank import MODE_MODEL, extract_keywords, rerank, rerank_status
+from app.services.settings_service import runtime_value
 
 RRF_K = 60  # RRF 倒排融合常数
 
@@ -201,7 +201,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list 
     """
     ranked = rerank(query, candidates, keywords=keywords)
     if ranked and ranked[0].get("rerank_mode") == MODE_MODEL:
-        ranked = _prune(ranked, min_score=settings.RERANK_MIN_SCORE, gap_ratio=settings.RERANK_GAP_RATIO)
+        ranked = _prune(ranked, min_score=runtime_value("rerank_min_score"), gap_ratio=runtime_value("rerank_gap_ratio"))
     else:
         ranked = _prune(ranked)
     ranked = _dedupe(ranked)
@@ -216,7 +216,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list 
 
 def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> list:
     """RRF 融合召回 + 重排淘汰 + 权限过滤，返回完整文本块（content/score/doc_id/doc_name/meta）。"""
-    top_k = top_k or settings.RAG_TOP_K
+    top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
         candidates = _collect_candidates(db, kb_id, query, top_k, mode, role)
@@ -228,7 +228,7 @@ def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", ro
 
 def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> dict:
     """检索 + 召回质量统计（含 RRF、淘汰、鉴权剔除数），供评测/调试接口使用。"""
-    top_k = top_k or settings.RAG_TOP_K
+    top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
         timings: dict = {}

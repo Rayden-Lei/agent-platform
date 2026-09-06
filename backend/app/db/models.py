@@ -273,3 +273,15 @@ class RunNode(Base):
     error = Column(Text, nullable=True)
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class SystemSetting(Base):
+    """运行时可调参数（页面"导入设置"可改）：键值对，规格 / 范围 / 默认值在 services/settings_service.SPECS。
+
+    只收调优型参数（导入并发、批大小），密钥与地址这类环境相关的仍走 .env。没存过的键用 .env 默认值。
+    """
+    __tablename__ = "system_settings"
+    key = Column(String(64), primary_key=True)
+    value = Column(JSONB, nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_by = Column(String(64), nullable=True)  # 操作人用户名快照，审计明细另有完整记录

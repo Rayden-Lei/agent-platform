@@ -6,6 +6,7 @@ hash 兜底只保证"检索链路不中断"，语义召回能力远低于真实�
 """
 import hashlib
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -21,6 +22,8 @@ MODE_HASH = "hash"    # 本地 hash 兜底
 HASH_MODEL_NAME = "hash-fallback"
 
 _embeddings = None
+# 入库流水线会从多个线程同时调 get_embeddings()：懒初始化加锁，避免并发构造出多个客户端
+_embeddings_lock = threading.Lock()
 # 最近一次向量模型调用失败的记录；调用成功后清空，因此非空即代表"当前处于故障降级"
 _last_failure: dict | None = None
 
@@ -37,19 +40,20 @@ class EmbeddingResult:
 
 def get_embeddings():
     global _embeddings
-    if _embeddings is None:
-        _embeddings = OpenAIEmbeddings(
-            model=settings.EMBEDDING_MODEL,
-            api_key=settings.EMBEDDING_API_KEY or "dummy",
-            base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
-            dimensions=settings.EMBEDDING_DIM,
-            chunk_size=20,  # 阿里云百炼 embedding 单次上限 20 条
-            check_embedding_ctx_length=False,  # 直接传原始文本，不做 tokenize（阿里云不支持 token 数组）
-            # 本机 oMLX 这类回环地址不走代理环境变量（否则开发机的 HTTP_PROXY 会把请求拦成 502）
-            http_client=sync_client(settings.EMBEDDING_API_BASE, 60),
-            http_async_client=async_client(settings.EMBEDDING_API_BASE, 60),
-        )
-    return _embeddings
+    with _embeddings_lock:
+        if _embeddings is None:
+            _embeddings = OpenAIEmbeddings(
+                model=settings.EMBEDDING_MODEL,
+                api_key=settings.EMBEDDING_API_KEY or "dummy",
+                base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
+                dimensions=settings.EMBEDDING_DIM,
+                chunk_size=settings.EMBEDDING_REQUEST_SIZE,  # 单次请求条数上限（阿里云百炼 20）；入库时可按页面设置逐次覆盖
+                check_embedding_ctx_length=False,  # 直接传原始文本，不做 tokenize（阿里云不支持 token 数组）
+                # 本机 oMLX 这类回环地址不走代理环境变量（否则开发机的 HTTP_PROXY 会把请求拦成 502）
+                http_client=sync_client(settings.EMBEDDING_API_BASE, 60),
+                http_async_client=async_client(settings.EMBEDDING_API_BASE, 60),
+            )
+        return _embeddings
 
 
 def is_configured() -> bool:
@@ -93,11 +97,15 @@ def _hash_result(texts: list) -> EmbeddingResult:
     return EmbeddingResult([_hash_embedding(t, dim) for t in texts], MODE_HASH, HASH_MODEL_NAME, dim)
 
 
-def embed_texts_detailed(texts: list) -> EmbeddingResult:
-    """批量向量化，同时返回实际使用的后端（供写入切片 meta）。"""
+def embed_texts_detailed(texts: list, request_size: int | None = None) -> EmbeddingResult:
+    """批量向量化，同时返回实际使用的后端（供写入切片 meta）。
+
+    request_size：单次请求携带的条数（超过就串行分多次），不传用 EMBEDDING_REQUEST_SIZE；入库流水线按页面设置传入。
+    """
     if is_configured():
         try:
-            vectors = get_embeddings().embed_documents(texts)
+            # 只在调用方明确指定时才传 chunk_size：不传等价于用客户端自身的默认值
+            vectors = get_embeddings().embed_documents(texts, **({"chunk_size": request_size} if request_size else {}))
             _clear_failure()
             return EmbeddingResult(vectors, MODE_MODEL, settings.EMBEDDING_MODEL, settings.EMBEDDING_DIM)
         except Exception as e:

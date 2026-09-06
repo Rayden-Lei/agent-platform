@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ApiOutlined, AuditOutlined, ClockCircleOutlined, DashboardOutlined, DatabaseOutlined, FileTextOutlined, HistoryOutlined, KeyOutlined, PartitionOutlined, RobotOutlined, TeamOutlined, ThunderboltOutlined, ToolOutlined } from '@ant-design/icons'
+import { ApiOutlined, AuditOutlined, ClockCircleOutlined, DashboardOutlined, DatabaseOutlined, FileTextOutlined, HistoryOutlined, KeyOutlined, PartitionOutlined, RobotOutlined, SettingOutlined, TeamOutlined, ThunderboltOutlined, ToolOutlined } from '@ant-design/icons'
 
 // 导航表：菜单项、角色可见性与页面标题的唯一来源（docs/01 第 3 节权限矩阵）。
 // 详情页（/agents/3）按路径前缀匹配到父菜单，标题显示父菜单名。
@@ -24,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/audit-logs', label: '审计日志', icon: <AuditOutlined />, roles: ['admin'] },
   { key: '/api-keys', label: 'API Key', icon: <KeyOutlined />, roles: ['admin', 'developer'] },
   { key: '/schedules', label: '定时任务', icon: <ClockCircleOutlined />, roles: ['admin', 'developer'] },
+  { key: '/system-settings', label: '系统参数', icon: <SettingOutlined />, roles: ['admin', 'developer'] },
 ]
 
 export const visibleNavItems = (role?: string | null) => NAV_ITEMS.filter((item) => !item.roles || (role && item.roles.includes(role)))

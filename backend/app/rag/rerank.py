@@ -2,7 +2,9 @@
 
 `rerank(query, candidates, keywords)` 接口固定（`06-后端规范.md` 第 8 节），返回按 score 降序的新列表，
 每条带 `rerank_mode`（model / lexical）与 `rerank_score`（模型分，词法时为 None）。
-配置了 `RERANK_PROVIDER` 时先取前 `RERANK_CANDIDATES` 条送模型，调用失败或超时退回词法重排并打 WARN；
+配置了 `RERANK_PROVIDER` 时先取前"重排候选条数"条送模型，调用失败或超时退回词法重排并打 WARN；
+候选条数、超时、淘汰阈值是运行时参数（页面「系统参数」可改，见 `services/settings_service`），
+连接信息（provider / 地址 / 密钥 / 模型名）仍走 .env —— 密钥不放在能被读回的接口上。
 `rerank_status()` 汇报当前模式，接进 `/system/status`：未配置属配置性（不进 degraded），配置了但失败属故障性（进 degraded），
 与向量后端的两类降级口径一致。
 """
@@ -14,6 +16,7 @@ import httpx
 
 from app.config import settings
 from app.core.http import trust_env_for
+from app.services.settings_service import runtime_value
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +109,7 @@ def _request_scores(query: str, documents: list) -> list:
     else:
         url = base + "/rerank"
         body = {"model": settings.RERANK_MODEL, "query": query, "documents": documents, "top_n": len(documents)}
-    with httpx.Client(timeout=settings.RERANK_TIMEOUT, trust_env=trust_env_for(base)) as client:
+    with httpx.Client(timeout=runtime_value("rerank_timeout"), trust_env=trust_env_for(base)) as client:
         resp = client.post(url, json=body, headers=headers)
         resp.raise_for_status()
         payload = resp.json()
@@ -122,8 +125,8 @@ def _request_scores(query: str, documents: list) -> list:
 
 
 def rerank_by_model(query: str, candidates: list) -> list:
-    """模型重排：取前 RERANK_CANDIDATES 条候选请求重排服务，score 直接取 relevance_score，按降序返回。失败抛异常由 rerank() 兜底。"""
-    top = candidates[: settings.RERANK_CANDIDATES]
+    """模型重排：取前「重排候选条数」条候选请求重排服务，score 直接取 relevance_score，按降序返回。失败抛异常由 rerank() 兜底。"""
+    top = candidates[: runtime_value("rerank_candidates")]
     scores = _request_scores(query, [(c.get("content") or "")[:4000] for c in top])
     ranked = []
     for c, s in zip(top, scores):

@@ -17,7 +17,7 @@ from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
-from app.services import run_service
+from app.services import run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -196,9 +196,10 @@ def _queries_for(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
 def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, int, str | None]:
     """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。返回 (引用列表, 鉴权剔除数, 重排模式)。"""
     pairs = [(kb_id, q) for kb_id in kb_ids for q in queries]
+    top_k = settings_service.runtime_value("rag_top_k")  # 每库召回条数是运行时参数（页面可改），一次请求内取一次保持一致
 
     def _one(pair):
-        return pair[0], retrieve_with_stats(pair[0], pair[1], settings.RAG_TOP_K, role=role)
+        return pair[0], retrieve_with_stats(pair[0], pair[1], top_k, role=role)
 
     if len(pairs) == 1:
         results = [_one(pairs[0])]
@@ -215,7 +216,7 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, 
             key = (kb_id, item["chunk_id"])
             if key not in merged or item["score"] > merged[key]["score"]:
                 merged[key] = {"kb_id": kb_id, "chunk_id": item["chunk_id"], "doc_name": item["doc_name"], "content": item["content"], "score": item["score"]}
-    citations = sorted(merged.values(), key=lambda x: -x["score"])[: settings.RAG_TOP_K * len(kb_ids)]
+    citations = sorted(merged.values(), key=lambda x: -x["score"])[: top_k * len(kb_ids)]
     return citations, acl_rejected, rerank_mode
 
 

@@ -1,4 +1,4 @@
-import { get } from './core'
+import { get, put } from './core'
 
 // ===== 系统运行状态（docs/04 4.14，降级可见）=====
 export interface EmbeddingStatus {
@@ -34,3 +34,26 @@ export interface SystemStatus {
   degraded: DegradedItem[]
 }
 export const getSystemStatus = () => get<SystemStatus>('/system/status')
+
+// ===== 运行时可调参数（docs/04 4.14）：页面上改、立刻生效，不用改 .env 重启 =====
+export interface SystemSettingGroup { key: string; label: string; description: string }
+export interface SystemSettingItem {
+  key: string
+  label: string
+  description: string
+  group: string
+  unit: string
+  kind: 'int' | 'float'
+  step: number
+  min: number
+  max: number
+  default: number      // .env / 后端默认值
+  value: number        // 当前生效值
+  source: 'default' | 'db'  // db = 页面改过，default = 用的还是 .env 默认
+  updated_at: string | null
+  updated_by: string | null
+}
+export interface SystemSettings { groups: SystemSettingGroup[]; items: SystemSettingItem[] }
+export const getSystemSettings = () => get<SystemSettings>('/system/settings')
+// 值传 null 表示恢复默认（删掉库里的覆盖）；越界或未知键整批 400，不会只改一半
+export const updateSystemSettings = (values: Record<string, number | null>) => put<SystemSettings>('/system/settings', { values })
