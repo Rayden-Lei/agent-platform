@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # RAG 查询改写：默认关闭。开启后每条消息多一次模型调用（DeepSeek 类模型实测 4～9 秒），只在召回质量明显不足时打开
     RAG_QUERY_REWRITE_ENABLED: bool = False
     RAG_QUERY_REWRITE_TIMEOUT_SECONDS: int = 3
+    # 同时处理的文档数：向量模型与库都是共享资源，并发只会让每篇都变慢、进度与预计时间失真；排队的文档保持 uploading
+    INGEST_CONCURRENCY: int = 1
     # Rerank 模型（FR-032）：provider 空 = 关闭（词法重排）；cohere = Cohere / Jina / TEI / vLLM / oMLX 共用的 POST /rerank；dashscope = 阿里云百炼
     RERANK_PROVIDER: str = ""
     RERANK_API_BASE: str = ""

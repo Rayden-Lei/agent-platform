@@ -125,3 +125,49 @@ def test_ingestion_failure_mid_way_keeps_committed_batches_and_marks_failed(monk
     finally:
         db.close()
     assert math.ceil(35 / 10) == 4 and calls["n"] == 3
+
+
+def test_documents_are_processed_one_at_a_time(monkeypatch, client, auth_headers):
+    """两篇同时进入后台：INGEST_CONCURRENCY=1 时第二篇要等第一篇向量化结束才开始。"""
+    import threading
+    import time as _time
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "INGEST_CONCURRENCY", 1)
+    monkeypatch.setattr(pipeline, "_ingest_slots", None)
+    kb_id = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-queue-kb", "chunk_size": 200, "chunk_overlap": 0}).json()["id"]
+    db = SessionLocal()
+    try:
+        docs = [Document(kb_id=kb_id, name=f"q{i}.txt", file_type="txt", file_path="pytest/none", status="uploading") for i in range(2)]
+        db.add_all(docs)
+        db.commit()
+        ids = [d.id for d in docs]
+    finally:
+        db.close()
+    windows: dict = {}
+
+    def _embed(texts):
+        start = _time.perf_counter()
+        _time.sleep(0.4)
+        windows[threading.get_ident()] = (start, _time.perf_counter())
+        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+
+    monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
+    monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": "一段文本", "meta": {}}])
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed)
+    try:
+        threads = [threading.Thread(target=pipeline.process_document, args=(i,)) for i in ids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(20)
+        (a0, a1), (b0, b1) = sorted(windows.values())
+        assert b0 >= a1  # 第二篇的向量化在第一篇结束之后才开始
+        db = SessionLocal()
+        try:
+            assert {db.get(Document, i).status for i in ids} == {"ready"}
+        finally:
+            db.close()
+    finally:
+        client.delete(f"/api/v1/knowledge-bases/{kb_id}", headers=auth_headers)

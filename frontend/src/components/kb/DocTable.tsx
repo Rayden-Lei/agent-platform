@@ -37,7 +37,7 @@ function StatusCell({ doc }: { doc: DocumentRow }) {
     )
   }
   if (PROCESSING.has(doc.status)) {
-    return <Space size={6}><StatusTag domain="document" value={doc.status} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{doc.status === 'parsing' ? '读取并切片中' : '上传中'}</Typography.Text></Space>
+    return <Space size={6}><StatusTag domain="document" value={doc.status} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{doc.status === 'parsing' ? '读取并切片中' : '已上传，排队等待处理（同一时间只处理一篇）'}</Typography.Text></Space>
   }
   return (
     <Space size={6}>
@@ -70,8 +70,9 @@ export default function DocTable({ kbId, onChanged }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <FilterBar onReset={() => { setStatus(undefined); setQ(undefined) }} onRefresh={list.reload} loading={list.loading}
         extra={
-          <Upload showUploadList={false} multiple customRequest={async ({ file, onSuccess, onError }) => {
-            try { await uploadDoc(kbId, file as File); message.success('上传成功，后台解析中'); list.reload(); onChanged?.(); onSuccess?.({}) } catch (e) { message.error(errorText(e, '上传失败')); onError?.(e as Error) }
+          <Upload showUploadList={false} multiple customRequest={async ({ file, onSuccess, onError, onProgress }) => {
+            // 大文件上传要一两分钟：把浏览器到服务端的进度报给 antd（按钮上的加载态），完成后进后台队列
+            try { await uploadDoc(kbId, file as File, (percent) => onProgress?.({ percent })); message.success(`${(file as File).name} 上传完成，已进入处理队列`); list.reload(); onChanged?.(); onSuccess?.({}) } catch (e) { message.error(errorText(e, `${(file as File).name} 上传失败`)); onError?.(e as Error) }
           }}>
             <Button type="primary" size="small" icon={<UploadOutlined />}>上传文档</Button>
           </Upload>

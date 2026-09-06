@@ -5,10 +5,12 @@
 import logging
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
+from app.config import settings
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
 from app.rag.embeddings import embed_texts_detailed
@@ -22,6 +24,17 @@ _CN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 _FIELD_SEP = " | "
 # 向量化 + 写库按此批量推进并逐批提交：几万行的表格不能攒到最后一次 commit（内存、失败回滚、看不到进度）
 INGEST_BATCH_SIZE = 100
+# 文档处理的并发闸门：多篇同时上传时按 INGEST_CONCURRENCY 排队处理（默认串行），等待中的文档状态仍是 uploading
+_ingest_slots: threading.Semaphore | None = None
+_ingest_slots_lock = threading.Lock()
+
+
+def _ingest_slot() -> threading.Semaphore:
+    global _ingest_slots
+    with _ingest_slots_lock:
+        if _ingest_slots is None:
+            _ingest_slots = threading.Semaphore(max(1, settings.INGEST_CONCURRENCY))
+        return _ingest_slots
 
 
 def _text_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
@@ -119,7 +132,18 @@ def split_table_row(seg: dict, chunk_size: int, chunk_overlap: int) -> list:
 
 
 def process_document(doc_id: int) -> None:
-    """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。"""
+    """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。多篇排队时按 INGEST_CONCURRENCY 串行。"""
+    slot = _ingest_slot()
+    if not slot.acquire(blocking=False):
+        logger.info("文档 %s 排队等待处理（前面还有文档在向量化）", doc_id)
+        slot.acquire()
+    try:
+        _process_document(doc_id)
+    finally:
+        slot.release()
+
+
+def _process_document(doc_id: int) -> None:
     db = SessionLocal()
     try:
         doc = db.get(Document, doc_id)

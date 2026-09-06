@@ -81,11 +81,14 @@ export const updateKB = (id: number, data: KnowledgeBaseInput) => put<KnowledgeB
 export const deleteKB = (id: number) => del(`/knowledge-bases/${id}`)
 export const batchKBs = (ids: number[]) => batchAction('/knowledge-bases', ids, 'delete')
 export const listDocs = (kbId: number, params?: PageQuery) => get<Page<DocumentRow>>(`/knowledge-bases/${kbId}/documents`, params)
-// 文档上传走 FormData，axios 会自动带 multipart/form-data 请求头
-export const uploadDoc = (kbId: number, file: File) => {
+// 文档上传走 FormData，axios 会自动带 multipart/form-data 请求头；不设超时（默认 30 秒），几十 MB 的表格传到对象存储要一两分钟
+export const uploadDoc = (kbId: number, file: File, onProgress?: (percent: number) => void) => {
   const fd = new FormData()
   fd.append('file', file)
-  return client.post(`/knowledge-bases/${kbId}/documents`, fd) as unknown as Promise<{ id: number; kb_id: number; name: string; file_type: string; status: string }>
+  return client.post(`/knowledge-bases/${kbId}/documents`, fd, {
+    timeout: 0,
+    onUploadProgress: (e) => { if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100)) },
+  }) as unknown as Promise<{ id: number; kb_id: number; name: string; file_type: string; status: string }>
 }
 export const deleteDoc = (kbId: number, docId: number) => del(`/knowledge-bases/${kbId}/documents/${docId}`)
 // 重新解析：失败的文档重试，或切片参数改了之后重建；处理中的文档 400
