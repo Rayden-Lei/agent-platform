@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     # RAG 查询改写：默认关闭。开启后每条消息多一次模型调用（DeepSeek 类模型实测 4～9 秒），只在召回质量明显不足时打开
     RAG_QUERY_REWRITE_ENABLED: bool = False
     RAG_QUERY_REWRITE_TIMEOUT_SECONDS: int = 3
+    # Rerank 模型（FR-032）：provider 空 = 关闭（词法重排）；cohere = Cohere / Jina / TEI / vLLM / oMLX 共用的 POST /rerank；dashscope = 阿里云百炼
+    RERANK_PROVIDER: str = ""
+    RERANK_API_BASE: str = ""
+    RERANK_API_KEY: str = ""
+    RERANK_MODEL: str = ""
+    RERANK_TIMEOUT: int = 5
+    RERANK_CANDIDATES: int = 20
+    # 模型分阈值按 Qwen3-Reranker 实测标定：强相关 ≈ 0.99、弱相关 0.05～0.1、无关 < 0.01；宁可多留弱相关，提示词已要求不编造
+    RERANK_MIN_SCORE: float = 0.02
+    RERANK_GAP_RATIO: float = 0.02
     CHAT_TITLE_MAX_LEN: int = 30
     # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉
     REPORT_TIMEZONE: str = "Asia/Shanghai"

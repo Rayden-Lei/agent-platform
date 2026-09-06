@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from langchain_openai import OpenAIEmbeddings
 
 from app.config import settings
+from app.core.http import async_client, sync_client
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,9 @@ def get_embeddings():
             dimensions=settings.EMBEDDING_DIM,
             chunk_size=20,  # 阿里云百炼 embedding 单次上限 20 条
             check_embedding_ctx_length=False,  # 直接传原始文本，不做 tokenize（阿里云不支持 token 数组）
+            # 本机 oMLX 这类回环地址不走代理环境变量（否则开发机的 HTTP_PROXY 会把请求拦成 502）
+            http_client=sync_client(settings.EMBEDDING_API_BASE, 60),
+            http_async_client=async_client(settings.EMBEDDING_API_BASE, 60),
         )
     return _embeddings
 

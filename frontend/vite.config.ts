@@ -8,9 +8,10 @@ export default defineConfig({
     port: 5173,
     // 只反代 /api/ 前缀（正则）：写成 '/api' 会按前缀把前端路由 /api-keys 也转给后端，刷新页面时看到的是后端 404。
     // vite preview 默认沿用 server.proxy，线上（preview 反代）同样受此影响。
+    // 后端地址可用 VITE_API_TARGET 覆盖：本机跑 oMLX 时 8000 被它占用，后端要换到 8001
     proxy: {
       '^/api/': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

@@ -6,6 +6,7 @@ import { useSystemStatus } from '../../hooks/useSystemStatus'
 // 全局降级横幅：/system/status.degraded 非空时显示在顶栏下方，每项给出对应入口；关闭后本会话内不再出现（按内容签名）。
 const ENTRY: Record<string, { to: string; label: string }> = {
   embedding: { to: '/knowledge-bases', label: '知识库' },
+  rerank: { to: '/knowledge-bases', label: '知识库' },
   model_breaker: { to: '/models', label: '模型' },
   scheduler: { to: '/schedules', label: '定时任务' },
 }

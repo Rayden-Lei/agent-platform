@@ -9,6 +9,7 @@ from collections import OrderedDict
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
+from app.core.http import async_client, sync_client
 from app.core.security import decrypt_secret
 from app.db.models import ModelConfig
 from app.model_gateway import breaker
@@ -63,6 +64,9 @@ def _new_llm(model: ModelConfig):
         max_retries=settings.MODEL_MAX_RETRIES,
         streaming=True,
         stream_usage=True,
+        # 回环地址（本机 oMLX 等）不走代理环境变量；远程厂商保持默认行为
+        http_client=sync_client(model.api_base, settings.MODEL_HTTP_TIMEOUT),
+        http_async_client=async_client(model.api_base, settings.MODEL_HTTP_TIMEOUT),
     )
     if params.get("temperature") is not None:
         kwargs["temperature"] = params["temperature"]

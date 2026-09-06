@@ -34,6 +34,7 @@ class ChatContext:
     citations: list
     history_messages: list
     acl_rejected: int = 0
+    rerank_mode: str | None = None  # 本轮检索实际用的重排后端（model / lexical），写进审计
     summary_pending: bool = False  # 待折叠消息已攒够一批：响应结束后在后台刷新会话摘要，不占用本轮首字节
 
 
@@ -192,8 +193,8 @@ def _queries_for(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
     return _rewrite_queries(model, llm, message_text)
 
 
-def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, int]:
-    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。返回 (引用列表, 鉴权剔除数)。"""
+def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, int, str | None]:
+    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。返回 (引用列表, 鉴权剔除数, 重排模式)。"""
     pairs = [(kb_id, q) for kb_id in kb_ids for q in queries]
 
     def _one(pair):
@@ -206,14 +207,16 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, 
             results = list(ex.map(_one, pairs))
     merged: dict = {}
     acl_rejected = 0
+    rerank_mode = None
     for kb_id, stats in results:
         acl_rejected += stats["stats"].get("acl_rejected", 0)
+        rerank_mode = stats["stats"].get("rerank_mode") or rerank_mode
         for item in stats["items"]:
             key = (kb_id, item["chunk_id"])
             if key not in merged or item["score"] > merged[key]["score"]:
                 merged[key] = {"kb_id": kb_id, "chunk_id": item["chunk_id"], "doc_name": item["doc_name"], "content": item["content"], "score": item["score"]}
     citations = sorted(merged.values(), key=lambda x: -x["score"])[: settings.RAG_TOP_K * len(kb_ids)]
-    return citations, acl_rejected
+    return citations, acl_rejected, rerank_mode
 
 
 def get_published_agent(db: Session, agent_id: int) -> Agent:
@@ -264,10 +267,11 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     kb_context = ""
     citations = []
     acl_rejected = 0
+    rerank_mode = None
     started = time.perf_counter()
     if agent.kb_ids:
         queries = _queries_for(model, llm, message_text)
-        citations, acl_rejected = _retrieve_all(agent.kb_ids, queries, role)
+        citations, acl_rejected, rerank_mode = _retrieve_all(agent.kb_ids, queries, role)
         if citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
@@ -288,7 +292,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     logger.info("对话上下文就绪 agent_id=%s 检索 %dms 引用 %d 条 历史 %d 条", agent_id, retrieval_ms, len(citations), len(lc_messages) - 1)
 
     return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations,
-                       history_messages=lc_messages, acl_rejected=acl_rejected, summary_pending=summary_pending)
+                       history_messages=lc_messages, acl_rejected=acl_rejected, rerank_mode=rerank_mode, summary_pending=summary_pending)
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:

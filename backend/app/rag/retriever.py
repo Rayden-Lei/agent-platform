@@ -6,7 +6,7 @@ from app.config import settings
 from app.db.models import Document, DocumentChunk
 from app.db.session import SessionLocal
 from app.rag.embeddings import embed_query
-from app.rag.rerank import extract_keywords, rerank
+from app.rag.rerank import MODE_MODEL, extract_keywords, rerank, rerank_status
 
 RRF_K = 60  # RRF 倒排融合常数
 
@@ -157,6 +157,8 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
             "doc_id": chunk.doc_id,
             "doc_name": doc_names.get(chunk.doc_id, ""),
             "meta": chunk.meta or {},
+            "rerank_mode": c.get("rerank_mode"),
+            "rerank_score": c.get("rerank_score"),
         }
         if enriched:
             item["vector_score"] = round(c.get("vector_score", 0.0), 4)
@@ -167,9 +169,15 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
 
 
 def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list = None) -> tuple[list, int]:
-    """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。"""
+    """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
+
+    模型重排的分数分布与词法完全不同（相关 ≈ 0.99、无关 ≈ 0），淘汰阈值按重排模式分别取配置。
+    """
     ranked = rerank(query, candidates, keywords=keywords)
-    ranked = _prune(ranked)
+    if ranked and ranked[0].get("rerank_mode") == MODE_MODEL:
+        ranked = _prune(ranked, min_score=settings.RERANK_MIN_SCORE, gap_ratio=settings.RERANK_GAP_RATIO)
+    else:
+        ranked = _prune(ranked)
     kept, rejected = [], 0
     for c in ranked:
         if _authorize(role, c.get("chunk").meta):
@@ -210,6 +218,8 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
             "top_score": round(max(scores), 4) if scores else 0.0,
             "mean_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
             "lexical_hit_count": sum(1 for c in ranked[:top_k] if c.get("matched_keywords")),
+            # 本次实际用的重排后端；全部被淘汰时也要能看出走的是模型还是词法，没有候选才是 None
+            "rerank_mode": (rerank_status()["mode"] if candidates else None),
         }
         return {"items": items, "stats": stats}
     finally:

@@ -19,10 +19,12 @@ export interface ModelBreakerStatus {
 }
 export interface DegradedItem { item: 'embedding' | 'login_guard' | 'rate_limit' | 'model_breaker' | 'database' | 'scheduler' | string; message: string }
 export interface SchedulerStatus { running: boolean; registered_jobs: number; enabled_jobs: number; reason?: string | null }
+export interface RerankStatus { mode: 'model' | 'lexical'; configured: boolean; provider: string | null; model: string | null; reason: string | null; last_error: { at: string; error: string } | null }
 export interface SystemStatus {
   app: string
   database: { ok: boolean; reason: string | null }
   embedding: EmbeddingStatus
+  rerank: RerankStatus
   login_guard: { enabled: boolean; reason: string | null; max_fail: number; lock_seconds: number }
   // 入口限流：configured=false 是配置关闭（不算降级），configured=true 且 enabled=false 是 Redis 故障
   rate_limit: { enabled: boolean; configured: boolean; reason: string | null; api_key_per_minute: number; user_per_minute: number; ip_per_minute: number }

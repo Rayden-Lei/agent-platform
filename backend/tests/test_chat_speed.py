@@ -75,9 +75,9 @@ def test_retrieve_all_runs_every_pair_and_merges_by_best_score(monkeypatch):
 
     monkeypatch.setattr(chat_service, "retrieve_with_stats", _fake)
     monkeypatch.setattr(settings, "RAG_TOP_K", 4)
-    citations, rejected = chat_service._retrieve_all([1, 2], ["q1", "q2"], role="admin")
+    citations, rejected, mode = chat_service._retrieve_all([1, 2], ["q1", "q2"], role="admin")
     assert sorted(calls) == [(1, "q1"), (1, "q2"), (2, "q1"), (2, "q2")]  # 每个 (知识库, 查询) 各检索一次
-    assert rejected == 4
+    assert rejected == 4 and mode is None
     # 同一 (kb, chunk) 只保留最高分；按分数降序
     by_key = {(c["kb_id"], c["chunk_id"]): c["score"] for c in citations}
     assert by_key[(1, 1)] == 0.9 and by_key[(2, 1)] == 0.9

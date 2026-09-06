@@ -44,8 +44,9 @@ export default function SearchEval({ kbId }: Props) {
           { key: 'returned', label: '返回数', children: stats.returned },
           { key: 'acl_rejected', label: '鉴权剔除', children: <Text type={stats.acl_rejected ? 'warning' : undefined}>{stats.acl_rejected}</Text> },
           { key: 'lexical_hit_count', label: '词法命中', children: stats.lexical_hit_count },
-          { key: 'top_score', label: '最高分', span: 2, children: <Text strong style={{ color: '#1e40af' }}>{stats.top_score}</Text> },
-          { key: 'mean_score', label: '平均分', span: 2, children: stats.mean_score },
+          { key: 'top_score', label: '最高分', children: <Text strong style={{ color: '#1e40af' }}>{stats.top_score}</Text> },
+          { key: 'mean_score', label: '平均分', children: stats.mean_score },
+          { key: 'rerank_mode', label: '重排', span: 2, children: stats.rerank_mode === 'model' ? <Tag color="success">重排模型</Tag> : stats.rerank_mode === 'lexical' ? <Tag>词法（未配置或已降级）</Tag> : '—' },
         ]} />
       )}
       {searched && results.length === 0 ? (
@@ -65,6 +66,7 @@ export default function SearchEval({ kbId }: Props) {
                 <Space size={6} wrap>
                   <Tag>向量 {r.vector_score}</Tag>
                   <Tag>词法 {r.keyword_score}</Tag>
+                  {typeof r.rerank_score === 'number' && <Tag color="success">重排 {r.rerank_score.toFixed(4)}</Tag>}
                   {(r.matched_keywords || []).map((k) => <Tag key={k} color="cyan">{k}</Tag>)}
                 </Space>
               )}

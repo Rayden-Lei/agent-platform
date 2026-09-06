@@ -14,6 +14,7 @@ from app.core import rate_limiter
 from app.db.models import ScheduledJob
 from app.model_gateway import breaker
 from app.rag.embeddings import MODE_MODEL, embedding_status
+from app.rag.rerank import rerank_status
 from app.services import auth_service
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,10 @@ def get_system_status(db: Session) -> dict:
     degraded = []
     if embedding["mode"] != MODE_MODEL:
         degraded.append({"item": "embedding", "message": embedding["reason"]})
+    rerank = rerank_status()
+    # 未配置重排模型属配置性降级不进 degraded；配置了但调用失败才是故障
+    if rerank["configured"] and rerank["last_error"] is not None:
+        degraded.append({"item": "rerank", "message": rerank["reason"]})
     if not login_guard["enabled"]:
         degraded.append({"item": "login_guard", "message": f"登录限流未生效：{login_guard['reason']}"})
     # 配置关闭（configured=False）是有意为之，不算降级；配置打开但 Redis 故障才是
@@ -75,6 +80,7 @@ def get_system_status(db: Session) -> dict:
         "app": settings.APP_NAME,
         "database": database,
         "embedding": embedding,
+        "rerank": rerank,
         "login_guard": login_guard,
         "rate_limit": rate_limit,
         "model_breakers": model_breakers,

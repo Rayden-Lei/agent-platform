@@ -83,7 +83,7 @@ async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user:
             # 审计：记录检索鉴权（uid/query/召回 chunk_id/鉴权剔除数）
             db2.add(AuditLog(
                 user_id=user.id, username=user.username, action="rag_retrieve", resource="agent", resource_id=agent_id,
-                detail={"query": message_text, "recalled_chunk_ids": [c["chunk_id"] for c in ctx.citations], "acl_rejected": ctx.acl_rejected},
+                detail={"query": message_text, "recalled_chunk_ids": [c["chunk_id"] for c in ctx.citations], "acl_rejected": ctx.acl_rejected, "rerank_mode": ctx.rerank_mode},
             ))
             await run_in_threadpool(db2.commit)
 

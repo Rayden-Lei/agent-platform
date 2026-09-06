@@ -55,6 +55,8 @@ export interface SearchHit {
   vector_score?: number
   keyword_score?: number
   matched_keywords?: string[]
+  rerank_mode?: 'model' | 'lexical' | null // 本条经过的重排后端；未配置重排模型时为 lexical
+  rerank_score?: number | null // 模型重排分（0～1），词法重排时为空
 }
 export interface SearchStats {
   query: string
@@ -65,6 +67,7 @@ export interface SearchStats {
   top_score: number
   mean_score: number
   lexical_hit_count: number
+  rerank_mode?: 'model' | 'lexical' | null
 }
 
 export const listKBs = (params?: PageQuery) => get<Page<KnowledgeBaseRow>>('/knowledge-bases', params)
