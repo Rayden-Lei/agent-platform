@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Popconfirm, Progress, Select, Space, Table, Tooltip, Typography, Upload, message } from 'antd'
-import { FileTextOutlined, RedoOutlined, UploadOutlined } from '@ant-design/icons'
-import { batchDocs, deleteDoc, listDocs, reprocessDoc, uploadDoc, type DocumentRow } from '../../api'
+import { Button, Popconfirm, Progress, Select, Space, Table, Tag, Tooltip, Typography, Upload, message } from 'antd'
+import { FileTextOutlined, PlayCircleOutlined, RedoOutlined, UploadOutlined } from '@ant-design/icons'
+import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
 import { useBatchAction } from '../../hooks/useBatchAction'
 import { statusOptions } from '../../constants/status'
@@ -21,9 +21,18 @@ import { errorText } from '../../utils/errors'
 interface Props { kbId: number; onChanged?: () => void }
 const PROCESSING = PROCESSING_STATUSES
 
-// 状态单元格：处理中给进度条与速度，终态给状态标签 + 总耗时
+// 状态单元格：处理中给进度条与速度，终态给状态标签 + 总耗时；超过阈值没心跳标"疑似中断"
 function StatusCell({ doc }: { doc: DocumentRow }) {
   const p = docProgress(doc)
+  if (p.stalled) {
+    return (
+      <Space size={6} wrap>
+        <StatusTag domain="document" value={doc.status} />
+        <Tooltip title="后端可能被重启或向量服务卡住了；点「继续处理」从已入库的片接着做"><Tag color="warning">疑似中断 {humanSeconds(p.stalledSeconds)}无进展</Tag></Tooltip>
+        {p.percent !== null && <Typography.Text type="secondary" style={{ fontSize: 12 }}>停在 {doc.chunk_count.toLocaleString()} / {(doc.chunk_total ?? 0).toLocaleString()} 片</Typography.Text>}
+      </Space>
+    )
+  }
   if (doc.status === 'chunking' && p.percent !== null) {
     return (
       <div style={{ minWidth: 220 }}>
@@ -43,9 +52,13 @@ function StatusCell({ doc }: { doc: DocumentRow }) {
     <Space size={6}>
       <StatusTag domain="document" value={doc.status} />
       {p.elapsedSeconds !== null && <Typography.Text type="secondary" style={{ fontSize: 12 }}>耗时 {humanSeconds(p.elapsedSeconds)}</Typography.Text>}
+      {doc.status === 'failed' && doc.chunk_total ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>已入库 {doc.chunk_count.toLocaleString()} / {doc.chunk_total.toLocaleString()} 片，可继续</Typography.Text> : null}
     </Space>
   )
 }
+
+// 能否"继续处理"：失败的、或处理中但已无心跳（中断）的
+const canResume = (doc: DocumentRow) => doc.status === 'failed' || docProgress(doc).stalled
 
 export default function DocTable({ kbId, onChanged }: Props) {
   const [status, setStatus] = useState<string | undefined>()
@@ -98,10 +111,15 @@ export default function DocTable({ kbId, onChanged }: Props) {
           { title: '失败原因', dataIndex: 'error', ellipsis: true, render: (v: string | null) => (v ? <Tooltip title={v}><span style={{ color: '#dc2626' }}>{v}</span></Tooltip> : '-') },
           { title: '上传时间', dataIndex: 'created_at', key: 'created_at', width: 170, ...list.sortProps('created_at'), render: (v: string | null) => <TimeCell value={v} /> },
           {
-            title: '操作', key: 'actions', width: 230, fixed: 'right',
+            title: '操作', key: 'actions', width: 330, fixed: 'right',
             render: (_, d) => (
               <Space size={4}>
                 <Button size="small" icon={<FileTextOutlined />} disabled={d.status !== 'ready'} onClick={() => setChunkDoc(d)}>切片</Button>
+                {canResume(d) && (
+                  <Popconfirm title={`从已入库的第 ${d.chunk_count.toLocaleString()} 片接着处理（切片参数没变时不重来）？`} onConfirm={() => act(() => resumeDoc(kbId, d.id), '已排队继续处理', '继续处理失败')}>
+                    <Button size="small" type="primary" ghost icon={<PlayCircleOutlined />}>继续处理</Button>
+                  </Popconfirm>
+                )}
                 <Popconfirm title="重新解析会清掉旧切片并按当前切片参数重建" onConfirm={() => act(() => reprocessDoc(kbId, d.id), '已排队重新解析', '重新解析失败')} disabled={PROCESSING.has(d.status)}>
                   <Button size="small" icon={<RedoOutlined />} disabled={PROCESSING.has(d.status)}>重新解析</Button>
                 </Popconfirm>

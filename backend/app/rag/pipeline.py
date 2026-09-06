@@ -4,11 +4,13 @@
 """
 import logging
 import os
+import socket
 import tempfile
 import threading
 from datetime import datetime, timezone
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from sqlalchemy import func
 
 from app.config import settings
 from app.db.models import Document, DocumentChunk, KnowledgeBase
@@ -24,9 +26,13 @@ _CN_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
 _FIELD_SEP = " | "
 # 向量化 + 写库按此批量推进并逐批提交：几万行的表格不能攒到最后一次 commit（内存、失败回滚、看不到进度）
 INGEST_BATCH_SIZE = 100
+# 本节点标识：共享库上本机与服务器各跑一个后端，文档只由创建它的节点处理与续处理
+NODE_NAME = socket.gethostname()[:128]
 # 文档处理的并发闸门：多篇同时上传时按 INGEST_CONCURRENCY 排队处理（默认串行），等待中的文档状态仍是 uploading
 _ingest_slots: threading.Semaphore | None = None
 _ingest_slots_lock = threading.Lock()
+# 排队等待期间刷心跳的间隔（秒）：实际取它与 INGEST_STALL_SECONDS/3 的较小值，保证排队中的文档不会被判成"中断"
+QUEUE_HEARTBEAT_SECONDS = 60
 
 
 def _ingest_slot() -> threading.Semaphore:
@@ -131,19 +137,72 @@ def split_table_row(seg: dict, chunk_size: int, chunk_overlap: int) -> list:
     return [{"content": piece, "meta": {**seg["meta"], "part": n}} for n, piece in enumerate(pieces, start=1)]
 
 
-def process_document(doc_id: int) -> None:
-    """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。多篇排队时按 INGEST_CONCURRENCY 串行。"""
+def process_document(doc_id: int, resume: bool = False) -> None:
+    """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。多篇排队时按 INGEST_CONCURRENCY 串行。
+
+    resume=True 表示续处理：切片是确定性的，重新解析分片后若总数与上次一致，就从已入库的第 N 片接着向量化；
+    总数不一致（切片参数改了）则清掉重来。
+    """
     slot = _ingest_slot()
     if not slot.acquire(blocking=False):
         logger.info("文档 %s 排队等待处理（前面还有文档在向量化）", doc_id)
-        slot.acquire()
+        # 等待期间定期刷心跳：排在一篇一小时的文档后面本来就要等很久，不刷会被前端和 prepare_resume 判成"中断"，
+        # 用户点"继续处理"就会给同一篇再排一个任务，前一个做完后后一个发现切片已齐全反而清掉重做
+        interval = min(QUEUE_HEARTBEAT_SECONDS, max(1, settings.INGEST_STALL_SECONDS / 3))
+        _touch_heartbeat(doc_id)
+        while not slot.acquire(timeout=interval):
+            _touch_heartbeat(doc_id)
     try:
-        _process_document(doc_id)
+        _process_document(doc_id, resume)
     finally:
         slot.release()
 
 
-def _process_document(doc_id: int) -> None:
+def _touch_heartbeat(doc_id: int) -> None:
+    """只刷新处理中文档的 heartbeat_at。刷不上不影响处理本身，记 WARN 后下一轮再试。"""
+    db = SessionLocal()
+    try:
+        db.query(Document).filter(Document.id == doc_id, Document.status.in_(("uploading", "parsing", "chunking"))).update(
+            {Document.heartbeat_at: datetime.now(timezone.utc)}, synchronize_session=False)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("文档 %s 排队心跳刷新失败：%s", doc_id, e)
+    finally:
+        db.close()
+
+
+def resume_stalled_documents(schedule) -> list:
+    """后端启动时找出本节点上未处理完的文档（uploading / parsing / chunking），逐篇交给 schedule 续处理。返回文档 id 列表。
+
+    只认 processing_node 等于本机的：共享库上另一台后端正在处理的文档不能抢。
+    """
+    db = SessionLocal()
+    try:
+        ids = [d.id for d in db.query(Document).filter(Document.status.in_(("uploading", "parsing", "chunking")), Document.processing_node == NODE_NAME).order_by(Document.id).all()]
+    finally:
+        db.close()
+    for doc_id in ids:
+        logger.warning("文档 %s 上次处理被中断，启动后自动续处理", doc_id)
+        schedule(doc_id)
+    return ids
+
+
+def _resume_start(db, doc: Document, chunks: list, resume: bool) -> int:
+    """算出本次从第几片开始：续处理且总数一致就接着已入库的数量；否则清掉已有切片从 0 开始。"""
+    existing = db.query(func.count(DocumentChunk.id)).filter(DocumentChunk.doc_id == doc.id).scalar() or 0
+    if resume and existing and doc.chunk_total == len(chunks) and existing < len(chunks):
+        logger.info("文档 %s 续处理：已入库 %d / %d 片，从第 %d 片继续", doc.id, existing, len(chunks), existing)
+        return existing
+    if existing:
+        if resume:
+            logger.warning("文档 %s 无法续处理（切片总数 %s → %d 或已完成），清掉 %d 片重来", doc.id, doc.chunk_total, len(chunks), existing)
+        db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc.id).delete(synchronize_session=False)
+        db.commit()
+    return 0
+
+
+def _process_document(doc_id: int, resume: bool = False) -> None:
     db = SessionLocal()
     try:
         doc = db.get(Document, doc_id)
@@ -152,6 +211,8 @@ def _process_document(doc_id: int) -> None:
             return
         kb = db.get(KnowledgeBase, doc.kb_id)
         doc.status = "parsing"
+        doc.processing_node = NODE_NAME
+        doc.heartbeat_at = datetime.now(timezone.utc)
         db.commit()
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -163,9 +224,13 @@ def _process_document(doc_id: int) -> None:
             db.commit()
 
             chunks = chunk_segments(segments, doc.file_type, kb.chunk_size or 500, kb.chunk_overlap or 50)
-            # 计划总数与开始时间先落库：前端据此显示百分比、速度与预计剩余
+            start_at = _resume_start(db, doc, chunks, resume)
+            # 计划总数、起点与开始时间先落库：前端据此显示百分比、速度（按本次新增的片算）与预计剩余
             doc.chunk_total = len(chunks)
+            doc.resume_offset = start_at
+            doc.chunk_count = start_at
             doc.processing_started_at = datetime.now(timezone.utc)
+            doc.heartbeat_at = doc.processing_started_at
             db.commit()
             if not chunks:
                 doc.status = "ready"
@@ -178,7 +243,7 @@ def _process_document(doc_id: int) -> None:
 
             # 逐批向量化并提交：chunk_count 随批推进，列表页能看到进度；中途失败已提交的批不丢，重新解析时整体清掉
             degraded_models: set = set()
-            for start in range(0, len(chunks), INGEST_BATCH_SIZE):
+            for start in range(start_at, len(chunks), INGEST_BATCH_SIZE):
                 batch = chunks[start:start + INGEST_BATCH_SIZE]
                 embedded = embed_texts_detailed([c["content"] for c in batch])
                 if embedded.mode != "model":
@@ -206,6 +271,7 @@ def _process_document(doc_id: int) -> None:
                         token_count=max(1, len(chunk["content"])),
                     ))
                 doc.chunk_count = start + len(batch)
+                doc.heartbeat_at = datetime.now(timezone.utc)
                 db.commit()
                 if (start // INGEST_BATCH_SIZE) % 20 == 19:
                     logger.info("文档 %s 入库进度 %d / %d", doc_id, doc.chunk_count, len(chunks))

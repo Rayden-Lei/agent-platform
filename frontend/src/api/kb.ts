@@ -46,6 +46,9 @@ export interface DocumentRow {
   created_at: string | null
   processing_started_at: string | null // 开始向量化入库的时间
   finished_at: string | null // ready / failed 的时间
+  heartbeat_at: string | null // 每批提交刷新；长时间不动即中断
+  resume_offset: number // 本次处理从第几片接着做（续处理时非 0）
+  processing_node: string | null // 负责处理的后端节点（主机名）
 }
 export interface ChunkRow { id: number; content: string; meta: Record<string, unknown>; token_count: number }
 export interface SearchHit {
@@ -92,6 +95,8 @@ export const uploadDoc = (kbId: number, file: File, onProgress?: (percent: numbe
 }
 export const deleteDoc = (kbId: number, docId: number) => del(`/knowledge-bases/${kbId}/documents/${docId}`)
 // 重新解析：失败的文档重试，或切片参数改了之后重建；处理中的文档 400
+// 中断后继续：失败或已无心跳的处理中文档，从已入库的切片接着做；正常处理中 400
+export const resumeDoc = (kbId: number, docId: number) => post<{ id: number; status: string; chunk_count: number; chunk_total: number | null }>(`/knowledge-bases/${kbId}/documents/${docId}/resume`)
 export const reprocessDoc = (kbId: number, docId: number) => post<{ id: number; status: string }>(`/knowledge-bases/${kbId}/documents/${docId}/reprocess`)
 export const batchDocs = (kbId: number, ids: number[], action: 'delete' | 'reprocess') => batchAction(`/knowledge-bases/${kbId}/documents`, ids, action)
 export const searchKB = (kbId: number, data: { query: string; top_k?: number; debug?: boolean }) => post<{ items: SearchHit[]; stats?: SearchStats }>(`/knowledge-bases/${kbId}/search`, data)

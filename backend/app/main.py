@@ -63,6 +63,11 @@ async def lifespan(_app: FastAPI):
         logger.warning("向量检索处于降级状态：%s", status["reason"])
     from app.core.scheduler import get_scheduler
     get_scheduler()
+    if settings.INGEST_AUTO_RESUME:
+        # 上次进程被杀时处理到一半的文档（只认本机的）自动续处理，不用等人去点
+        import threading
+        from app.rag.pipeline import process_document, resume_stalled_documents
+        resume_stalled_documents(lambda doc_id: threading.Thread(target=process_document, args=(doc_id, True), name=f"resume-{doc_id}", daemon=True).start())
     yield
 
 

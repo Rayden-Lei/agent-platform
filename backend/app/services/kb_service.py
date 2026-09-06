@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.models import Agent, Document, DocumentChunk, KnowledgeBase, User
@@ -137,7 +138,9 @@ def create_document(db: Session, kb_id: int, filename: str, content: bytes, cont
     object_name = f"{uuid.uuid4().hex}_{filename}"
     upload_file(object_name, content, content_type or "application/octet-stream")
 
-    doc = Document(kb_id=kb_id, name=filename, file_path=object_name, file_type=ext, status="uploading")
+    from app.rag.pipeline import NODE_NAME
+    # 记下由本节点处理：共享库上另一台后端重启时不会来抢这篇
+    doc = Document(kb_id=kb_id, name=filename, file_path=object_name, file_type=ext, status="uploading", processing_node=NODE_NAME)
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -152,6 +155,9 @@ def _doc_dict(d: Document) -> dict:
         # 处理进度：前端按 chunk_count / chunk_total 算百分比，按 processing_started_at 算速度与剩余，按 finished_at 算总耗时
         "processing_started_at": d.processing_started_at.isoformat() if d.processing_started_at else None,
         "finished_at": d.finished_at.isoformat() if d.finished_at else None,
+        "heartbeat_at": d.heartbeat_at.isoformat() if d.heartbeat_at else None,
+        "resume_offset": d.resume_offset or 0,
+        "processing_node": d.processing_node,
     }
 
 
@@ -200,6 +206,37 @@ def prepare_reprocess(db: Session, kb_id: int, doc_id: int) -> Document:
     doc.chunk_total = None
     doc.processing_started_at = None
     doc.finished_at = None
+    doc.heartbeat_at = None
+    doc.resume_offset = 0
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def is_stalled(doc: Document, now: datetime | None = None) -> bool:
+    """处理中但超过 INGEST_STALL_SECONDS 没有心跳：多半是后端被杀或向量服务卡死。"""
+    if doc.status not in ("uploading", "parsing", "chunking"):
+        return False
+    last = doc.heartbeat_at or doc.processing_started_at or doc.created_at
+    if last is None:
+        return True
+    return (now or datetime.now(timezone.utc)) - last > timedelta(seconds=settings.INGEST_STALL_SECONDS)
+
+
+def prepare_resume(db: Session, kb_id: int, doc_id: int) -> Document:
+    """续处理前的准备：失败的文档、或处理中但已无心跳（中断）的文档，接着已入库的片继续；正常处理中的 400。
+    切片保留不动，由管道核对总数后决定接着做还是重来；状态回到 uploading 排队。"""
+    from app.rag.pipeline import NODE_NAME
+    doc = _get_document(db, kb_id, doc_id)
+    if doc.status == "ready":
+        raise BizError(400, "文档已处理完成，如需重建请用重新解析")
+    if doc.status != "failed" and not is_stalled(doc):
+        raise BizError(400, "文档正在处理中，请稍后再试")
+    doc.status = "uploading"
+    doc.error = None
+    doc.finished_at = None
+    doc.processing_node = NODE_NAME
+    doc.heartbeat_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(doc)
     return doc

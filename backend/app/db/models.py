@@ -132,6 +132,9 @@ class Document(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     processing_started_at = Column(TIMESTAMP(timezone=True), nullable=True)  # 开始向量化入库的时间，据此算速度与剩余
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)  # ready / failed 的时间
+    processing_node = Column(String(128), nullable=True)  # 负责处理的节点（主机名）：共享库上多个后端只续本机的文档
+    heartbeat_at = Column(TIMESTAMP(timezone=True), nullable=True)  # 每批提交时刷新；长时间不动即中断，可续处理
+    resume_offset = Column(Integer, nullable=False, default=0)  # 本次处理从第几片接着做（续处理时非 0）
 
 
 class DocumentChunk(Base):

@@ -150,6 +150,14 @@ def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: Backgro
     return result
 
 
+@router.post("/{kb_id}/documents/{doc_id}/resume")
+def resume_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """中断后继续处理：失败或已无心跳的处理中文档，从已入库的切片接着向量化（切片参数没变时不重来）；正常处理中 400。"""
+    doc = kb_service.prepare_resume(db, kb_id, doc_id)
+    background_tasks.add_task(process_document, doc.id, True)
+    return {"id": doc.id, "status": doc.status, "chunk_count": doc.chunk_count, "chunk_total": doc.chunk_total}
+
+
 @router.post("/{kb_id}/documents/{doc_id}/reprocess")
 def reprocess_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """重新解析文档（失败的文档重试，或切片参数改了之后重建）：清掉旧切片后排进后台任务；处理中的文档 400。"""

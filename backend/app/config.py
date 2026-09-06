@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     RAG_QUERY_REWRITE_TIMEOUT_SECONDS: int = 3
     # 同时处理的文档数：向量模型与库都是共享资源，并发只会让每篇都变慢、进度与预计时间失真；排队的文档保持 uploading
     INGEST_CONCURRENCY: int = 1
+    # 处理中的文档多久没有心跳视为中断：可以在页面"继续处理"；后端启动时自动续本机未完成的文档
+    INGEST_STALL_SECONDS: int = 180
+    INGEST_AUTO_RESUME: bool = True
     # Rerank 模型（FR-032）：provider 空 = 关闭（词法重排）；cohere = Cohere / Jina / TEI / vLLM / oMLX 共用的 POST /rerank；dashscope = 阿里云百炼
     RERANK_PROVIDER: str = ""
     RERANK_API_BASE: str = ""
