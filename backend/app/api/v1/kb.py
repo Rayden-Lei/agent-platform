@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -109,7 +110,9 @@ async def upload_document(
 ):
     content = await file.read()
     filename = file.filename or "unnamed"
-    doc = kb_service.create_document(db, kb_id, filename, content, file.content_type or "application/octet-stream")
+    # 存 MinIO 是阻塞 IO（几十 MB 的文件走公网要几十秒），必须挪出事件循环 ——
+    # 写在 async 路由里会占住整个进程：2026-09-06 一次上传卡了 436 秒，期间所有接口都不响应，页面看着像服务挂了
+    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, filename, content, file.content_type or "application/octet-stream")
     # 解析 / 分块 / 向量化放入后台任务异步执行，接口先返回文档记录，前端轮询 status
     background_tasks.add_task(process_document, doc.id)
     return {"id": doc.id, "kb_id": kb_id, "name": filename, "file_type": doc.file_type, "status": doc.status}

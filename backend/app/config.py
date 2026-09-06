@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "kb-docs"
+    # MinIO 单次读写超时秒数（连接超时固定 5 秒）：几十 MB 的文件走公网要留足，但不能无限等
+    MINIO_TIMEOUT: int = 120
     MODEL_HTTP_TIMEOUT: int = 120
     # 模型调用熔断（FR-027）。SDK 重试归零：故障处理统一交给熔断器；阈值 0 表示关闭熔断
     MODEL_MAX_RETRIES: int = 0

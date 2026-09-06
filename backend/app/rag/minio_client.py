@@ -5,6 +5,7 @@
 """
 import io
 
+import urllib3
 from minio import Minio
 
 from app.config import settings
@@ -16,11 +17,19 @@ def get_minio() -> Minio:
     """获取全局 MinIO 客户端（懒加载单例）；桶不存在时自动创建。"""
     global _client
     if _client is None:
+        # 显式超时与有限重试：默认的 urllib3 重试次数多、退避长，公网链路一抖就会卡住调用方几分钟
+        # （2026-09-06 一次上传重试到 436 秒才失败）。连接超时短、读写超时按大文件留足，重试 2 次即放弃。
+        http_client = urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=5.0, read=settings.MINIO_TIMEOUT),
+            retries=urllib3.Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504]),
+            maxsize=10,
+        )
         _client = Minio(
             settings.MINIO_ENDPOINT,
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
             secure=False,
+            http_client=http_client,
         )
         if not _client.bucket_exists(settings.MINIO_BUCKET):
             _client.make_bucket(settings.MINIO_BUCKET)
