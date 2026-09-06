@@ -40,9 +40,12 @@ export interface DocumentRow {
   name: string
   file_type: string
   status: DocumentStatus | string
-  chunk_count: number
+  chunk_count: number // 已入库切片数，处理中逐批递增
+  chunk_total: number | null // 分片后确定的计划切片总数；解析阶段为空
   error: string | null
   created_at: string | null
+  processing_started_at: string | null // 开始向量化入库的时间
+  finished_at: string | null // ready / failed 的时间
 }
 export interface ChunkRow { id: number; content: string; meta: Record<string, unknown>; token_count: number }
 export interface SearchHit {
@@ -68,6 +71,7 @@ export interface SearchStats {
   mean_score: number
   lexical_hit_count: number
   rerank_mode?: 'model' | 'lexical' | null
+  timings?: Record<string, number> // 各阶段耗时（毫秒）：embed_ms / vector_ms / keyword_ms / rerank_ms，另有 keyword_count
 }
 
 export const listKBs = (params?: PageQuery) => get<Page<KnowledgeBaseRow>>('/knowledge-bases', params)

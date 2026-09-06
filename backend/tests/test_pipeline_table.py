@@ -90,6 +90,9 @@ def test_ingestion_commits_in_batches_and_tracks_progress(monkeypatch, kb_doc):
     try:
         doc = db.get(Document, doc_id)
         assert doc.status == "ready" and doc.chunk_count == total and doc.error is None
+        # 进度字段：计划总数、起止时间都落库，列表页据此显示进度与耗时
+        assert doc.chunk_total == total and doc.processing_started_at is not None and doc.finished_at is not None
+        assert doc.finished_at >= doc.processing_started_at
         rows = db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).order_by(DocumentChunk.id).all()
         assert len(rows) == total
         assert [r.meta["index"] for r in rows] == list(range(total))  # 全局序号跨批连续
@@ -118,7 +121,7 @@ def test_ingestion_failure_mid_way_keeps_committed_batches_and_marks_failed(monk
         doc = db.get(Document, doc_id)
         assert doc.status == "failed" and "向量服务断了" in doc.error
         assert db.query(DocumentChunk).filter(DocumentChunk.doc_id == doc_id).count() == 20  # 前两批已提交
-        assert doc.chunk_count == 20
+        assert doc.chunk_count == 20 and doc.chunk_total == 35 and doc.finished_at is not None
     finally:
         db.close()
     assert math.ceil(35 / 10) == 4 and calls["n"] == 3

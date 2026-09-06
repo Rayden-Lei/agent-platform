@@ -126,9 +126,12 @@ class Document(Base):
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)
     status = Column(String(16), nullable=False, default="uploading", index=True)
-    chunk_count = Column(Integer, nullable=False, default=0)
+    chunk_count = Column(Integer, nullable=False, default=0)  # 已入库切片数，处理中逐批递增
+    chunk_total = Column(Integer, nullable=True)  # 分片后确定的计划切片总数；处理中据此算进度
     error = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    processing_started_at = Column(TIMESTAMP(timezone=True), nullable=True)  # 开始向量化入库的时间，据此算速度与剩余
+    finished_at = Column(TIMESTAMP(timezone=True), nullable=True)  # ready / failed 的时间
 
 
 class DocumentChunk(Base):

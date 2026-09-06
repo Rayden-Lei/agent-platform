@@ -47,6 +47,7 @@ export default function SearchEval({ kbId }: Props) {
           { key: 'top_score', label: '最高分', children: <Text strong style={{ color: '#1e40af' }}>{stats.top_score}</Text> },
           { key: 'mean_score', label: '平均分', children: stats.mean_score },
           { key: 'rerank_mode', label: '重排', span: 2, children: stats.rerank_mode === 'model' ? <Tag color="success">重排模型</Tag> : stats.rerank_mode === 'lexical' ? <Tag>词法（未配置或已降级）</Tag> : '—' },
+          { key: 'timings', label: '耗时', span: 4, children: stats.timings ? <Text type="secondary" style={{ fontSize: 12 }}>向量化 {stats.timings.embed_ms ?? '-'} ms · 向量召回 {stats.timings.vector_ms ?? '-'} ms · 关键词召回 {stats.timings.keyword_ms ?? '-'} ms（{stats.timings.keyword_count ?? 0} 个词）· 重排 {stats.timings.rerank_ms ?? '-'} ms</Text> : '—' },
         ]} />
       )}
       {searched && results.length === 0 ? (

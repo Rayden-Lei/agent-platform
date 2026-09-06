@@ -127,6 +127,17 @@ def test_empty_candidates_do_not_call_service(configured, monkeypatch):
     assert seen == []
 
 
+def test_identical_contents_are_collapsed_keeping_best(configured, monkeypatch):
+    """同一药品不同批准文号导致内容完全相同的切片，只保留分数最高的一条。"""
+    dup = {"content": "标题: 阿莫西林片 | 用法用量: 口服", "score": 0.5, "chunk": SimpleNamespace(meta={"is_public": True})}
+    cands = [dict(dup), dict(dup), {"content": "标题: 头孢拉定胶囊 | 注意事项: 过敏史", "score": 0.4, "chunk": SimpleNamespace(meta={"is_public": True})}]
+    _mock_client(monkeypatch, lambda request: httpx.Response(200, json={"results": [{"index": 0, "relevance_score": 0.9}, {"index": 1, "relevance_score": 0.95}, {"index": 2, "relevance_score": 0.8}]}))
+    kept, rejected = retriever._rank_and_authorize("q", cands, role="admin")
+    assert rejected == 0
+    assert [c["content"][:6] for c in kept] == ["标题: 阿莫", "标题: 头孢"]
+    assert kept[0]["rerank_score"] == 0.95  # 重复项里留的是分数最高的
+
+
 def test_authorization_still_applies_after_model_rerank(configured, monkeypatch):
     """模型把受限切片排到第一也不能越权：鉴权在重排之后逐条执行，且模型分阈值按 RERANK_* 取。"""
     _mock_client(monkeypatch, lambda request: httpx.Response(200, json={"results": [{"index": 2, "relevance_score": 0.99}, {"index": 1, "relevance_score": 0.3}, {"index": 0, "relevance_score": 0.001}]}))

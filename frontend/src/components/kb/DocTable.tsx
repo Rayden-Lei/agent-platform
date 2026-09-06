@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Popconfirm, Select, Space, Table, Tooltip, Upload, message } from 'antd'
+import { Button, Popconfirm, Progress, Select, Space, Table, Tooltip, Typography, Upload, message } from 'antd'
 import { FileTextOutlined, RedoOutlined, UploadOutlined } from '@ant-design/icons'
 import { batchDocs, deleteDoc, listDocs, reprocessDoc, uploadDoc, type DocumentRow } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
@@ -13,12 +13,39 @@ import SearchInput from '../common/SearchInput'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import ChunkDrawer from './ChunkDrawer'
+import { PROCESSING_STATUSES, docProgress, humanSeconds } from './docProgress'
 import { errorText } from '../../utils/errors'
 
 // 知识库文档页签：上传、状态 / 文件名筛选、分页、失败原因、切片抽屉、重新解析、批量删除 / 重新解析。
-// 有处理中的文档时每 3 秒轮询一次，没有则停（docs/07 第 3 节）。
+// 处理中的文档显示进度条（已入库 / 计划总数、速度、预计剩余），有处理中的文档时每 3 秒轮询一次，没有则停（docs/07 第 3 节）。
 interface Props { kbId: number; onChanged?: () => void }
-const PROCESSING = new Set(['uploading', 'parsing', 'chunking'])
+const PROCESSING = PROCESSING_STATUSES
+
+// 状态单元格：处理中给进度条与速度，终态给状态标签 + 总耗时
+function StatusCell({ doc }: { doc: DocumentRow }) {
+  const p = docProgress(doc)
+  if (doc.status === 'chunking' && p.percent !== null) {
+    return (
+      <div style={{ minWidth: 220 }}>
+        <Progress percent={p.percent} size="small" status="active" format={(v) => `${v}%`} />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {doc.chunk_count.toLocaleString()} / {(doc.chunk_total ?? 0).toLocaleString()} 片
+          {p.rate !== null && ` · ${p.rate.toFixed(1)} 片/秒`}
+          {p.etaSeconds !== null && ` · 剩余约 ${humanSeconds(p.etaSeconds)}`}
+        </Typography.Text>
+      </div>
+    )
+  }
+  if (PROCESSING.has(doc.status)) {
+    return <Space size={6}><StatusTag domain="document" value={doc.status} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{doc.status === 'parsing' ? '读取并切片中' : '上传中'}</Typography.Text></Space>
+  }
+  return (
+    <Space size={6}>
+      <StatusTag domain="document" value={doc.status} />
+      {p.elapsedSeconds !== null && <Typography.Text type="secondary" style={{ fontSize: 12 }}>耗时 {humanSeconds(p.elapsedSeconds)}</Typography.Text>}
+    </Space>
+  )
+}
 
 export default function DocTable({ kbId, onChanged }: Props) {
   const [status, setStatus] = useState<string | undefined>()
@@ -65,8 +92,8 @@ export default function DocTable({ kbId, onChanged }: Props) {
         columns={[
           { title: '文件名', dataIndex: 'name', key: 'name', ...list.sortProps('name'), ellipsis: true },
           { title: '类型', dataIndex: 'file_type', width: 80, render: (v: string) => v.toUpperCase() },
-          { title: '状态', dataIndex: 'status', key: 'status', width: 100, ...list.sortProps('status'), render: (v: string) => <StatusTag domain="document" value={v} /> },
-          { title: '切片', dataIndex: 'chunk_count', key: 'chunk_count', width: 80, align: 'right', ...list.sortProps('chunk_count') },
+          { title: '状态 / 进度', dataIndex: 'status', key: 'status', width: 260, ...list.sortProps('status'), render: (_: string, d) => <StatusCell doc={d} /> },
+          { title: '切片', dataIndex: 'chunk_count', key: 'chunk_count', width: 110, align: 'right', ...list.sortProps('chunk_count'), render: (v: number, d) => (d.chunk_total && d.chunk_total !== v ? `${v.toLocaleString()} / ${d.chunk_total.toLocaleString()}` : v.toLocaleString()) },
           { title: '失败原因', dataIndex: 'error', ellipsis: true, render: (v: string | null) => (v ? <Tooltip title={v}><span style={{ color: '#dc2626' }}>{v}</span></Tooltip> : '-') },
           { title: '上传时间', dataIndex: 'created_at', key: 'created_at', width: 170, ...list.sortProps('created_at'), render: (v: string | null) => <TimeCell value={v} /> },
           {

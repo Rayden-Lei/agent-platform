@@ -1,6 +1,8 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import defer
 
 from app.config import settings
 from app.db.models import Document, DocumentChunk
@@ -52,13 +54,16 @@ def _rrf_fuse(candidates: dict) -> None:
         c["score"] = round(rrf, 6)
 
 
-def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role: str = None) -> list:
+def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role: str = None, timings: dict | None = None) -> list:
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
     mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
     权限过滤前置：先按 ACL 过滤，再做相似度召回，无权 chunk 根本不会被召回。
     """
+    timings = timings if timings is not None else {}
+    started = time.perf_counter()
     vec = embed_query(query)
+    timings["embed_ms"] = int((time.perf_counter() - started) * 1000)
     acl = _acl_condition(role)
     candidates: dict = {}
 
@@ -70,8 +75,12 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role:
 
     # 1. 向量召回（保留排名）
     dist = DocumentChunk.embedding.cosine_distance(vec)
-    stmt = select(DocumentChunk, dist).where(*_conds()).order_by(dist).limit(top_k * 3)
-    for rank, (chunk, distance) in enumerate(db.execute(stmt).all(), start=1):
+    # 候选行不加载 embedding 列：每条 1024 维 4KB，一次检索上百条候选全拉回来毫无用处（远程库上占大头）；排序由数据库完成
+    stmt = select(DocumentChunk, dist).options(defer(DocumentChunk.embedding)).where(*_conds()).order_by(dist).limit(top_k * 3)
+    started = time.perf_counter()
+    vector_rows = db.execute(stmt).all()
+    timings["vector_ms"] = int((time.perf_counter() - started) * 1000)
+    for rank, (chunk, distance) in enumerate(vector_rows, start=1):
         candidates[chunk.id] = {
             "chunk": chunk,
             "content": chunk.content,
@@ -84,6 +93,7 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role:
 
     # 2. 关键词召回（多关键词并发检索）
     keywords = extract_keywords(query)
+    started = time.perf_counter()
     if mode != "vector" and keywords:
         def _search(kw: str):
             db2 = SessionLocal()
@@ -91,7 +101,7 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role:
                 conds = [DocumentChunk.kb_id == kb_id, DocumentChunk.content.ilike(f"%{kw}%")]
                 if acl is not None:
                     conds.append(acl)
-                stmt = select(DocumentChunk).where(*conds).limit(top_k * 2)
+                stmt = select(DocumentChunk).options(defer(DocumentChunk.embedding)).where(*conds).limit(top_k * 2)
                 return [(chunk.id, chunk, kw) for chunk in db2.execute(stmt).scalars()]
             finally:
                 db2.close()
@@ -118,6 +128,8 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role:
             if c["keyword_score"] > 0:
                 c["keyword_rank"] = rank
 
+    timings["keyword_ms"] = int((time.perf_counter() - started) * 1000)
+    timings["keyword_count"] = len(keywords)
     _rrf_fuse(candidates)
     return list(candidates.values())
 
@@ -168,6 +180,20 @@ def _format_items(db, ranked: list, top_k: int, enriched: bool = False) -> list:
     return items
 
 
+def _dedupe(ranked: list) -> list:
+    """内容完全相同的切片只保留分数最高的一条：表格数据里同一药品会以不同批准文号重复出现，
+    原样返回会让引用的 top_k 被三条一模一样的文本占满（2026-09-06 药品说明书导入后发现）。"""
+    seen: set = set()
+    kept = []
+    for c in ranked:
+        key = (c.get("content") or "").strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(c)
+    return kept
+
+
 def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list = None) -> tuple[list, int]:
     """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
 
@@ -178,6 +204,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list 
         ranked = _prune(ranked, min_score=settings.RERANK_MIN_SCORE, gap_ratio=settings.RERANK_GAP_RATIO)
     else:
         ranked = _prune(ranked)
+    ranked = _dedupe(ranked)
     kept, rejected = [], 0
     for c in ranked:
         if _authorize(role, c.get("chunk").meta):
@@ -204,9 +231,12 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
     top_k = top_k or settings.RAG_TOP_K
     db = SessionLocal()
     try:
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, role)
+        timings: dict = {}
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, role, timings=timings)
         keywords = extract_keywords(query)
+        started = time.perf_counter()
         ranked, rejected = _rank_and_authorize(query, candidates, role, keywords=keywords)
+        timings["rerank_ms"] = int((time.perf_counter() - started) * 1000)
         items = _format_items(db, ranked, top_k, enriched=True)
         scores = [c["score"] for c in ranked[:top_k]]
         stats = {
@@ -220,6 +250,8 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
             "lexical_hit_count": sum(1 for c in ranked[:top_k] if c.get("matched_keywords")),
             # 本次实际用的重排后端；全部被淘汰时也要能看出走的是模型还是词法，没有候选才是 None
             "rerank_mode": (rerank_status()["mode"] if candidates else None),
+            # 各阶段耗时（毫秒）：评测页据此看慢在哪一段
+            "timings": timings,
         }
         return {"items": items, "stats": stats}
     finally:

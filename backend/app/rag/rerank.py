@@ -25,19 +25,26 @@ PROVIDERS = ("cohere", "dashscope")
 _last_failure: dict | None = None
 
 
+MAX_KEYWORDS = 12
+
+
 def extract_keywords(query: str) -> list:
-    """从查询中提取关键词：英文/数字词 + 中文片段(2-gram)。"""
-    keywords = set()
+    """从查询中提取关键词：英文/数字词 + 中文片段（≤ 4 字整段，更长的切三元组），最多 MAX_KEYWORDS 个，保持出现顺序。
+
+    用三元组而不是二元组：关键词召回的 ILIKE 靠 pg_trgm 索引，模式不足 3 字走不了索引会全表扫描；
+    三元组也更像一个词（"适应症"），二元组（"应症"）噪声多。
+    """
+    keywords: dict = {}
     for w in re.findall(r"[a-zA-Z0-9]+", query):
         if len(w) >= 2:
-            keywords.add(w.lower())
+            keywords.setdefault(w.lower(), None)
     for seg in re.findall(r"[一-龥]+", query):
         if len(seg) <= 4:
-            keywords.add(seg)
+            keywords.setdefault(seg, None)
         else:
-            for i in range(len(seg) - 1):
-                keywords.add(seg[i:i + 2])
-    return list(keywords)
+            for i in range(len(seg) - 2):
+                keywords.setdefault(seg[i:i + 3], None)
+    return list(keywords)[:MAX_KEYWORDS]
 
 
 def is_configured() -> bool:

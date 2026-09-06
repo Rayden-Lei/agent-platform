@@ -147,7 +147,11 @@ def create_document(db: Session, kb_id: int, filename: str, content: bytes, cont
 def _doc_dict(d: Document) -> dict:
     return {
         "id": d.id, "kb_id": d.kb_id, "name": d.name, "file_type": d.file_type, "status": d.status,
-        "chunk_count": d.chunk_count, "error": d.error, "created_at": d.created_at.isoformat() if d.created_at else None,
+        "chunk_count": d.chunk_count, "chunk_total": d.chunk_total, "error": d.error,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        # 处理进度：前端按 chunk_count / chunk_total 算百分比，按 processing_started_at 算速度与剩余，按 finished_at 算总耗时
+        "processing_started_at": d.processing_started_at.isoformat() if d.processing_started_at else None,
+        "finished_at": d.finished_at.isoformat() if d.finished_at else None,
     }
 
 
@@ -193,6 +197,9 @@ def prepare_reprocess(db: Session, kb_id: int, doc_id: int) -> Document:
     doc.status = "uploading"
     doc.error = None
     doc.chunk_count = 0
+    doc.chunk_total = None
+    doc.processing_started_at = None
+    doc.finished_at = None
     db.commit()
     db.refresh(doc)
     return doc

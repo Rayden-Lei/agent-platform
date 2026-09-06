@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     RERANK_API_KEY: str = ""
     RERANK_MODEL: str = ""
     RERANK_TIMEOUT: int = 5
-    RERANK_CANDIDATES: int = 20
+    RERANK_CANDIDATES: int = 12  # 0.6B 重排 20 条 550 字要 1.6 秒，12 条约 1 秒；最终只取 top_k 4 条
     # 模型分阈值按 Qwen3-Reranker 实测标定：强相关 ≈ 0.99、弱相关 0.05～0.1、无关 < 0.01；宁可多留弱相关，提示词已要求不编造
     RERANK_MIN_SCORE: float = 0.02
     RERANK_GAP_RATIO: float = 0.02

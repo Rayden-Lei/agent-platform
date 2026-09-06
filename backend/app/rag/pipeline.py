@@ -5,6 +5,7 @@
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
@@ -138,10 +139,15 @@ def process_document(doc_id: int) -> None:
             db.commit()
 
             chunks = chunk_segments(segments, doc.file_type, kb.chunk_size or 500, kb.chunk_overlap or 50)
+            # 计划总数与开始时间先落库：前端据此显示百分比、速度与预计剩余
+            doc.chunk_total = len(chunks)
+            doc.processing_started_at = datetime.now(timezone.utc)
+            db.commit()
             if not chunks:
                 doc.status = "ready"
                 doc.chunk_count = 0
                 doc.error = None
+                doc.finished_at = datetime.now(timezone.utc)
                 db.commit()
                 logger.info("文档 %s 解析后无有效切片，标记为 ready", doc_id)
                 return
@@ -185,6 +191,7 @@ def process_document(doc_id: int) -> None:
 
             doc.status = "ready"
             doc.error = None
+            doc.finished_at = datetime.now(timezone.utc)
             db.commit()
             logger.info("文档 %s 处理完成：%d 个切片，向量后端 %s", doc_id, len(chunks), "/".join(sorted(degraded_models)) if degraded_models else "model")
     except Exception as e:
@@ -195,6 +202,7 @@ def process_document(doc_id: int) -> None:
         if failed_doc is not None:
             failed_doc.status = "failed"
             failed_doc.error = str(e)[:1000]
+            failed_doc.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
         db.close()
