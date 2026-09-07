@@ -101,7 +101,7 @@ def test_ingestion_commits_in_batches_and_tracks_progress(monkeypatch, kb_doc, i
 
     def _embed(texts, request_size=None):
         batches.append(len(texts))
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed)
     pipeline.process_document(doc_id)
@@ -132,7 +132,7 @@ def test_ingestion_failure_mid_way_keeps_committed_batches_and_marks_failed(monk
         calls["n"] += 1
         if calls["n"] == 3:
             raise RuntimeError("向量服务断了")
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed)
     pipeline.process_document(doc_id)
@@ -169,7 +169,7 @@ def test_documents_are_processed_one_at_a_time(monkeypatch, client, auth_headers
         start = _time.perf_counter()
         _time.sleep(0.4)
         windows[threading.get_ident()] = (start, _time.perf_counter())
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": "一段文本", "meta": {}}])
@@ -216,7 +216,7 @@ def test_queued_document_keeps_heartbeat_while_waiting(monkeypatch, client, auth
 
     def _slow_embed(texts, request_size=None):
         _time.sleep(4.0)  # 第一篇占住闸门 4 秒，第二篇在这期间一直排队
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "download_file", lambda remote, local: open(local, "w").close())
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": "一段文本", "meta": {}}])
@@ -267,12 +267,12 @@ def test_resume_continues_from_committed_batches_without_duplicates(monkeypatch,
         calls["n"] += 1
         if calls["n"] == 3:
             raise RuntimeError("向量服务断了")
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed_then_fail)
     pipeline.process_document(doc_id)
     sizes: list = []
-    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)))
     pipeline.process_document(doc_id, resume=True)
     assert sizes == [10, 5]  # 只补 20 之后的 15 片
     db = SessionLocal()
@@ -298,13 +298,13 @@ def test_resume_restarts_when_chunk_total_changed(monkeypatch, kb_doc, ingest_op
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("断")
-        return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+        return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
 
     monkeypatch.setattr(pipeline, "embed_texts_detailed", _embed_then_fail)
     pipeline.process_document(doc_id)  # 落了 10 片，chunk_total=30
     monkeypatch.setattr(pipeline, "parse_document", lambda path, ft: [{"content": f"标题: 药品{i}", "meta": {}} for i in range(25)])  # 总数变了
     sizes: list = []
-    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)))
+    monkeypatch.setattr(pipeline, "embed_texts_detailed", lambda texts, request_size=None: (sizes.append(len(texts)) or EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)))
     pipeline.process_document(doc_id, resume=True)
     assert sizes == [10, 10, 5]  # 从头重做
     db = SessionLocal()
@@ -404,7 +404,7 @@ def _parallel_embed_stub(sleep_seconds: float = 0.15):
             state["sizes"].append((len(texts), request_size))
         try:
             _time.sleep(sleep_seconds)
-            return EmbeddingResult([[0.0] * 1024 for _ in texts], "model", "pytest-embed", 1024)
+            return EmbeddingResult([[0.0] * settings.EMBEDDING_DIM for _ in texts], "model", "pytest-embed", settings.EMBEDDING_DIM)
         finally:
             with state["lock"]:
                 state["running"] -= 1
