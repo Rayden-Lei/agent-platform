@@ -194,7 +194,7 @@ def test_refresh_failure_keeps_state_and_build_keeps_truncated_excerpt(db, conve
     assert _refresh(db, conversation, llm_ok) is True and conversation.summary == "摘要内容"
 
 
-def test_schedule_summary_refresh_runs_in_background(db, conversation, monkeypatch):
+def test_schedule_summary_refresh_runs_in_background(client, auth_headers, db, conversation, monkeypatch):
     """路由在响应后调用的后台刷新：自己开会话、调用 refresh，并把结果落库。"""
     _add_messages(db, conversation, 35)
     calls: list = []
@@ -207,12 +207,19 @@ def test_schedule_summary_refresh_runs_in_background(db, conversation, monkeypat
 
     monkeypatch.setattr(chat_service, "refresh_conversation_summary", _fake_refresh)
     monkeypatch.setattr(chat_service, "build_llm", lambda model: object())
-    model_id = db.execute(__import__("sqlalchemy").text("SELECT id FROM models ORDER BY id LIMIT 1")).scalar()
-    thread = chat_service.schedule_summary_refresh(model_id, conversation.id)
-    thread.join(10)
-    assert not thread.is_alive()
-    assert calls == [(model_id, conversation.id)]
-    assert _fresh(conversation.id).summary == "后台摘要"
+    # 不能依赖库中已有模型：CI 是空库，SELECT ... LIMIT 1 会拿到 None，后台线程因 model 为空直接返回（2026-09-07 CI 失败根因）
+    mid = client.post("/api/v1/models", headers=auth_headers, json={
+        "name": "pytest-summary-model-bg", "provider": "openai", "api_base": "http://upstream.test/v1",
+        "api_key": "sk-test", "model_name": "x", "default_params": {},
+    }).json()["id"]
+    try:
+        thread = chat_service.schedule_summary_refresh(mid, conversation.id)
+        thread.join(10)
+        assert not thread.is_alive()
+        assert calls == [(mid, conversation.id)]
+        assert _fresh(conversation.id).summary == "后台摘要"
+    finally:
+        client.delete(f"/api/v1/models/{mid}", headers=auth_headers)
 
 
 def test_delete_conversation_cascades_messages(client, auth_headers, db, conversation):
