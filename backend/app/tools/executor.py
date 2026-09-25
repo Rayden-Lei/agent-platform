@@ -1,8 +1,8 @@
 import ast
 import json
 import logging
+import operator
 from datetime import datetime
-from typing import Any
 
 import httpx
 
@@ -39,17 +39,53 @@ async def _execute_builtin(name: str, args: dict) -> dict:
     return {"error": f"unknown builtin tool: {name}"}
 
 
-def _safe_eval(expr: str) -> Any:
-    """AST 白名单求值：只允许数字常量与 + - * / ** 运算，拒绝任意代码执行。
+# 计算器的资源上限（2026-09-25）：大整数运算在一次字节码里完成且持有 GIL，9**9**9 这类表达式会让整个后端进程停摆，
+# 而内置计算器挂在每个智能体上、任何能对话的人都能诱导模型调用。所以逐节点求值，每步先估规模再算
+CALC_MAX_EXPR_CHARS = 200  # 同时挡住超长乘法链与深嵌套括号（ast.parse 递归过深）
+CALC_MAX_INT_BITS = 1024  # 整数中间结果上限，约 308 位十进制；浮点溢出 Python 自己会抛 OverflowError
+CALC_MAX_EXPONENT = 1000
+_CALC_BIN_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.Pow: operator.pow}
+_CALC_UNARY_OPS = {ast.USub: operator.neg, ast.UAdd: operator.pos}
 
-    逐节点校验语法树类型，白名单之外一律抛 ValueError；随后在空命名空间里 eval。
+
+def _safe_eval(expr: str) -> int | float:
+    """白名单求值：只允许整数、小数常量与 + - * / ** 运算，拒绝任意代码执行，也拒绝算不完的大数。
+
+    不用 eval：逐节点递归求值，乘方先按"底数位数 × 指数"估结果大小，超限直接拒绝而不是算出来再判断。
+    非法或超限一律抛 ValueError（除零抛 ZeroDivisionError、浮点溢出抛 OverflowError），由调用方转成工具错误。
     """
-    tree = ast.parse(expr, mode="eval")
-    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd)
-    for node in ast.walk(tree):
-        if not isinstance(node, allowed):
-            raise ValueError("表达式仅支持数字与 + - * / **")
-    return eval(compile(tree, "<calc>", "eval"), {"__builtins__": {}}, {})
+    if len(expr) > CALC_MAX_EXPR_CHARS:
+        raise ValueError(f"表达式过长（上限 {CALC_MAX_EXPR_CHARS} 字符）")
+    return _calc_node(ast.parse(expr, mode="eval").body)
+
+
+def _calc_node(node: ast.AST) -> int | float:
+    # type() 精确匹配：bool 是 int 的子类、复数与字符串常量都不放行（'a'*10**9 能吃掉 1GB 内存）
+    if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+        return _calc_checked(node.value)
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _CALC_UNARY_OPS:
+        return _CALC_UNARY_OPS[type(node.op)](_calc_node(node.operand))
+    if isinstance(node, ast.BinOp) and type(node.op) in _CALC_BIN_OPS:
+        left, right = _calc_node(node.left), _calc_node(node.right)
+        if isinstance(node.op, ast.Pow):
+            _calc_check_pow(left, right)
+        return _calc_checked(_CALC_BIN_OPS[type(node.op)](left, right))
+    raise ValueError("表达式仅支持数字与 + - * / **")
+
+
+def _calc_check_pow(base: int | float, exponent: int | float) -> None:
+    if abs(exponent) > CALC_MAX_EXPONENT:
+        raise ValueError(f"指数过大（上限 {CALC_MAX_EXPONENT}）")
+    if isinstance(base, int) and isinstance(exponent, int) and exponent > 0 and abs(base).bit_length() * exponent > CALC_MAX_INT_BITS * 2:
+        raise ValueError("结果过大")
+
+
+def _calc_checked(value: int | float | complex) -> int | float:
+    if isinstance(value, complex):
+        raise ValueError("结果不是实数")
+    if isinstance(value, int) and value.bit_length() > CALC_MAX_INT_BITS:
+        raise ValueError("结果过大")
+    return value
 
 
 async def _execute_http(tool: Tool, args: dict) -> dict:
