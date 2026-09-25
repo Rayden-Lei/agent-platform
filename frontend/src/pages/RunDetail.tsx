@@ -54,7 +54,7 @@ export default function RunDetail() {
               <Button danger icon={<CloseOutlined />} loading={reviewing === run.id} onClick={() => review(run, 'rejected')}>拒绝</Button>
             </>
           )}
-          {run?.conversation_id && <Button onClick={() => navigate(`/chat?conversation=${run.conversation_id}`)}>查看会话</Button>}
+          {run?.conversation_id && <Button onClick={() => navigate(`/chat?conversation=${run.conversation_id}${run.agent_id ? `&agent=${run.agent_id}` : ''}`)}>查看会话</Button>}
           <Button icon={<ReloadOutlined />} onClick={() => reload()}>{live ? '自动刷新中' : '刷新'}</Button>
         </Space>
       }

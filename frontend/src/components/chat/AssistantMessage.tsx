@@ -5,42 +5,42 @@ import AnswerMarkdown from './AnswerMarkdown'
 import ContextCards from './ContextCards'
 import ThinkingTrace from './ThinkingTrace'
 import ToolChips from './ToolChips'
-import type { Msg } from './types'
-import { visibleNavItems } from '../../constants/nav'
-import { useAuth } from '../../store/auth'
+import type { ChatCapabilities, Msg } from './types'
 import { formatNumber } from '../../utils/format'
 import { fromNow } from '../../utils/time'
 
 const { Text } = Typography
 
 // 助手消息气泡：按“思考过程 → 工具调用 → 回答正文 → 引用来源卡片 → 脚注（Token 用量 / 时间 / 复制 / 运行记录）”的顺序拼装；
-// streaming 为 true 且正文为空时展示“思考中…”占位。运行记录链接只给菜单里有运行记录的角色，caller 点了必然 403
-export default function AssistantMessage({ msg, streaming }: { msg: Msg; streaming?: boolean }) {
+// streaming 为 true 且正文为空时展示“思考中…”占位。能看到哪些过程信息由 capabilities 决定（D-19），组件本身不读登录态，
+// 登录对话页、装配页调试、分享访客页各自传入
+export default function AssistantMessage({ msg, streaming, capabilities }: { msg: Msg; streaming?: boolean; capabilities: ChatCapabilities }) {
   const hasContent = msg.content.length > 0
-  const canViewRuns = visibleNavItems(useAuth((s) => s.user?.role)).some((item) => item.key === '/runs')
   const copy = () => navigator.clipboard?.writeText(msg.content).then(() => message.success('已复制'))
+  const usageText = capabilities.showUsage && msg.usage?.total_tokens
+    ? `Token ${formatNumber(msg.usage.total_tokens)}（输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} / 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}）`
+    : ''
 
   return (
     <div className="assistant-msg">
-      {/* 思考过程时间线：检索命中 + 工具步骤 + 生成回答 */}
+      {/* 思考过程时间线：检索命中条数 + 工具步骤 + 生成回答（只有步骤与状态，不含工具入参与片段内容） */}
       <ThinkingTrace citations={msg.citations} tools={msg.tools} running={streaming} />
-      {/* 工具调用标签条 */}
-      <ToolChips tools={msg.tools} />
+      {/* 工具调用标签条；showToolDetails 关掉时只显示工具名 */}
+      <ToolChips tools={msg.tools} showDetails={capabilities.showToolDetails} />
       {hasContent ? (
-        <AnswerMarkdown content={msg.content} citations={msg.citations} />
+        <AnswerMarkdown content={msg.content} citations={capabilities.showCitations ? msg.citations : undefined} />
       ) : streaming ? (
         <div className="assistant-typing">思考中…</div>
       ) : null}
-      {/* 引用来源卡片 */}
-      <ContextCards citations={msg.citations} />
+      {capabilities.showCitations && <ContextCards citations={msg.citations} />}
       {!streaming && (hasContent || msg.usage) && (
         <div className="usage-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {msg.usage?.total_tokens ? `Token ${formatNumber(msg.usage.total_tokens)}（输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} / 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}）` : ''}
-            {msg.createdAt ? `${msg.usage?.total_tokens ? ' · ' : ''}${fromNow(msg.createdAt)}` : ''}
+            {usageText}
+            {msg.createdAt ? `${usageText ? ' · ' : ''}${fromNow(msg.createdAt)}` : ''}
           </Text>
           <Space size={4}>
-            {msg.runId && canViewRuns && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
+            {msg.runId && capabilities.showRunLink && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
             <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} />
           </Space>
         </div>

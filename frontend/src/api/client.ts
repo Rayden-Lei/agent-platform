@@ -8,6 +8,15 @@ const client = axios.create({
   timeout: 30000,
 })
 
+// 凭证失效（401）：清掉本地登录态并跳回登录页。axios 拦截器与对话流（fetch，绕开拦截器）共用这一处
+export function clearLoginAndRedirect() {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user')
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login'
+  }
+}
+
 // 请求拦截器：从 localStorage 取登录 token，注入 Authorization 头（Bearer 前缀）
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
@@ -31,14 +40,8 @@ client.interceptors.response.use(
     if (err.response?.status === 429 && retryAfter && err.response?.data?.detail && !/重试|再试/.test(err.response.data.detail)) {
       err.response.data.detail = `${err.response.data.detail}（${retryAfter} 秒后可重试）`
     }
-    // 401：凭证失效，清掉本地登录态并跳回登录页（统一处理，各页面无需重复写）
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login'
-      }
-    }
+    // 401：凭证失效（统一处理，各页面无需重复写）
+    if (err.response?.status === 401) clearLoginAndRedirect()
     return Promise.reject(err)
   },
 )

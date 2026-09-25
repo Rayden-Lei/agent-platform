@@ -1,3 +1,4 @@
+import { clearLoginAndRedirect } from './client'
 import { del, get, type Page, type PageQuery } from './core'
 
 // ===== 会话与消息（docs/04 4.6）=====
@@ -23,13 +24,13 @@ export interface MessageRow {
 }
 
 export const listConversations = (params?: PageQuery) => get<Page<ConversationRow>>('/conversations', params)
+export const getConversation = (id: number) => get<ConversationRow>(`/conversations/${id}`)
 export const listMessages = (id: number) => get<MessageRow[]>(`/conversations/${id}/messages`)
 export const deleteConversation = (id: number) => del(`/conversations/${id}`)
 
 // ===== 对话流式接口（SSE，docs/04 第 5 节）=====
-// axios 不支持浏览器端 SSE 流式读取，此处用 fetch 直连；凭据读取方式与 client 拦截器保持一致。
-// 协议约定（与后端 /agents/{id}/chat 对应）：响应为 SSE 事件流，每个事件以 \n\n 分隔，
-// 事件体是 JSON，形如 {"type": "<事件类型>", ...}。事件类型见 chatAgentStream 内的 switch。
+// axios 不支持浏览器端 SSE 流式读取，此处用 fetch 直连；凭据读取、401 与错误文案的口径与 client 拦截器、utils/errors 一致。
+// 协议约定：响应为 SSE 事件流，每个事件以 \n\n 分隔，事件体是 JSON，形如 {"type": "<事件类型>", ...}，事件类型见 streamSse 内的 switch。
 export interface ChatStreamHandlers {
   onCitations?: (citations: any[]) => void
   onDelta?: (content: string) => void
@@ -40,26 +41,38 @@ export interface ChatStreamHandlers {
   onDone?: (evt: { conversation_id?: number; run_id?: number; message_id?: number; usage?: ChatTokenUsage }) => void
 }
 
-// 返回 Promise<number | null>：流结束后返回最新的 conversation_id。
-// 首条消息时后端会新建会话并在此回传新 id；后续消息返回原 id。
-export const chatAgentStream = async (
-  agentId: number,
-  payload: { message: string; conversation_id: number | null },
-  handlers: ChatStreamHandlers,
-  signal?: AbortSignal,
-): Promise<number | null> => {
+export interface ChatPayload { message: string; conversation_id: number | null }
+// 发送函数：对话组件与 useChatStream 不绑定具体接口，由页面注入（登录对话、装配页调试、分享访客各一个）
+export type ChatTransport = (payload: ChatPayload, handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<number | null>
+
+// 非 2xx 的错误文案：422 是 FastAPI 的逐字段数组，取首条 msg（此前直接显示成 [object Object]）；5xx 拼上追踪 ID
+async function streamErrorText(res: Response): Promise<string> {
+  const body = await res.json().catch(() => ({})) as { detail?: unknown; trace_id?: string }
+  const detail = body.detail
+  let text = ''
+  if (Array.isArray(detail)) text = String((detail[0] as { msg?: string } | undefined)?.msg || '').replace(/^Value error, /, '')
+  else if (typeof detail === 'string') text = detail
+  text = text || '请求失败'
+  const traceId = body.trace_id || res.headers.get('x-request-id')
+  return res.status >= 500 && traceId ? `${text}（trace: ${traceId}）` : text
+}
+
+// 通用 SSE 流：POST JSON，逐个事件回调，返回流结束时最新的 conversation_id（首条消息时新会话的 id 在 done 事件里首次出现）。
+// 登录对话、装配页调试、分享访客都是它的薄封装，新增事件类型在下面的 switch 里加分支。
+// 401 与 axios 拦截器同样处理：清登录态回登录页（此前这里只弹一句提示，停在原页面）
+export async function streamSse(url: string, body: ChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal): Promise<number | null> {
   const token = localStorage.getItem('token')
-  const res = await fetch('/api/v1/agents/' + agentId + '/chat', {
+  const res = await fetch('/api/v1' + url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify(payload),
-    signal, // 传入 AbortSignal 即可由调用方（Chat 页的"停止"按钮）中断整个流
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(body),
+    signal, // 传入 AbortSignal 即可由调用方（"停止"按钮）中断整个流
   })
-  // 非 2xx：尝试解析后端的 detail/message 作为错误信息抛出，供页面直接提示
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err && (err.detail || err.message)) || '请求失败')
+  if (res.status === 401) {
+    clearLoginAndRedirect()
+    throw new Error('登录已失效，请重新登录')
   }
+  if (!res.ok) throw new Error(await streamErrorText(res))
   if (!res.body) throw new Error('响应无内容')
 
   // SSE 解析：按 \n\n 切分事件块；buffer 保留未成块的残片，
@@ -67,7 +80,7 @@ export const chatAgentStream = async (
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  let newCid: number | null = payload.conversation_id
+  let newCid: number | null = body.conversation_id
 
   while (true) {
     const { done, value } = await reader.read()
@@ -108,3 +121,7 @@ export const chatAgentStream = async (
   // 返回最新 conversation_id：首条消息时为新建会话的 id（null→数字），供页面刷新会话列表
   return newCid
 }
+
+// 登录用户与已发布智能体对话
+export const chatAgentStream = (agentId: number, payload: ChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal) =>
+  streamSse(`/agents/${agentId}/chat`, payload, handlers, signal)

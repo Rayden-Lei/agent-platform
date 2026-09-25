@@ -27,6 +27,18 @@ export interface ChatUsage {
   total_tokens?: number
 }
 
+// 对话面板能看到哪些过程信息（docs/15 D-19）：登录对话页按角色给，分享页按链接配置给，装配页调试全开。
+// 组件默认取"最少暴露"，调用方显式放开
+export interface ChatCapabilities {
+  showRunLink: boolean // 回答脚注的"运行记录"链接（运行记录只对 admin / developer 开放）
+  showToolDetails: boolean // 工具的入参与结果（入参可能含内部地址）；关掉时只显示工具名
+  showCitations: boolean // 引用来源卡片与正文里的 [n] 悬浮出处
+  showUsage: boolean // Token 用量
+  allowRegenerate: boolean
+}
+export const MINIMAL_CAPABILITIES: ChatCapabilities = { showRunLink: false, showToolDetails: false, showCitations: false, showUsage: false, allowRegenerate: false }
+export const FULL_CAPABILITIES: ChatCapabilities = { showRunLink: true, showToolDetails: true, showCitations: true, showUsage: true, allowRegenerate: true }
+
 // 聊天消息统一结构：user 消息通常只有 content，assistant 消息可携带 citations / tools / usage / runId（本轮运行记录，可跳详情）
 export interface Msg {
   id?: number

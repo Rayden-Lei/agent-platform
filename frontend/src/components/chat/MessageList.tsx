@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Typography } from 'antd'
 import AssistantMessage from './AssistantMessage'
 import EmptyState from '../common/EmptyState'
-import type { Msg } from './types'
+import type { ChatCapabilities, Msg } from './types'
 import { fromNow } from '../../utils/time'
 
 // 消息流：user 气泡 + assistant 组件；最后一条发送中的 assistant 消息按流式渲染；新消息到达自动滚到底。
@@ -12,9 +12,10 @@ interface Props {
   isMobile: boolean
   loading?: boolean
   emptyHint: string
+  capabilities: ChatCapabilities
 }
 
-export default function MessageList({ messages, sending, isMobile, loading, emptyHint }: Props) {
+export default function MessageList({ messages, sending, isMobile, loading, emptyHint, capabilities }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, sending])
   return (
@@ -32,7 +33,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
               </>
             ) : (
               <div className="assistant-bubble" style={{ maxWidth: isMobile ? '94%' : '78%' }}>
-                <AssistantMessage msg={m} streaming={isStreaming} />
+                <AssistantMessage msg={m} streaming={isStreaming} capabilities={capabilities} />
               </div>
             )}
           </div>

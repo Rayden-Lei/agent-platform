@@ -1,16 +1,17 @@
 import { useRef, useState } from 'react'
 import { message } from 'antd'
-import { chatAgentStream } from '../../api'
+import type { ChatTransport } from '../../api'
 import type { Msg } from './types'
 
 // 对话发送的状态机：追加占位消息 → SSE 流式 patch 最后一条 assistant → 结束后回传会话 id；支持停止与重新生成。
+// 发送函数由页面注入（transport）：登录对话、装配页调试、分享访客共用这一套状态机，本身不绑定任何接口；没有 transport 时不发送
 interface Options {
-  agentId?: number
+  transport?: ChatTransport
   conversationId: number | null
   onConversationCreated: (id: number) => void
 }
 
-export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React.SetStateAction<Msg[]>>, { agentId, conversationId, onConversationCreated }: Options) {
+export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React.SetStateAction<Msg[]>>, { transport, conversationId, onConversationCreated }: Options) {
   const [sending, setSending] = useState(false)
   // 当前流式请求的 AbortController："停止"按钮通过它中断整个 SSE 流
   const abortRef = useRef<AbortController | null>(null)
@@ -29,7 +30,7 @@ export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React
 
   // 核心发送逻辑：msg 为本次输入，isRegen 表示"重新生成"（基于上一条用户消息重发）
   const doSend = async (msg: string, isRegen: boolean) => {
-    if (!msg || !agentId || sending) return
+    if (!msg || !transport || sending) return
     if (isRegen) {
       // 重新生成：弹掉最后一条 assistant（上次的回答），再补一条新的空占位
       setMessages((prev) => { const next = [...prev]; next.pop(); next.push({ role: 'assistant', content: '' }); return next })
@@ -40,7 +41,7 @@ export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      const newCid = await chatAgentStream(agentId, { message: msg, conversation_id: conversationId }, {
+      const newCid = await transport({ message: msg, conversation_id: conversationId }, {
         onCitations: (citations) => patchLast((last) => { last.citations = citations }),
         onDelta: (content) => patchLast((last) => { last.content += content }),
         onToolCall: (tc) => patchLast((last) => {

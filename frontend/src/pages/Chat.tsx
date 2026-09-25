@@ -1,22 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Grid, Select, Typography, message } from 'antd'
 import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
-import { listAvailableAgents, listConversations, listMessages, OPTIONS_PAGE, type AgentBrief, type ConversationRow } from '../api'
+import { chatAgentStream, deleteConversation, getConversation, listAvailableAgents, listConversations, listMessages, OPTIONS_PAGE, type AgentBrief, type ChatTransport, type ConversationRow } from '../api'
 import { visibleNavItems } from '../constants/nav'
 import { useQueryState } from '../hooks/useQueryState'
 import { useAuth } from '../store/auth'
+import ChatPanel from '../components/chat/ChatPanel'
 import ConversationList from '../components/chat/ConversationList'
-import MessageList from '../components/chat/MessageList'
-import ChatInput from '../components/chat/ChatInput'
 import { useChatStream } from '../components/chat/useChatStream'
-import type { Msg, ToolStep } from '../components/chat/types'
+import { toChatMessages } from '../components/chat/messages'
+import { FULL_CAPABILITIES, type ChatCapabilities, type Msg } from '../components/chat/types'
 import { errorText } from '../utils/errors'
 
 const { useBreakpoint } = Grid
 const PAGE = 50
+// 与后端 CHAT_MESSAGE_MAX_CHARS 的默认值一致；这里只是体验，超长的权威拒绝在后端（422）
+const CHAT_MESSAGE_MAX_CHARS = 8000
 
-// 聊天页：左侧按当前智能体过滤的会话列表 + 右侧消息流。智能体与会话通过 ?agent= 与 ?conversation= 深链，
-// 可从智能体详情、运行详情跳入；发送走 SSE 流式接口（useChatStream）。
+// 聊天页：左侧按当前智能体过滤的会话列表 + 右侧对话面板（ChatPanel，与装配页调试、分享访客页共用）。
+// 智能体与会话通过 ?agent= 与 ?conversation= 深链，可从智能体详情、运行详情跳入；发送走 SSE 流式接口（useChatStream + chatAgentStream）。
 export default function Chat() {
   const screens = useBreakpoint()
   const isMobile = !screens.md
@@ -24,7 +26,11 @@ export default function Chat() {
   const agentId = query.agent ? Number(query.agent) : undefined
   const conversationId = query.conversation ? Number(query.conversation) : null
   const [agents, setAgents] = useState<AgentBrief[]>([])
-  const canManageAgents = visibleNavItems(useAuth((s) => s.user?.role)).some((item) => item.key === '/agents')
+  const role = useAuth((s) => s.user?.role)
+  const canManageAgents = visibleNavItems(role).some((item) => item.key === '/agents')
+  // docs/15 D-19：admin / developer 全部可见；调用者不看运行记录链接（无权访问）与工具入参和结果（可能含内部地址）
+  const canViewRuns = visibleNavItems(role).some((item) => item.key === '/runs')
+  const capabilities = useMemo<ChatCapabilities>(() => (canViewRuns ? FULL_CAPABILITIES : { ...FULL_CAPABILITIES, showRunLink: false, showToolDetails: false }), [canViewRuns])
   const [conversations, setConversations] = useState<ConversationRow[]>([])
   const [total, setTotal] = useState(0)
   const [q, setQ] = useState<string | undefined>()
@@ -32,10 +38,25 @@ export default function Chat() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [showList, setShowList] = useState(false)
 
-  // 可对话列表只含已发布的智能体，所有角色都能取（管理用的 /agents 列表 caller 无权访问）；URL 没指定时默认第一个
+  // 可对话列表只含已发布的智能体，所有角色都能取（管理用的 /agents 列表 caller 无权访问）。
+  // URL 没带智能体时：带了会话就按会话定智能体（落到第一个的话接着发送会被 404 拒绝），都没带默认第一个
   useEffect(() => {
     listAvailableAgents(OPTIONS_PAGE)
-      .then((p) => { setAgents(p.items); if (!agentId && p.items.length) setQuery({ agent: String(p.items[0].id) }) })
+      .then(async (p) => {
+        setAgents(p.items)
+        if (agentId) return
+        const patch: { agent?: string; conversation?: string } = { agent: p.items[0] ? String(p.items[0].id) : undefined }
+        if (conversationId) {
+          try {
+            const conv = await getConversation(conversationId)
+            if (conv.agent_id) patch.agent = String(conv.agent_id)
+          } catch (e) {
+            message.error(errorText(e, '会话不存在或已删除'))
+            patch.conversation = undefined
+          }
+        }
+        setQuery(patch)
+      })
       .catch((e) => message.error(errorText(e, '加载智能体失败')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -50,28 +71,25 @@ export default function Chat() {
   }, [agentId, q])
   useEffect(() => { loadConversations(1) }, [loadConversations])
 
-  // 切换会话：拉取历史并归一化成 Msg（tool_calls → tools、token_usage → usage）；切走时先清空避免露出旧内容
+  // 切换会话：拉取历史并归一化成对话面板的消息结构；切走时先清空避免露出旧内容
   useEffect(() => {
     if (!conversationId) { setMessages([]); return }
     let cancelled = false
     setMessages([])
     setLoadingMessages(true)
     listMessages(conversationId)
-      .then((rows) => {
-        if (cancelled) return
-        setMessages(rows.map((m): Msg => ({
-          id: m.id, role: m.role as Msg['role'], content: m.content, citations: (m.citations as Msg['citations']) || [],
-          tools: ((m.tool_calls || []) as Array<{ id?: string; name: string; args?: unknown; arguments?: unknown; result?: string }>).map((t): ToolStep => ({ id: t.id, name: t.name, args: t.args ?? t.arguments ?? {}, status: 'done', result: t.result })),
-          usage: m.token_usage || undefined, createdAt: m.created_at,
-        })))
-      })
+      .then((rows) => { if (!cancelled) setMessages(toChatMessages(rows)) })
       .catch((e) => { if (!cancelled) message.error(errorText(e, '加载历史失败')) })
       .finally(() => { if (!cancelled) setLoadingMessages(false) })
     return () => { cancelled = true }
   }, [conversationId])
 
+  const transport = useMemo<ChatTransport | undefined>(
+    () => (agentId ? (payload, handlers, signal) => chatAgentStream(agentId, payload, handlers, signal) : undefined),
+    [agentId],
+  )
   const stream = useChatStream(messages, setMessages, {
-    agentId, conversationId,
+    transport, conversationId,
     onConversationCreated: (id) => { setQuery({ conversation: String(id) }); loadConversations(1) },
   })
   const currentAgent = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId])
@@ -85,6 +103,11 @@ export default function Chat() {
     />
   )
   const newConversation = () => { setQuery({ conversation: undefined }); setMessages([]); setShowList(false) }
+  const removeConversation = async (id: number) => {
+    await deleteConversation(id)
+    if (conversationId === id) newConversation()
+    loadConversations(1)
+  }
 
   const sidebar = (
     <div style={{ width: isMobile ? '100%' : 236, border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, flexShrink: 0, height: '100%', minHeight: 0, background: '#fff' }}>
@@ -93,25 +116,29 @@ export default function Chat() {
         onSelect={(id) => { setQuery({ conversation: String(id) }); setShowList(false) }}
         onNew={newConversation}
         onLoadMore={() => loadConversations(Math.floor(conversations.length / PAGE) + 1)}
-        onDeleted={(id) => { if (conversationId === id) newConversation(); loadConversations(1) }}
+        onDelete={removeConversation}
         agentSelector={agentSelector}
       />
     </div>
   )
 
-  const chatArea = (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 8, minWidth: 0, minHeight: 0, background: '#fff' }}>
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {isMobile && <Button size="small" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Typography.Text strong>{currentAgent?.name ?? '未选择智能体'}</Typography.Text>
-          {currentAgent?.description && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{currentAgent.description}</Typography.Text>}
-        </div>
-        {isMobile && <Button size="small" icon={<PlusOutlined />} onClick={newConversation} />}
+  const header = (
+    <>
+      {isMobile && <Button size="small" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Typography.Text strong>{currentAgent?.name ?? '未选择智能体'}</Typography.Text>
+        {currentAgent?.description && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{currentAgent.description}</Typography.Text>}
       </div>
-      <MessageList messages={messages} sending={stream.sending} isMobile={isMobile} loading={loadingMessages} emptyHint={currentAgent ? `向「${currentAgent.name}」发送第一条消息开始对话` : '先在左侧选择一个已发布的智能体'} />
-      <ChatInput disabled={!agentId} sending={stream.sending} canRegenerate={messages.some((m) => m.role === 'user')} onSend={stream.send} onStop={stream.stop} onRegenerate={stream.regenerate} compact={isMobile} />
-    </div>
+      {isMobile && <Button size="small" icon={<PlusOutlined />} onClick={newConversation} />}
+    </>
+  )
+  const chatArea = (
+    <ChatPanel
+      header={header} messages={messages} sending={stream.sending} loading={loadingMessages} isMobile={isMobile}
+      emptyHint={currentAgent ? `向「${currentAgent.name}」发送第一条消息开始对话` : '先在左侧选择一个已发布的智能体'}
+      inputDisabled={!agentId} maxLength={CHAT_MESSAGE_MAX_CHARS} capabilities={capabilities}
+      onSend={stream.send} onStop={stream.stop} onRegenerate={stream.regenerate}
+    />
   )
 
   if (isMobile) return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{showList ? sidebar : chatArea}</div>

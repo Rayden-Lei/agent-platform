@@ -1,13 +1,13 @@
 import { Button, List, Popconfirm, Tooltip, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import type { ConversationRow } from '../../api'
-import { deleteConversation } from '../../api'
 import EmptyState from '../common/EmptyState'
 import SearchInput from '../common/SearchInput'
 import { errorText } from '../../utils/errors'
 import { fromNow } from '../../utils/time'
 
 // 会话侧栏：按当前智能体过滤的会话列表，标题搜索、相对时间、消息数、摘要提示、加载更多、删除。
+// 展示组件不发请求（07 第 9 节）：删除由页面注入，失败在这里提示
 interface Props {
   conversations: ConversationRow[]
   total: number
@@ -17,14 +17,14 @@ interface Props {
   onSelect: (id: number) => void
   onNew: () => void
   onLoadMore: () => void
-  onDeleted: (id: number) => void
+  onDelete: (id: number) => Promise<void>
   agentSelector: React.ReactNode
   loading?: boolean
 }
 
-export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDeleted, agentSelector, loading }: Props) {
+export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDelete, agentSelector, loading }: Props) {
   const remove = async (id: number) => {
-    try { await deleteConversation(id); onDeleted(id) } catch (e) { message.error(errorText(e, '删除会话失败')) }
+    try { await onDelete(id) } catch (e) { message.error(errorText(e, '删除会话失败')) }
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', minHeight: 0 }}>
