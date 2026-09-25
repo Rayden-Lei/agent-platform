@@ -1,4 +1,5 @@
 import { batchAction, del, get, post, put, type Page, type PageQuery } from './core'
+import type { ModelParams } from './models'
 
 // ===== 智能体（docs/04 4.4，含发布、版本历史与回滚）=====
 export interface AgentRow {
@@ -7,7 +8,7 @@ export interface AgentRow {
   description: string | null
   system_prompt: string
   model_id: number
-  params: Record<string, unknown>
+  params: ModelParams // 覆盖模型的 default_params，留空的键继承
   kb_ids: number[]
   tool_ids: number[]
   workflow_id: number | null
@@ -34,7 +35,7 @@ export interface AgentInput {
   description?: string
   system_prompt?: string
   model_id: number
-  params?: Record<string, unknown>
+  params?: ModelParams
   kb_ids?: number[]
   tool_ids?: number[]
   workflow_id?: number | null

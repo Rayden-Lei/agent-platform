@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Form, Input, Modal, Select, message } from 'antd'
-import { createAgent, listKBs, listModels, listPromptTemplates, listTools, listWorkflows, OPTIONS_PAGE, updateAgent, type AgentInput, type AgentRow, type PromptTemplateRow } from '../../api'
+import { compactParams, createAgent, listKBs, listModels, listPromptTemplates, listTools, listWorkflows, OPTIONS_PAGE, updateAgent, type AgentInput, type AgentRow, type ModelRow, type PromptTemplateRow } from '../../api'
 import { errorText } from '../../utils/errors'
 import AgentTemplateFields from '../prompt/AgentTemplateFields'
 import AgentParamsFields from './AgentParamsFields'
@@ -18,18 +18,19 @@ interface Option { value: number; label: string }
 
 export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
   const [form] = Form.useForm()
-  const [models, setModels] = useState<Option[]>([])
+  const [models, setModels] = useState<ModelRow[]>([])
   const [tools, setTools] = useState<Option[]>([])
   const [kbs, setKBs] = useState<Option[]>([])
   const [workflows, setWorkflows] = useState<Option[]>([])
   const [templates, setTemplates] = useState<PromptTemplateRow[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const modelId = Form.useWatch('model_id', form) // 高级参数的占位文字显示所选模型的默认值
 
   useEffect(() => {
     if (!open) return
     Promise.all([listModels(OPTIONS_PAGE), listTools(OPTIONS_PAGE), listKBs(OPTIONS_PAGE), listWorkflows(OPTIONS_PAGE), listPromptTemplates(OPTIONS_PAGE)])
       .then(([m, t, k, w, p]) => {
-        setModels(m.items.map((x) => ({ value: x.id, label: x.is_enabled ? x.name : `${x.name}（已停用）` })))
+        setModels(m.items)
         setTools(t.items.map((x) => ({ value: x.id, label: x.is_enabled ? x.name : `${x.name}（已停用）` })))
         setKBs(k.items.map((x) => ({ value: x.id, label: x.name })))
         setWorkflows(w.items.map((x) => ({ value: x.id, label: x.name })))
@@ -46,8 +47,7 @@ export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
     const payload: AgentInput = use_template
       ? { ...base, system_prompt: '', prompt_template_id: base.prompt_template_id, prompt_variables: base.prompt_variables || {} }
       : { ...base, prompt_template_id: null, prompt_variables: {} }
-    // 高级参数留空的键不提交，避免把 undefined / null 透传给模型
-    payload.params = Object.fromEntries(Object.entries(payload.params || {}).filter(([, v]) => v !== undefined && v !== null))
+    payload.params = compactParams(payload.params) // 留空的键不提交：留空表示继承模型默认
     setSubmitting(true)
     try {
       if (editing) await updateAgent(editing.id, payload)
@@ -69,7 +69,7 @@ export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
         <Form.Item name="description" label="描述"><Input /></Form.Item>
         <AgentTemplateFields form={form} templates={templates} />
         <Form.Item name="model_id" label="模型" rules={[{ required: true }]}>
-          <Select showSearch optionFilterProp="label" options={models} />
+          <Select showSearch optionFilterProp="label" options={models.map((x) => ({ value: x.id, label: x.is_enabled ? x.name : `${x.name}（已停用）` }))} />
         </Form.Item>
         <Form.Item name="tool_ids" label="工具" extra="内置的时间与计算器工具总是可用；这里绑定自定义 HTTP 工具">
           <Select mode="multiple" optionFilterProp="label" options={tools} allowClear />
@@ -80,7 +80,7 @@ export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
         <Form.Item name="workflow_id" label="关联工作流（预留）">
           <Select allowClear showSearch optionFilterProp="label" options={workflows} placeholder="当前对话不使用" />
         </Form.Item>
-        <AgentParamsFields />
+        <AgentParamsFields inherited={models.find((m) => m.id === modelId)?.default_params} />
       </Form>
     </Modal>
   )

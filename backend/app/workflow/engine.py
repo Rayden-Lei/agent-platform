@@ -213,7 +213,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
                 _finish_node(rn_id, "failed", out["output"], "智能体不存在")
                 return out
             model = db.get(ModelConfig, agent.model_id)
-            llm = build_llm(model)
+            llm = build_llm(model, agent.params)  # 与对话同一口径：智能体参数覆盖模型默认（FR-042）
             # 经熔断包装：打开期直接抛 503，节点按失败收尾，错误文本含"熔断中"
             resp = guarded_invoke(model, llm, [
                 SystemMessage(content=prompt_override or agent.system_prompt),

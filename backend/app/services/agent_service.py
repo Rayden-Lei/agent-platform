@@ -112,7 +112,7 @@ def create_agent(db: Session, data: AgentIn, user: User) -> dict:
         name=data.name,
         description=data.description,
         model_id=data.model_id,
-        params=data.params,
+        params=data.params.to_dict(),
         kb_ids=data.kb_ids,
         tool_ids=data.tool_ids,
         workflow_id=data.workflow_id,
@@ -161,7 +161,7 @@ def update_agent(db: Session, agent_id: int, data: AgentIn) -> dict:
     a.name = data.name
     a.description = data.description
     a.model_id = data.model_id
-    a.params = data.params
+    a.params = data.params.to_dict()
     a.kb_ids = data.kb_ids
     a.tool_ids = data.tool_ids
     a.workflow_id = data.workflow_id

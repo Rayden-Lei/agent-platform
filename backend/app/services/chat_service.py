@@ -268,7 +268,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     if model is None or not model.is_enabled:
         raise BizError(400, "模型不可用")
 
-    llm = build_llm(model)
+    llm = build_llm(model, agent.params)  # 智能体参数覆盖模型默认（FR-042）
     tool_dbs = db.query(Tool).filter(Tool.id.in_(agent.tool_ids)).all() if agent.tool_ids else []
     tools = build_tools(tool_dbs)
 

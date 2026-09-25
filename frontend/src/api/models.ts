@@ -1,13 +1,25 @@
 import { batchAction, del, get, post, put, type Page, type PageQuery } from './core'
 
 // ===== 模型（docs/04 4.3）=====
+// 模型调用参数：模型的 default_params 与智能体的 params 同一结构（后端 schemas.ModelParams，只认这四个键，未知键 422）。
+// 运行时按"模型默认 ← 智能体覆盖"合并，留空的键继承上一层
+export interface ModelParams {
+  temperature?: number | null
+  top_p?: number | null
+  max_tokens?: number | null
+  thinking?: 'disabled' | 'enabled' | null
+}
+// 提交前去掉留空的键：留空表示继承 / 不设置，不能把 null 当显式值发给后端
+export const compactParams = (params?: ModelParams | null): ModelParams =>
+  Object.fromEntries(Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')) as ModelParams
+
 export interface ModelRow {
   id: number
   name: string
   provider: string
   api_base: string
   model_name: string
-  default_params: Record<string, unknown>
+  default_params: ModelParams
   is_enabled: boolean
   price_input: number | null
   price_output: number | null
@@ -23,7 +35,7 @@ export interface ModelInput {
   api_base: string
   api_key?: string // 编辑时留空表示沿用已有密钥
   model_name: string
-  default_params?: Record<string, unknown>
+  default_params?: ModelParams
   price_input?: number | null
   price_output?: number | null
 }

@@ -1,6 +1,6 @@
 """模型网关：把数据库中的 ModelConfig 统一转成 LangChain ChatModel（OpenAI 兼容协议），并给调用套上熔断。
 
-集中处理 API Key 解密、base_url 归一化、流式开关与 default_params 映射，
+集中处理 API Key 解密、base_url 归一化、流式开关与调用参数合并（模型默认 ← 智能体覆盖），
 上层（对话、工作流 agent 节点、连通测试）只面对 ChatOpenAI 实例与三个 guarded_* 包装。
 """
 import threading
@@ -15,32 +15,45 @@ from app.db.models import ModelConfig
 from app.model_gateway import breaker
 
 
-# 按 (模型 id, updated_at) 缓存 ChatOpenAI 实例：底层 httpx 连接池得以复用，省掉每次对话的 TLS 握手；
+# 按 (模型 id, updated_at, 生效参数) 缓存 ChatOpenAI 实例：底层 httpx 连接池得以复用，省掉每次对话的 TLS 握手；
 # 模型配置任何改动都会刷新 updated_at，自然换新实例。实例本身线程安全，流式状态是每次调用私有的。
 _LLM_CACHE: "OrderedDict[tuple, ChatOpenAI]" = OrderedDict()
 _LLM_CACHE_LOCK = threading.Lock()
 _LLM_CACHE_MAX = 64
 
+# 模型调用参数的白名单，与 schemas.ModelParams 一致；库里的存量值也只认这几个键
+PARAM_KEYS = ("temperature", "top_p", "max_tokens", "thinking")
 
-def build_llm(model: ModelConfig):
-    """根据数据库模型配置构建 LangChain ChatModel（OpenAI 兼容协议），同一配置复用实例。
 
-    返回的实例默认开启 streaming（对话接口依赖流式输出）；
-    default_params 中显式配置的采样参数（temperature/max_tokens/top_p）透传，未配置的用模型默认值；
+def effective_params(model: ModelConfig, overrides: dict | None = None) -> dict:
+    """生效参数：模型 default_params ← 智能体 params 覆盖。只认白名单键；值为空的键不覆盖，即"留空 = 继承模型默认"。"""
+    merged = {k: v for k, v in (model.default_params or {}).items() if k in PARAM_KEYS and v is not None}
+    merged.update({k: v for k, v in (overrides or {}).items() if k in PARAM_KEYS and v is not None})
+    return merged
+
+
+def build_llm(model: ModelConfig, overrides: dict | None = None):
+    """根据模型配置构建 LangChain ChatModel（OpenAI 兼容协议），同一配置 + 同一生效参数复用实例。
+
+    overrides 传智能体的 params（对话、工作流智能体节点都传；摘要、连通测试用模型默认）；
+    2026-09-25 前这里只读模型默认，智能体的"高级参数"从未生效。
+    返回的实例默认开启 streaming（对话接口依赖流式输出）；temperature / top_p / max_tokens 只在设置了时透传，
     thinking（disabled / enabled）以 extra_body 透传给 DeepSeek 类混合推理模型。
     max_retries 显式传 MODEL_MAX_RETRIES（默认 0）：不设的话 SDK 默认重试 2 次，超时类故障一次"失败"
     实际要等 3 × MODEL_HTTP_TIMEOUT；故障处理统一交给熔断器。
     """
-    key = (model.id, str(model.updated_at), model.api_base, model.model_name)
+    params = effective_params(model, overrides)
+    key = (model.id, str(model.updated_at), model.api_base, model.model_name, tuple(sorted(params.items())))
     with _LLM_CACHE_LOCK:
         cached = _LLM_CACHE.get(key)
         if cached is not None:
             _LLM_CACHE.move_to_end(key)
             return cached
-    llm = _new_llm(model)
+    llm = _new_llm(model, params)
     with _LLM_CACHE_LOCK:
-        # 同一模型的旧配置实例直接淘汰，其余按 LRU 限量
-        for old_key in [k for k in _LLM_CACHE if k[0] == model.id]:
+        # 只淘汰这个模型的旧配置实例（updated_at 不同）；同一配置下参数不同的实例共存，
+        # 否则共用一个模型的两个智能体交替对话会互相把对方挤出缓存、每次重建连接池
+        for old_key in [k for k in _LLM_CACHE if k[0] == model.id and k[1] != key[1]]:
             _LLM_CACHE.pop(old_key, None)
         _LLM_CACHE[key] = llm
         while len(_LLM_CACHE) > _LLM_CACHE_MAX:
@@ -54,8 +67,7 @@ def reset_llm_cache() -> None:
         _LLM_CACHE.clear()
 
 
-def _new_llm(model: ModelConfig):
-    params = model.default_params or {}
+def _new_llm(model: ModelConfig, params: dict):
     kwargs = dict(
         model=model.model_name,
         api_key=decrypt_secret(model.api_key_enc),  # 库里存的是加密后的 Key，构建时解密

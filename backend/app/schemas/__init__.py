@@ -46,24 +46,40 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class ModelParams(BaseModel):
+    """模型调用参数，模型的 default_params 与智能体的 params 共用这一个结构（FR-042）。
+
+    只认这四个键，未知键 422 —— 2026-09-25 前两处都是裸 dict，智能体参数还从没生效过，写错键名也不会有任何提示。
+    值为空表示不设置、继承上一层：运行时按"模型 default_params ← 智能体 params"合并（gateway.build_llm）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    temperature: Optional[float] = Field(None, ge=0, le=2)
+    top_p: Optional[float] = Field(None, ge=0, le=1)
+    max_tokens: Optional[int] = Field(None, ge=1, le=128000)
+    thinking: Optional[str] = None  # disabled / enabled，以 extra_body 透传给 DeepSeek 类混合推理模型
+
+    @field_validator("thinking")
+    @classmethod
+    def _check_thinking(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("disabled", "enabled"):
+            raise ValueError("thinking 只能是 disabled 或 enabled")
+        return value
+
+    def to_dict(self) -> dict:
+        """落库用：只存设置了的键，库里看得出哪些是显式配置、哪些在继承。"""
+        return self.model_dump(exclude_none=True)
+
+
 class ModelIn(BaseModel):
     name: str
     provider: str
     api_base: str
     api_key: str = ""  # 更新时留空表示沿用已有密钥；创建时非空（由 service 校验）
     model_name: str
-    default_params: dict = Field(default_factory=dict)
-    price_input: Optional[float] = None
-    price_output: Optional[float] = None
-
-    @field_validator("default_params")
-    @classmethod
-    def _check_default_params(cls, value: dict) -> dict:
-        """thinking 只接受 disabled / enabled（或不设）；其余键由网关按需取用。"""
-        thinking = value.get("thinking")
-        if thinking is not None and thinking not in ("disabled", "enabled"):
-            raise ValueError("default_params.thinking 只能是 disabled 或 enabled")
-        return value
+    default_params: ModelParams = Field(default_factory=ModelParams)
+    price_input: Optional[float] = Field(None, ge=0)
+    price_output: Optional[float] = Field(None, ge=0)
 
 
 class ModelOut(BaseModel):
@@ -93,7 +109,7 @@ class AgentIn(BaseModel):
     description: str = ""
     system_prompt: str = ""
     model_id: int
-    params: dict = Field(default_factory=dict)
+    params: ModelParams = Field(default_factory=ModelParams)  # 覆盖模型的 default_params，留空的键继承
     kb_ids: list = Field(default_factory=list)
     tool_ids: list = Field(default_factory=list)
     workflow_id: Optional[int] = None

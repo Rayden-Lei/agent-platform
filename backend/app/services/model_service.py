@@ -62,7 +62,7 @@ def create_model(db: Session, data: ModelIn, user: User) -> dict:
         api_base=data.api_base,
         api_key_enc=encrypt_secret(data.api_key),
         model_name=data.model_name,
-        default_params=data.default_params,
+        default_params=data.default_params.to_dict(),
         price_input=data.price_input,
         price_output=data.price_output,
         created_by=user.id,
@@ -99,7 +99,7 @@ def update_model(db: Session, model_id: int, data: ModelIn) -> dict:
     if data.api_key:
         m.api_key_enc = encrypt_secret(data.api_key)
     m.model_name = data.model_name
-    m.default_params = data.default_params
+    m.default_params = data.default_params.to_dict()
     m.price_input = data.price_input
     m.price_output = data.price_output
     db.commit()
