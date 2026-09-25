@@ -27,6 +27,12 @@ def list_conversations(
     return conversation_service.list_conversations(db, user, params, agent_id, q)
 
 
+@router.get("/{conversation_id}")
+def get_conversation(conversation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """单个会话，结构同列表项；非本人的会话 404（不暴露存在性）。"""
+    return conversation_service.get_conversation(db, conversation_id, user)
+
+
 @router.get("/{conversation_id}/messages")
 def list_messages(conversation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """指定会话下的消息列表。会话归属校验在 service 层完成。"""

@@ -59,9 +59,12 @@ class Settings(BaseSettings):
     RERANK_MIN_SCORE: float = 0.02
     RERANK_GAP_RATIO: float = 0.02
     CHAT_TITLE_MAX_LEN: int = 30
+    # 单条对话消息的字符上限：挡住超长输入刷 token 与成本；超出 422，在写消息、建运行记录之前拒绝
+    CHAT_MESSAGE_MAX_CHARS: int = 8000
     # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉
     REPORT_TIMEZONE: str = "Asia/Shanghai"
     STATS_MAX_DAYS: int = 90
+    # 一轮对话里模型最多请求几轮工具调用，超过即以错误结束、运行记录 failed（2026-09-25 前没接线，LangGraph 默认 10007 步）
     TOOL_CALL_MAX_ROUNDS: int = 8
     LOOP_MAX_ITERATIONS: int = 20
     EMBEDDING_API_BASE: str = ""

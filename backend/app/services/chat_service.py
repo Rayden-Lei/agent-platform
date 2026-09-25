@@ -231,15 +231,22 @@ def get_published_agent(db: Session, agent_id: int) -> Agent:
 
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None) -> tuple[int, int]:
-    """校验智能体，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。"""
+    """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。
+
+    所有拒绝都发生在写库之前：消息全是空白 400、智能体不存在 404 / 未发布 403、会话不属于本人或不属于该智能体 404。
+    长度上限由路由的 ChatIn 管（422）。
+    """
+    if not message.strip():
+        raise BizError(400, "消息不能为空")
     agent = get_published_agent(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
-        if conversation is None or conversation.user_id != user_id:
-            raise BizError(404, "会话不存在")
+        # 还要属于该智能体：否则智能体 A 能接着写 B 的会话（深链只带 conversation 时对话页会落到第一个智能体）
+        if conversation is None or conversation.user_id != user_id or conversation.agent_id != agent_id:
+            raise BizError(404, "会话不存在或不属于该智能体")
     if conversation is None:
-        title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 先落瞬时标题，后台异步生成
+        title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 标题取首条消息开头（模型生成标题已于 2026-08-29 移除）
         conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title)
         db.add(conversation)
         db.commit()

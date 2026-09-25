@@ -24,17 +24,26 @@ def list_conversations(db: Session, user: User, params: PageParams, agent_id: in
         query = query.filter(Conversation.title.ilike(f"%{q}%"))
     query = query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
     page = paginate(query, params)
-    rows = page["items"]
+    page["items"] = _serialize(db, page["items"])
+    return page
+
+
+def get_conversation(db: Session, conversation_id: int, user: User) -> dict:
+    """单个会话，结构同列表项；非本人 404。对话页只带 conversation 深链时据此定位所属智能体。"""
+    return _serialize(db, [_get_owned_conversation(db, conversation_id, user)])[0]
+
+
+def _serialize(db: Session, rows: list[Conversation]) -> list[dict]:
+    """会话行 → 接口结构：消息数用一次分组查询，智能体名用一次 IN 查询，不逐行查库。"""
     ids = [c.id for c in rows]
     counts = dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
     agent_ids = {c.agent_id for c in rows if c.agent_id}
     agent_names = dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
-    page["items"] = [{
+    return [{
         "id": c.id, "agent_id": c.agent_id, "agent_name": agent_names.get(c.agent_id), "title": c.title, "summary": c.summary,
         "message_count": int(counts.get(c.id, 0)),
         "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat(),
     } for c in rows]
-    return page
 
 
 def list_messages(db: Session, conversation_id: int, user: User) -> list[dict]:
