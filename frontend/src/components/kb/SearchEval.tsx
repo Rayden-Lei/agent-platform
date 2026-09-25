@@ -51,7 +51,7 @@ export default function SearchEval({ kbId }: Props) {
         ]} />
       )}
       {searched && results.length === 0 ? (
-        <EmptyState description="没有命中片段：可能是文档尚未就绪、权限过滤剔除了全部候选，或检索词与文档内容差距较大" />
+        <EmptyState description={stats?.kb_denied ? '当前角色无权检索这个知识库：按知识库当前的访问权限判定，调用者用绑定它的智能体对话时同样拿不到引用' : '没有命中片段：可能是文档尚未就绪、权限过滤剔除了全部候选，或检索词与文档内容差距较大'} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {results.map((r, idx) => (

@@ -48,7 +48,7 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
         <Form.Item name="is_public" label="公开（所有角色可见）" valuePropName="checked"><Switch /></Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, cur) => prev.is_public !== cur.is_public}>
           {({ getFieldValue }) => !getFieldValue('is_public') && (
-            <Form.Item name="visible_roles" label="可见角色（非公开时生效）" extra="检索与对话引用都按此过滤；改权限后已入库切片的标签不回写，需重新解析">
+            <Form.Item name="visible_roles" label="可见角色（非公开时生效）" extra="检索与对话引用都按此过滤，保存后立即生效，已入库的切片不用重新解析">
               <Select mode="multiple" placeholder="选择可访问的角色" options={statusOptions('role')} />
             </Form.Item>
           )}

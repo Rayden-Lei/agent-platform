@@ -107,7 +107,8 @@ def get_kb_detail(db: Session, kb_id: int) -> dict:
 
 
 def update_kb(db: Session, kb_id: int, data) -> dict:
-    """更新知识库：权限变更时 policy_version +1 使检索侧权限缓存失效。切片参数只影响之后上传的文档。"""
+    """更新知识库：权限改完立即生效（检索按本行当前的 is_public / visible_roles 鉴权，不读切片快照）；
+    权限变更时 policy_version +1，切片 meta 里记的是入库时的版本，据此能看出快照已过期。切片参数只影响之后上传的文档。"""
     kb = get_kb(db, kb_id)
     kb.name = data.name
     kb.description = data.description
@@ -115,7 +116,7 @@ def update_kb(db: Session, kb_id: int, data) -> dict:
     kb.chunk_overlap = data.chunk_overlap
     new_roles = data.visible_roles or []
     if data.is_public != kb.is_public or new_roles != (kb.visible_roles or []):
-        kb.policy_version = (kb.policy_version or 1) + 1  # 权限变更 → 版本号 +1，缓存失效
+        kb.policy_version = (kb.policy_version or 1) + 1  # 权限变更 → 版本号 +1（审计与判断快照是否过期用）
     kb.is_public = data.is_public
     kb.visible_roles = new_roles
     db.commit()

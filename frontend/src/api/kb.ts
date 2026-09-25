@@ -75,6 +75,7 @@ export interface SearchStats {
   lexical_hit_count: number
   rerank_mode?: 'model' | 'lexical' | null
   timings?: Record<string, number> // 各阶段耗时（毫秒）：embed_ms / vector_ms / keyword_ms / rerank_ms，另有 keyword_count
+  kb_denied: boolean // 当前角色无权检索这个库（按知识库当前权限判定），此时不召回、各项统计为 0
 }
 
 export const listKBs = (params?: PageQuery) => get<Page<KnowledgeBaseRow>>('/knowledge-bases', params)

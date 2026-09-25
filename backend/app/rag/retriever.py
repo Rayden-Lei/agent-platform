@@ -1,10 +1,10 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import defer
 
-from app.db.models import Document, DocumentChunk
+from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
 from app.rag.embeddings import embed_query
 from app.rag.rerank import MODE_MODEL, extract_keywords, rerank, rerank_status
@@ -13,34 +13,25 @@ from app.services.settings_service import runtime_value
 RRF_K = 60  # RRF 倒排融合常数
 
 
-def _acl_condition(role: str):
-    """构造 chunk 权限过滤条件（先过滤后召回的第一道硬闸门）。
+def _kb_allows(role: str, kb: KnowledgeBase | None) -> bool:
+    """知识库级鉴权（第一道闸门，召回之前）：admin 可见全部；其他角色只能检索公开库，或 visible_roles 含该角色的库。
 
-    - admin：不过滤，可见全部
-    - 其他角色/匿名：仅 is_public=true，或 visible_roles 包含该角色
-    返回 SQLAlchemy 条件；None 表示无过滤。
+    读的是 knowledge_bases 行的当前值。切片 meta 里的 is_public / visible_roles 是入库时的快照，改权限后不回写，
+    拿它鉴权会让改权限对存量切片不生效（2026-09-25 之前就是这样），现在只留作审计。库不存在视为无权。
     """
-    if role == "admin":
-        return None
-    return or_(
-        # 存量 chunk 无 is_public 标签时视为公开（兼容旧数据）；新数据由 pipeline 显式打标签
-        func.coalesce(DocumentChunk.meta["is_public"].as_boolean(), True) == True,  # noqa: E712
-        DocumentChunk.meta["visible_roles"].contains([role]) if role else False,
-    )
-
-
-def _authorize(role: str, meta: dict) -> bool:
-    """逐条鉴权（第二道闸门）：即使检索层漏过，这里按 chunk 权限标签再校验一次。
-
-    与 _acl_condition 保持一致：存量 chunk 无 is_public 标签时视为公开。
-    """
+    if kb is None:
+        return False
     if role == "admin":
         return True
-    meta = meta or {}
-    if meta.get("is_public") is not False:  # 缺失(None)或 True 均视为公开
-        return True
-    roles = meta.get("visible_roles") or []
-    return bool(role) and role in roles
+    return bool(kb.is_public) or (bool(role) and role in (kb.visible_roles or []))
+
+
+def _authorize(role: str, kb: KnowledgeBase, chunk) -> bool:
+    """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色可见。
+
+    与 _kb_allows 同一口径（06 第 8 节：两道闸门语义一致）；召回层万一混进别的库的切片，在这里拦下。
+    """
+    return chunk.kb_id == kb.id and _kb_allows(role, kb)
 
 
 def _rrf_fuse(candidates: dict) -> None:
@@ -54,29 +45,22 @@ def _rrf_fuse(candidates: dict) -> None:
         c["score"] = round(rrf, 6)
 
 
-def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role: str = None, timings: dict | None = None) -> list:
+def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, timings: dict | None = None) -> list:
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
     mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
-    权限过滤前置：先按 ACL 过滤，再做相似度召回，无权 chunk 根本不会被召回。
+    调用前必须已过 _kb_allows：无权的库根本不进这里，连查询向量化都不做。
     """
     timings = timings if timings is not None else {}
     started = time.perf_counter()
     vec = embed_query(query)
     timings["embed_ms"] = int((time.perf_counter() - started) * 1000)
-    acl = _acl_condition(role)
     candidates: dict = {}
-
-    def _conds():
-        c = [DocumentChunk.kb_id == kb_id]
-        if acl is not None:
-            c.append(acl)
-        return c
 
     # 1. 向量召回（保留排名）
     dist = DocumentChunk.embedding.cosine_distance(vec)
     # 候选行不加载 embedding 列：每条 1024 维 4KB，一次检索上百条候选全拉回来毫无用处（远程库上占大头）；排序由数据库完成
-    stmt = select(DocumentChunk, dist).options(defer(DocumentChunk.embedding)).where(*_conds()).order_by(dist).limit(top_k * 3)
+    stmt = select(DocumentChunk, dist).options(defer(DocumentChunk.embedding)).where(DocumentChunk.kb_id == kb_id).order_by(dist).limit(top_k * 3)
     started = time.perf_counter()
     vector_rows = db.execute(stmt).all()
     timings["vector_ms"] = int((time.perf_counter() - started) * 1000)
@@ -99,8 +83,6 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, role:
             db2 = SessionLocal()
             try:
                 conds = [DocumentChunk.kb_id == kb_id, DocumentChunk.content.ilike(f"%{kw}%")]
-                if acl is not None:
-                    conds.append(acl)
                 stmt = select(DocumentChunk).options(defer(DocumentChunk.embedding)).where(*conds).limit(top_k * 2)
                 return [(chunk.id, chunk, kw) for chunk in db2.execute(stmt).scalars()]
             finally:
@@ -194,7 +176,7 @@ def _dedupe(ranked: list) -> list:
     return kept
 
 
-def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list = None) -> tuple[list, int]:
+def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list = None) -> tuple[list, int]:
     """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
 
     模型重排的分数分布与词法完全不同（相关 ≈ 0.99、无关 ≈ 0），淘汰阈值按重排模式分别取配置。
@@ -207,7 +189,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, keywords: list 
     ranked = _dedupe(ranked)
     kept, rejected = [], 0
     for c in ranked:
-        if _authorize(role, c.get("chunk").meta):
+        if _authorize(role, kb, c.get("chunk")):
             kept.append(c)
         else:
             rejected += 1
@@ -219,8 +201,11 @@ def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", ro
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, role)
-        ranked, _ = _rank_and_authorize(query, candidates, role)
+        kb = db.get(KnowledgeBase, kb_id)
+        if not _kb_allows(role, kb):
+            return []
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode)
+        ranked, _ = _rank_and_authorize(query, candidates, role, kb)
         return _format_items(db, ranked, top_k, enriched=False)
     finally:
         db.close()
@@ -231,11 +216,18 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
+        kb = db.get(KnowledgeBase, kb_id)
+        if not _kb_allows(role, kb):
+            # 无权检索这个库：不召回、不做查询向量化；kb_denied 让评测页与调用方能区分"没命中"和"没权限"
+            return {"items": [], "stats": {
+                "query": query, "keywords": [], "candidate_count": 0, "acl_rejected": 0, "returned": 0,
+                "top_score": 0.0, "mean_score": 0.0, "lexical_hit_count": 0, "rerank_mode": None, "timings": {}, "kb_denied": True,
+            }}
         timings: dict = {}
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, role, timings=timings)
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, timings=timings)
         keywords = extract_keywords(query)
         started = time.perf_counter()
-        ranked, rejected = _rank_and_authorize(query, candidates, role, keywords=keywords)
+        ranked, rejected = _rank_and_authorize(query, candidates, role, kb, keywords=keywords)
         timings["rerank_ms"] = int((time.perf_counter() - started) * 1000)
         items = _format_items(db, ranked, top_k, enriched=True)
         scores = [c["score"] for c in ranked[:top_k]]
@@ -252,6 +244,7 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
             "rerank_mode": (rerank_status()["mode"] if candidates else None),
             # 各阶段耗时（毫秒）：评测页据此看慢在哪一段
             "timings": timings,
+            "kb_denied": False,
         }
         return {"items": items, "stats": stats}
     finally:

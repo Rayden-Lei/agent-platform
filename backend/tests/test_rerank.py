@@ -25,11 +25,15 @@ def _degraded() -> list:
         db.close()
 
 
+# 本次检索的库（对所有角色公开）；第三条候选属于另一个库，模拟召回层混进来的越权切片
+KB = SimpleNamespace(id=1, is_public=True, visible_roles=[])
+
+
 def _candidates():
     return [
-        {"content": "工作流由 LangGraph 执行", "score": 0.9, "chunk": SimpleNamespace(meta={"is_public": True})},
-        {"content": "文档上传到 MinIO 后异步解析切片向量化", "score": 0.5, "chunk": SimpleNamespace(meta={"is_public": True})},
-        {"content": "知识库权限按角色可见", "score": 0.4, "chunk": SimpleNamespace(meta={"is_public": False, "visible_roles": ["admin"]})},
+        {"content": "工作流由 LangGraph 执行", "score": 0.9, "chunk": SimpleNamespace(kb_id=1)},
+        {"content": "文档上传到 MinIO 后异步解析切片向量化", "score": 0.5, "chunk": SimpleNamespace(kb_id=1)},
+        {"content": "知识库权限按角色可见", "score": 0.4, "chunk": SimpleNamespace(kb_id=2)},
     ]
 
 
@@ -129,21 +133,21 @@ def test_empty_candidates_do_not_call_service(configured, monkeypatch):
 
 def test_identical_contents_are_collapsed_keeping_best(configured, monkeypatch):
     """同一药品不同批准文号导致内容完全相同的切片，只保留分数最高的一条。"""
-    dup = {"content": "标题: 阿莫西林片 | 用法用量: 口服", "score": 0.5, "chunk": SimpleNamespace(meta={"is_public": True})}
-    cands = [dict(dup), dict(dup), {"content": "标题: 头孢拉定胶囊 | 注意事项: 过敏史", "score": 0.4, "chunk": SimpleNamespace(meta={"is_public": True})}]
+    dup = {"content": "标题: 阿莫西林片 | 用法用量: 口服", "score": 0.5, "chunk": SimpleNamespace(kb_id=KB.id)}
+    cands = [dict(dup), dict(dup), {"content": "标题: 头孢拉定胶囊 | 注意事项: 过敏史", "score": 0.4, "chunk": SimpleNamespace(kb_id=KB.id)}]
     _mock_client(monkeypatch, lambda request: httpx.Response(200, json={"results": [{"index": 0, "relevance_score": 0.9}, {"index": 1, "relevance_score": 0.95}, {"index": 2, "relevance_score": 0.8}]}))
-    kept, rejected = retriever._rank_and_authorize("q", cands, role="admin")
+    kept, rejected = retriever._rank_and_authorize("q", cands, role="admin", kb=KB)
     assert rejected == 0
     assert [c["content"][:6] for c in kept] == ["标题: 阿莫", "标题: 头孢"]
     assert kept[0]["rerank_score"] == 0.95  # 重复项里留的是分数最高的
 
 
 def test_authorization_still_applies_after_model_rerank(configured, monkeypatch):
-    """模型把受限切片排到第一也不能越权：鉴权在重排之后逐条执行，且模型分阈值按 RERANK_* 取。"""
+    """模型把混进来的别的库的切片排到第一也不能越权：鉴权在重排之后逐条执行，且模型分阈值按 RERANK_* 取。"""
     _mock_client(monkeypatch, lambda request: httpx.Response(200, json={"results": [{"index": 2, "relevance_score": 0.99}, {"index": 1, "relevance_score": 0.3}, {"index": 0, "relevance_score": 0.001}]}))
     monkeypatch.setattr(settings, "RERANK_MIN_SCORE", 0.05)
     monkeypatch.setattr(settings, "RERANK_GAP_RATIO", 0.02)
-    kept, rejected = retriever._rank_and_authorize("q", _candidates(), role="developer")
-    assert rejected == 1  # 受限切片被鉴权剔除
+    kept, rejected = retriever._rank_and_authorize("q", _candidates(), role="developer", kb=KB)
+    assert rejected == 1  # 别的库的切片被鉴权剔除
     assert [c["content"][:4] for c in kept] == ["文档上传"]  # 0.001 低于模型阈值被淘汰
     assert kept[0]["rerank_mode"] == "model"
