@@ -220,19 +220,20 @@ function EditorInner() {
     </div>
   )
 
+  // ReactFlow 始终挂载：拖放落点只挂在它上面，空画布时若只渲染提示，第一个节点就拖不进来（2026-09-25 修）。
+  // 空态提示浮在画布上且不接收鼠标事件。fitView 只给已有工作流：它会排队到节点加载并测量后才执行；
+  // 新建时开着它，拖进第一个节点画布会放大居中到这一个节点上
   const canvas = (
-    <div style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#f8fafc', minWidth: 0, minHeight: 0 }}>
-      {/* 空画布提示拖入节点；ReactFlow 挂载拖拽落点/点击/连线等交互 */}
-      {nodes.length === 0 ? <Empty style={{ marginTop: 80 }} description="从节点库拖入节点开始编排" /> : (
-        <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
-          onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick} onDrop={onDrop}
-          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }} nodeTypes={nodeTypes} fitView
-          defaultEdgeOptions={{ style: { stroke: '#94a3b8', strokeWidth: 1.5 }, markerEnd: { type: 'arrowclosed', color: '#94a3b8' } }}>
-          <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} color="#dbe2ea" />
-          <Controls />
-          {!isMobile && <MiniMap pannable zoomable nodeColor="#e2e8f0" maskColor="rgba(241,245,249,0.7)" />}
-        </ReactFlow>
-      )}
+    <div style={{ flex: 1, position: 'relative', border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden', background: '#f8fafc', minWidth: 0, minHeight: 0 }}>
+      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+        onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick} onDrop={onDrop}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }} nodeTypes={nodeTypes} fitView={!isNew}
+        defaultEdgeOptions={{ style: { stroke: '#94a3b8', strokeWidth: 1.5 }, markerEnd: { type: 'arrowclosed', color: '#94a3b8' } }}>
+        <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} color="#dbe2ea" />
+        <Controls />
+        {!isMobile && <MiniMap pannable zoomable nodeColor="#e2e8f0" maskColor="rgba(241,245,249,0.7)" />}
+      </ReactFlow>
+      {nodes.length === 0 && <Empty style={{ position: 'absolute', top: 80, left: 0, right: 0, pointerEvents: 'none' }} description="从节点库拖入节点开始编排" />}
     </div>
   )
 
