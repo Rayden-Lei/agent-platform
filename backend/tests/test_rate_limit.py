@@ -7,8 +7,6 @@ import uuid
 from app.config import settings
 from app.core import rate_limiter, redis_client
 
-LOGIN = {"username": "admin", "password": "admin123"}
-
 
 def _enable(monkeypatch, *, user_limit: int = 300, ip_limit: int = 20, api_key_limit: int = 60):
     monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", True)
@@ -78,17 +76,17 @@ def test_invalid_token_does_not_consume_user_quota(client, auth_headers, monkeyp
         _cleanup_user(client, auth_headers, monkeypatch, uid)
 
 
-def test_anonymous_login_rate_limited_by_ip(client, auth_headers, monkeypatch, client_from):
+def test_anonymous_login_rate_limited_by_ip(client, auth_headers, monkeypatch, client_from, admin_login):
     _enable(monkeypatch, ip_limit=2)
     ip = "10.77." + ".".join(str(int(b)) for b in uuid.uuid4().bytes[:2])  # 每次运行不同来源，避免固定时钟下计数残留
     c = client_from(ip)
-    assert c.post("/api/v1/auth/login", json=LOGIN).status_code == 200
-    assert c.post("/api/v1/auth/login", json=LOGIN).status_code == 200
-    r = c.post("/api/v1/auth/login", json=LOGIN)
+    assert c.post("/api/v1/auth/login", json=admin_login).status_code == 200
+    assert c.post("/api/v1/auth/login", json=admin_login).status_code == 200
+    r = c.post("/api/v1/auth/login", json=admin_login)
     assert r.status_code == 429, r.text
     assert r.headers["x-ratelimit-limit"] == "2"
     # 换一个来源不受影响
-    assert client_from("10.78.0.1").post("/api/v1/auth/login", json=LOGIN).status_code == 200
+    assert client_from("10.78.0.1").post("/api/v1/auth/login", json=admin_login).status_code == 200
 
 
 def test_api_key_429_carries_retry_after(client, auth_headers, monkeypatch):

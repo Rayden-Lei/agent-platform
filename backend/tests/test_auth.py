@@ -4,8 +4,8 @@ def test_health(client):
     assert res.json()["status"] == "ok"
 
 
-def test_login_success(client):
-    res = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin123"})
+def test_login_success(client, admin_login):
+    res = client.post("/api/v1/auth/login", json=admin_login)
     assert res.status_code == 200
     assert "token" in res.json()
 

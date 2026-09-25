@@ -42,6 +42,8 @@ jobs:
           AES_KEY: ci-test-aes-key
           # 测试默认关闭入口限流（与 tests/conftest.py 一致）；限流用例自行用 monkeypatch 打开
           RATE_LIMIT_ENABLED: "false"
+          # CI 是空库：应用启动时建的 admin 用默认口令（app/main.py）。本地连共享开发库时口令写在 backend/.env
+          TEST_ADMIN_PASSWORD: admin123
 
   frontend-build:
     runs-on: ubuntu-latest
