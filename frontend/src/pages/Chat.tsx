@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Grid, Select, Typography, message } from 'antd'
 import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
-import { listAgents, listConversations, listMessages, OPTIONS_PAGE, type AgentRow, type ConversationRow } from '../api'
+import { listAvailableAgents, listConversations, listMessages, OPTIONS_PAGE, type AgentBrief, type ConversationRow } from '../api'
+import { visibleNavItems } from '../constants/nav'
 import { useQueryState } from '../hooks/useQueryState'
+import { useAuth } from '../store/auth'
 import ConversationList from '../components/chat/ConversationList'
 import MessageList from '../components/chat/MessageList'
 import ChatInput from '../components/chat/ChatInput'
@@ -21,7 +23,8 @@ export default function Chat() {
   const [query, setQuery] = useQueryState<{ agent?: string; conversation?: string }>({ agent: undefined, conversation: undefined })
   const agentId = query.agent ? Number(query.agent) : undefined
   const conversationId = query.conversation ? Number(query.conversation) : null
-  const [agents, setAgents] = useState<AgentRow[]>([])
+  const [agents, setAgents] = useState<AgentBrief[]>([])
+  const canManageAgents = visibleNavItems(useAuth((s) => s.user?.role)).some((item) => item.key === '/agents')
   const [conversations, setConversations] = useState<ConversationRow[]>([])
   const [total, setTotal] = useState(0)
   const [q, setQ] = useState<string | undefined>()
@@ -29,9 +32,9 @@ export default function Chat() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [showList, setShowList] = useState(false)
 
-  // 只展示已发布的智能体；URL 没指定时默认第一个
+  // 可对话列表只含已发布的智能体，所有角色都能取（管理用的 /agents 列表 caller 无权访问）；URL 没指定时默认第一个
   useEffect(() => {
-    listAgents({ status: 'published', ...OPTIONS_PAGE })
+    listAvailableAgents(OPTIONS_PAGE)
       .then((p) => { setAgents(p.items); if (!agentId && p.items.length) setQuery({ agent: String(p.items[0].id) }) })
       .catch((e) => message.error(errorText(e, '加载智能体失败')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,7 +81,7 @@ export default function Chat() {
       placeholder="选择已发布的智能体" style={{ width: '100%' }} value={agentId} showSearch optionFilterProp="label"
       onChange={(v) => { setQuery({ agent: String(v), conversation: undefined }); setMessages([]) }}
       options={agents.map((a) => ({ value: a.id, label: a.name }))}
-      notFoundContent={<Typography.Text type="secondary">没有已发布的智能体，先去智能体页发布一个</Typography.Text>}
+      notFoundContent={<Typography.Text type="secondary">{canManageAgents ? '没有已发布的智能体，先去智能体页发布一个' : '还没有可用的智能体，请联系管理员发布'}</Typography.Text>}
     />
   )
   const newConversation = () => { setQuery({ conversation: undefined }); setMessages([]); setShowList(false) }
@@ -103,7 +106,6 @@ export default function Chat() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Typography.Text strong>{currentAgent?.name ?? '未选择智能体'}</Typography.Text>
           {currentAgent?.description && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{currentAgent.description}</Typography.Text>}
-          {currentAgent && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>模型 {currentAgent.model_name || '-'}{currentAgent.kb_ids?.length ? ` · 知识库 ${currentAgent.kb_ids.length}` : ''}{currentAgent.tool_ids?.length ? ` · 工具 ${currentAgent.tool_ids.length}` : ''}</Typography.Text>}
         </div>
         {isMobile && <Button size="small" icon={<PlusOutlined />} onClick={newConversation} />}
       </div>

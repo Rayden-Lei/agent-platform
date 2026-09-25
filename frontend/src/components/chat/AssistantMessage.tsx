@@ -6,15 +6,18 @@ import ContextCards from './ContextCards'
 import ThinkingTrace from './ThinkingTrace'
 import ToolChips from './ToolChips'
 import type { Msg } from './types'
+import { visibleNavItems } from '../../constants/nav'
+import { useAuth } from '../../store/auth'
 import { formatNumber } from '../../utils/format'
 import { fromNow } from '../../utils/time'
 
 const { Text } = Typography
 
 // 助手消息气泡：按“思考过程 → 工具调用 → 回答正文 → 引用来源卡片 → 脚注（Token 用量 / 时间 / 复制 / 运行记录）”的顺序拼装；
-// streaming 为 true 且正文为空时展示“思考中…”占位
+// streaming 为 true 且正文为空时展示“思考中…”占位。运行记录链接只给菜单里有运行记录的角色，caller 点了必然 403
 export default function AssistantMessage({ msg, streaming }: { msg: Msg; streaming?: boolean }) {
   const hasContent = msg.content.length > 0
+  const canViewRuns = visibleNavItems(useAuth((s) => s.user?.role)).some((item) => item.key === '/runs')
   const copy = () => navigator.clipboard?.writeText(msg.content).then(() => message.success('已复制'))
 
   return (
@@ -37,7 +40,7 @@ export default function AssistantMessage({ msg, streaming }: { msg: Msg; streami
             {msg.createdAt ? `${msg.usage?.total_tokens ? ' · ' : ''}${fromNow(msg.createdAt)}` : ''}
           </Text>
           <Space size={4}>
-            {msg.runId && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
+            {msg.runId && canViewRuns && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
             <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} />
           </Space>
         </div>

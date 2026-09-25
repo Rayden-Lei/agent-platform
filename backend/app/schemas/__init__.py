@@ -140,3 +140,14 @@ class AgentDetailOut(AgentOut):
     missing_kb_ids: list = Field(default_factory=list)
     workflow: Optional[dict] = None
     prompt_template: Optional[dict] = None
+
+
+class AgentBriefOut(BaseModel):
+    """可对话智能体的对外资料（GET /agents/available）。caller 与 API Key 都拿得到，
+    字段白名单靠这个模型保证：提示词、模型、工具、知识库、模板变量一律不出。"""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: Optional[str] = None
+    updated_at: Optional[datetime] = None

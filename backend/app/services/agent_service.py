@@ -97,6 +97,15 @@ def list_agents(db: Session, params: PageParams, q: str = None, status: str = No
     return page
 
 
+def list_available_agents(db: Session, params: PageParams, q: str = None) -> dict:
+    """可对话的智能体：只列已发布的，q 名称模糊，按 id 升序（与对话页原来的默认选中口径一致）。
+    返回 ORM 行，由路由的 AgentBriefOut 做字段白名单，这里不装配任何关联信息。"""
+    query = db.query(Agent).filter(Agent.status == "published")
+    if q:
+        query = query.filter(Agent.name.ilike(f"%{q}%"))
+    return paginate(query.order_by(Agent.id.asc()), params)
+
+
 def create_agent(db: Session, data: AgentIn, user: User) -> dict:
     """新建智能体：初始为草稿态（draft），created_by 记录创建人。模板渲染失败（400）时不落库。"""
     a = Agent(

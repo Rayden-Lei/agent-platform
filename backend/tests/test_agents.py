@@ -177,3 +177,63 @@ def test_list_outdated_query_count_does_not_grow_with_agents(client, auth_header
     count_one = _count_selects(lambda: client.get("/api/v1/agents", headers=auth_headers, params={"q": one}))
     count_three = _count_selects(lambda: client.get("/api/v1/agents", headers=auth_headers, params={"q": three}))
     assert count_one == count_three
+
+
+# ---------- 可对话智能体：caller 在对话页选不到智能体的修复（2026-09-25） ----------
+
+BRIEF_FIELDS = {"id", "name", "description", "updated_at"}
+
+
+@pytest.fixture
+def caller_headers(client, auth_headers):
+    username = "pytest-agent-caller-" + uuid.uuid4().hex[:6]
+    created = client.post("/api/v1/users", headers=auth_headers, json={"username": username, "password": "caller123", "role": "caller"})
+    assert created.status_code == 200, created.text
+    token = client.post("/api/v1/auth/login", json={"username": username, "password": "caller123"}).json()["token"]
+    yield {"Authorization": "Bearer " + token}
+    client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
+
+
+def _published_and_draft(client, auth_headers, agents_cleanup, model_id) -> str:
+    """建一个已发布、一个草稿，名字共用前缀便于 q 精确圈定；返回前缀。"""
+    prefix = "pytest-avail-" + uuid.uuid4().hex[:6]
+    for suffix in ("pub", "draft"):
+        r = client.post("/api/v1/agents", headers=auth_headers, json=_payload(model_id, f"{prefix}-{suffix}", system_prompt="机密提示词"))
+        assert r.status_code == 200, r.text
+        agents_cleanup.append(r.json()["id"])
+        if suffix == "pub":
+            assert client.post(f"/api/v1/agents/{r.json()['id']}/publish", headers=auth_headers).status_code == 200
+    return prefix
+
+
+def test_caller_lists_published_agents_with_public_fields_only(client, auth_headers, caller_headers, model_id, agents_cleanup):
+    prefix = _published_and_draft(client, auth_headers, agents_cleanup, model_id)
+    r = client.get("/api/v1/agents/available", headers=caller_headers, params={"q": prefix})
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert [a["name"] for a in items] == [f"{prefix}-pub"]  # 草稿不出现
+    assert set(items[0]) == BRIEF_FIELDS  # 提示词、模型、工具、知识库一律不出
+    assert r.json()["total"] == 1
+
+
+def test_caller_still_forbidden_on_agent_management_endpoints(client, auth_headers, caller_headers, model_id, agents_cleanup):
+    """放开的只是可对话列表，管理接口对 caller 仍是 403。"""
+    prefix = _published_and_draft(client, auth_headers, agents_cleanup, model_id)
+    assert client.get("/api/v1/agents", headers=caller_headers).status_code == 403
+    assert client.get(f"/api/v1/agents/{agents_cleanup[0]}", headers=caller_headers).status_code == 403
+    assert client.get("/api/v1/agents/available", headers=caller_headers, params={"q": prefix}).status_code == 200
+
+
+def test_api_key_lists_available_agents(client, auth_headers, model_id, agents_cleanup):
+    prefix = _published_and_draft(client, auth_headers, agents_cleanup, model_id)
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-avail-key", "quota": 5}).json()
+    try:
+        r = client.get("/api/v1/agents/available", headers={"Authorization": "Bearer " + key["key"]}, params={"q": prefix})
+        assert r.status_code == 200, r.text
+        assert [a["name"] for a in r.json()["items"]] == [f"{prefix}-pub"]
+    finally:
+        client.delete(f"/api/v1/api-keys/{key['id']}", headers=auth_headers)
+
+
+def test_available_agents_requires_login(client):
+    assert client.get("/api/v1/agents/available").status_code == 401

@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
-from app.core.deps import require_roles
+from app.core.deps import get_current_user, require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import AgentDetailOut, AgentIn, AgentOut, Page
+from app.schemas import AgentBriefOut, AgentDetailOut, AgentIn, AgentOut, Page
 from app.services import agent_service
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -54,6 +54,18 @@ def create_agent(data: AgentIn, db: Session = Depends(get_db), user: User = Depe
 def batch_agents(data: AgentBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量发布 / 删除：逐条独立执行并返回成功与失败清单。"""
     return run_batch(db, data.unique_ids(), lambda agent_id: agent_service.apply_batch_action(db, agent_id, data.action, user))
+
+
+@router.get("/available", response_model=Page[AgentBriefOut])
+def list_available_agents(
+    params: PageParams = Depends(page_params),
+    q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """可对话的智能体（本模块唯一不限角色的接口）：任何登录身份都可调，含 caller 与 API Key。
+    只返回已发布的，且只带 id / 名称 / 描述 / 更新时间。对话页下拉用它，外部系统也用它发现可调的智能体。"""
+    return agent_service.list_available_agents(db, params, q)
 
 
 @router.get("/{agent_id}", response_model=AgentDetailOut)

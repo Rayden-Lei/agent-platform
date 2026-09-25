@@ -50,6 +50,13 @@ export interface AgentDetail extends AgentRow {
   workflow: { id: number; name: string; status: string } | null
   prompt_template: { id: number; name: string; version: number; variables: { name: string; description?: string; required?: boolean; default?: string | null }[] } | null
 }
+// 可对话智能体的对外资料（GET /agents/available）：任何登录角色都能取，只含这四个字段
+export interface AgentBrief {
+  id: number
+  name: string
+  description: string | null
+  updated_at: string | null
+}
 export interface AgentVersionRow {
   id: number
   version: number
@@ -58,6 +65,7 @@ export interface AgentVersionRow {
 }
 
 export const listAgents = (params?: PageQuery) => get<Page<AgentRow>>('/agents', params)
+export const listAvailableAgents = (params?: PageQuery) => get<Page<AgentBrief>>('/agents/available', params)
 export const getAgent = (id: number) => get<AgentDetail>(`/agents/${id}`)
 export const createAgent = (data: AgentInput) => post<AgentRow>('/agents', data)
 export const updateAgent = (id: number, data: AgentInput) => put<AgentRow>(`/agents/${id}`, data)
