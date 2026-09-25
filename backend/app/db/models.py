@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from pgvector.sqlalchemy import Vector
 
@@ -46,22 +46,31 @@ class Agent(Base, TimestampMixin):
     kb_ids = Column(JSONB, nullable=False, default=list)
     tool_ids = Column(JSONB, nullable=False, default=list)
     workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True)
+    # draft 从未发布 / published 线上可用 / offline 有线上版本但已下线（docs/15 3.2，FR-039）
     status = Column(String(16), nullable=False, default="draft", index=True)
-    version = Column(Integer, nullable=False, default=1)
+    version = Column(Integer, nullable=False, default=1)  # 最近一次生成的版本号
     created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
     # Prompt 模板绑定（FR-028）：保存时用模板 + 变量渲染进 system_prompt 并记下模板版本；运行时仍只读 system_prompt
     prompt_template_id = Column(BigInteger, ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True)
     prompt_template_version = Column(Integer, nullable=True)
     prompt_variables = Column(JSONB, nullable=False, default=dict)
+    # 发布语义（FR-039）：本行是草稿，对外入口只读 published_version 指向的不可变快照；从未发布为空
+    published_version = Column(Integer, nullable=True)
+    published_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class AgentVersion(Base):
+    """发布版本：不可变快照，字段只由 runtime.agent_config.snapshot_of 定义；回滚上线也生成新版本，历史不改写。"""
+
     __tablename__ = "agent_versions"
+    __table_args__ = (UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),)
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     snapshot = Column(JSONB, nullable=False, default=dict)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note = Column(String(200), nullable=True)  # 发布说明
 
 
 class PromptTemplate(Base, TimestampMixin):
@@ -198,6 +207,11 @@ class Message(Base):
 
 class Run(Base):
     __tablename__ = "runs"
+    # 运营指标按来源排除调试流量、Key 用量按 api_key_id 聚合，都带发起时间区间
+    __table_args__ = (
+        Index("ix_runs_source_started_at", "source", "started_at"),
+        Index("ix_runs_api_key_started_at", "api_key_id", "started_at"),
+    )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     run_type = Column(String(16), nullable=False, index=True)
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -216,6 +230,12 @@ class Run(Base):
     model_id = Column(BigInteger, ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True)
     conversation_id = Column(BigInteger, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
     cost = Column(Float, nullable=True)
+    # 触发来源（2026-09-25 从 input.source 提成列，docs/15 OP-09a）：chat / ui / api_key / schedule / debug。
+    # 运营指标按它排除调试流量；server_default 让部署窗口里旧代码的写入不失败，迁移回填可重复执行纠正
+    source = Column(String(16), nullable=False, server_default="ui")
+    agent_version = Column(Integer, nullable=True)  # 本次回答用的线上版本号；调试运行为空
+    api_key_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
+    schedule_id = Column(BigInteger, ForeignKey("scheduled_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class ScheduledJob(Base):

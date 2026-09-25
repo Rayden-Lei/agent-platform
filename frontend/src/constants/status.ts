@@ -20,6 +20,7 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     ui: { label: '界面运行', color: 'default' },
     api_key: { label: 'API Key', color: 'purple' },
     schedule: { label: '定时任务', color: 'cyan' },
+    debug: { label: '调试', color: 'orange' }, // 装配页当场调试，运营指标默认不计
   },
   agent: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' } },
   workflow: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' } },

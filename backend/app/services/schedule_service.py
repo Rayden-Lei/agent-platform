@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
@@ -25,22 +26,15 @@ def _to_dict(s: ScheduledJob, workflow_name: str | None = None, username: str | 
 
 
 def _last_runs(db: Session, schedule_ids: set[int]) -> dict[int, dict]:
-    """每个定时任务最近一次运行的 id 与状态：运行记录的 input.schedule_id 指回任务，取每个任务 id 最大的一条。"""
+    """每个定时任务最近一次运行的 id 与状态：按 runs.schedule_id 分组取最大 id，再一次取状态，共两次查询。
+
+    2026-09-25 前从 input.schedule_id 里取、且只看最近 N×5 条，某个任务跑得勤就会把其他任务挤出结果。
+    """
     if not schedule_ids:
         return {}
-    rows = (
-        db.query(Run.id, Run.status, Run.input["schedule_id"].astext)
-        .filter(Run.input["schedule_id"].astext.in_([str(i) for i in schedule_ids]))
-        .order_by(Run.id.desc())
-        .limit(len(schedule_ids) * 5)
-        .all()
-    )
-    result: dict[int, dict] = {}
-    for run_id, status, schedule_id in rows:
-        sid = int(schedule_id)
-        if sid not in result:
-            result[sid] = {"id": run_id, "status": status}
-    return result
+    latest = dict(db.query(Run.schedule_id, func.max(Run.id)).filter(Run.schedule_id.in_(schedule_ids)).group_by(Run.schedule_id).all())
+    statuses = dict(db.query(Run.id, Run.status).filter(Run.id.in_(latest.values())).all()) if latest else {}
+    return {sid: {"id": run_id, "status": statuses.get(run_id)} for sid, run_id in latest.items()}
 
 
 def _serialize_page(db: Session, rows: list) -> list[dict]:

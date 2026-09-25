@@ -156,14 +156,14 @@ def test_finalize_run_snapshots_cost_by_model_price(client, auth_headers):
     me = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
     db = SessionLocal()
     try:
-        run = run_service.create_run(db, "chat", me, model_id=m["id"], input_data={"message": "hi", "source": "chat"})
+        run = run_service.create_run(db, "chat", me, model_id=m["id"], input_data={"message": "hi"}, source="chat")
         assert run_service.finalize_run(db, run, "success", usage={"prompt_tokens": 1_000_000, "completion_tokens": 500_000, "total_tokens": 1_500_000})
         assert run.cost == 6.0  # 1M × 2 + 0.5M × 8
         # 之后改单价不追溯
         client.put(f"/api/v1/models/{m['id']}", headers=auth_headers, json={"name": m["name"], "provider": "openai", "api_base": "http://upstream.test/v1", "api_key": "", "model_name": "x", "default_params": {}, "price_input": 100.0, "price_output": 100.0})
         detail = client.get(f"/api/v1/runs/{run.id}", headers=auth_headers).json()
         assert detail["cost"] == 6.0 and detail["model_name"] == m["name"] and detail["source"] == "chat"
-        no_usage = run_service.create_run(db, "chat", me, model_id=m["id"])
+        no_usage = run_service.create_run(db, "chat", me, model_id=m["id"], source="chat")
         run_service.finalize_run(db, no_usage, "failed", error="x")
         assert no_usage.cost is None
         for r in (run, no_usage):

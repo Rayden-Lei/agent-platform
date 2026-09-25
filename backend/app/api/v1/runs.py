@@ -20,6 +20,8 @@ _time_range = time_range
 
 # 运行状态枚举：running 运行中 / success 成功 / failed 失败 / cancelled 取消 / awaiting_review 等待人工审核
 RunStatus = Literal["running", "success", "failed", "cancelled", "awaiting_review"]
+# 触发来源（runs.source 列）：与 run_service.RUN_SOURCES 一致；debug 是装配页调试
+RunSource = Literal["chat", "ui", "api_key", "schedule", "debug"]
 
 
 @router.get("")
@@ -32,7 +34,7 @@ def list_runs(
     workflow_id: int | None = Query(None),
     user_id: int | None = Query(None),
     model_id: int | None = Query(None),
-    source: Literal["chat", "ui", "api_key", "schedule"] | None = Query(None, description="触发来源"),
+    source: RunSource | None = Query(None, description="触发来源"),
     started_from: datetime | None = Query(None, description="发起时间下界（含），ISO 8601 带时区"),
     started_to: datetime | None = Query(None, description="发起时间上界（不含），ISO 8601 带时区"),
     db: Session = Depends(get_db),
@@ -52,7 +54,7 @@ def summarize_runs(
     workflow_id: int | None = Query(None),
     user_id: int | None = Query(None),
     model_id: int | None = Query(None),
-    source: Literal["chat", "ui", "api_key", "schedule"] | None = Query(None),
+    source: RunSource | None = Query(None),
     started_from: datetime | None = Query(None),
     started_to: datetime | None = Query(None),
     db: Session = Depends(get_db),

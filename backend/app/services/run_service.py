@@ -10,8 +10,9 @@ from app.db.models import Agent, ModelConfig, Run, RunNode, User, Workflow
 # 运行记录的终态。awaiting_review 不是终态：它不写 finished_at，等待 resume 后再收尾。
 FINAL_STATUSES = ("success", "failed", "cancelled")
 RUN_STATUSES = ("running", "success", "failed", "cancelled", "awaiting_review")
-# 触发来源（写在 input.source）：对话 / 界面运行工作流 / API Key 运行工作流 / 定时任务
-RUN_SOURCES = ("chat", "ui", "api_key", "schedule")
+# 触发来源（runs.source 列，2026-09-25 前只写在 input.source）：登录对话 / 界面运行工作流 / API Key（对话或工作流）/
+# 定时任务 / 装配页调试。运营指标默认排除 debug（docs/15 D-05）
+RUN_SOURCES = ("chat", "ui", "api_key", "schedule", "debug")
 
 # 列表排序白名单（字段名不能拼进 SQL）
 SORTABLE = {"id": Run.id, "started_at": Run.started_at, "finished_at": Run.finished_at, "latency_ms": Run.latency_ms, "cost": Run.cost}
@@ -24,12 +25,20 @@ def _now() -> datetime:
 
 
 def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, workflow_id: int = None,
-               input_data: dict = None, model_id: int = None, conversation_id: int = None) -> Run:
-    """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务）都必须走这里，
-    否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id 是统计与追溯用的快照。"""
+               input_data: dict = None, model_id: int = None, conversation_id: int = None, *,
+               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None) -> Run:
+    """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务/调试）都必须走这里，
+    否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version 是统计与追溯用的快照。
+
+    source 必须显式传（没有默认值）：漏传会被当成界面触发，调试流量就混进运营指标。input 只放本次的业务输入，
+    来源等元数据走列（2026-09-25 前写在 input.source / input.scheduled）。
+    """
+    if source not in RUN_SOURCES:
+        raise ValueError(f"运行来源只能是 {RUN_SOURCES}，收到: {source}")
     run = Run(
         run_type=run_type, agent_id=agent_id, workflow_id=workflow_id, user_id=user_id,
-        model_id=model_id, conversation_id=conversation_id,
+        model_id=model_id, conversation_id=conversation_id, source=source, agent_version=agent_version,
+        api_key_id=api_key_id, schedule_id=schedule_id,
         status="running", input=input_data or {}, started_at=_now(),
     )
     db.add(run)
@@ -102,13 +111,11 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _run_dict(r: Run) -> dict:
-    """运行记录 → 对外字典。source / schedule_id 从 input 里取出来单列，方便追溯触发来源。"""
-    payload = r.input or {}
+    """运行记录 → 对外字典。来源、定时任务、API Key、智能体版本都是列，方便追溯触发来源与回答用的配置。"""
     return {
         "id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id, "user_id": r.user_id,
         "model_id": r.model_id, "conversation_id": r.conversation_id,
-        "source": payload.get("source") or ("chat" if r.run_type == "chat" else ("schedule" if payload.get("scheduled") else None)),
-        "schedule_id": payload.get("schedule_id"),
+        "source": r.source, "schedule_id": r.schedule_id, "api_key_id": r.api_key_id, "agent_version": r.agent_version,
         "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
         "token_usage": r.token_usage, "cost": r.cost,
         "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),
@@ -133,7 +140,7 @@ def _filtered(db: Session, run_type: str = None, status: str = None, agent_id: i
     if model_id:
         query = query.filter(Run.model_id == model_id)
     if source:
-        query = query.filter(Run.input["source"].astext == source)
+        query = query.filter(Run.source == source)
     if started_from is not None:
         query = query.filter(Run.started_at >= started_from)
     if started_to is not None:

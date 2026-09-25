@@ -46,8 +46,7 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
 
         input_text = (sj.input or {}).get("input", "")
         run = run_service.create_run(
-            db, "workflow", user.id, workflow_id=wf.id,
-            input_data={"scheduled": True, "source": "schedule", "schedule_id": sj.id, "input": input_text},
+            db, "workflow", user.id, workflow_id=wf.id, input_data={"input": input_text}, source="schedule", schedule_id=sj.id,
         )
         result = workflow_service.execute_workflow(db, wf, run, {"input": input_text, "steps": []}, role=user.role)
         sj.last_run_at = datetime.now(timezone.utc)

@@ -112,8 +112,9 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
 @router.post("/{workflow_id}/run")
 async def run_workflow(workflow_id: int, data: RunIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
     """运行指定工作流。允许 API Key 调用，供外部系统触发执行；运行记录记下触发来源（ui / api_key）。"""
-    source = "api_key" if is_api_key_request(request) else "ui"
-    return await workflow_service.run_workflow(db, workflow_id, data.input, user, source=source)
+    via_api_key = is_api_key_request(request)
+    return await workflow_service.run_workflow(db, workflow_id, data.input, user, source="api_key" if via_api_key else "ui",
+                                               api_key_id=getattr(request.state, "api_key_id", None) if via_api_key else None)
 
 
 @router.post("/{workflow_id}/runs/{run_id}/resume")

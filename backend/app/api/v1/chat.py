@@ -8,14 +8,14 @@
 import json
 from contextlib import aclosing
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, is_api_key_request
 from app.db.models import User
 from app.db.session import get_db
 from app.services import chat_runner, chat_service
@@ -44,14 +44,18 @@ async def _sse_stream(events):
 
 
 @router.post("/agents/{agent_id}/chat")
-async def chat(agent_id: int, data: ChatIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """发起对话。
 
     返回 SSE 事件流，事件类型包括 citations / delta / tool_call / tool_result / done / error（docs/04 第 5 节）。
     空消息、智能体不存在或未发布、会话不属于本人或不属于该智能体，都在建流之前以 HTTP 状态码拒绝，不写任何数据。
     """
+    via_api_key = is_api_key_request(request)
     # 同步的库操作放线程池，不阻塞事件循环
-    conversation_id, run_id = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id)
+    conversation_id, run_id = await run_in_threadpool(
+        chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id,
+        "api_key" if via_api_key else "chat", getattr(request.state, "api_key_id", None) if via_api_key else None,
+    )
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
                                 conversation_id=conversation_id, run_id=run_id)
     return StreamingResponse(_sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")

@@ -91,9 +91,11 @@ def test_scheduled_job_run_is_finalized(client, auth_headers):
         assert len(runs) == 1
         assert runs[0]["status"] == "success"
         assert runs[0]["finished_at"] is not None
+        assert (runs[0]["source"], runs[0]["schedule_id"]) == ("schedule", sid)  # 来源与任务都是列（OP-09a）
 
         sched = next(s for s in client.get("/api/v1/schedules", headers=auth_headers).json()["items"] if s["id"] == sid)
         assert sched["last_run_at"] is not None
+        assert (sched["last_run_id"], sched["last_run_status"]) == (runs[0]["id"], "success")
     finally:
         if sid:
             client.delete(f"/api/v1/schedules/{sid}", headers=auth_headers)
@@ -142,7 +144,7 @@ def test_finalize_run_is_idempotent_and_rejects_non_final(client, auth_headers):
     db = SessionLocal()
     run = None
     try:
-        run = run_service.create_run(db, "workflow", me["id"], input_data={"input": "pytest"})
+        run = run_service.create_run(db, "workflow", me["id"], input_data={"input": "pytest"}, source="ui")
         assert run.started_at is not None
 
         assert run_service.finalize_run(db, run, "success", output={"output": 1}) is True
@@ -173,7 +175,7 @@ def test_chat_cancel_finalizes_run_once(client, auth_headers):
         db.add(conv)
         db.commit()
         db.refresh(conv)
-        run = run_service.create_run(db, "chat", me["id"], input_data={"message": "hi"})
+        run = run_service.create_run(db, "chat", me["id"], input_data={"message": "hi"}, source="chat")
 
         assert chat_service.finalize_cancelled_chat(db, run.id, conv.id, "部分回答", [], {}, []) is True
         db.refresh(run)

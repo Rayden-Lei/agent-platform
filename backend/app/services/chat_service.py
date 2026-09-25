@@ -230,11 +230,13 @@ def get_published_agent(db: Session, agent_id: int) -> Agent:
     return agent
 
 
-def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None) -> tuple[int, int]:
+def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None,
+                 source: str = "chat", api_key_id: int | None = None) -> tuple[int, int]:
     """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。
 
     所有拒绝都发生在写库之前：消息全是空白 400、智能体不存在 404 / 未发布 403、会话不属于本人或不属于该智能体 404。
-    长度上限由路由的 ChatIn 管（422）。
+    长度上限由路由的 ChatIn 管（422）。source 区分登录对话（chat）与 API Key 调用（api_key，同时记 api_key_id），
+    2026-09-25 前 API Key 发起的对话也记成 chat，运行记录按 Key 筛不到。
     """
     if not message.strip():
         raise BizError(400, "消息不能为空")
@@ -256,7 +258,7 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
     # model_id / conversation_id 是统计与追溯用的快照：智能体后来换模型不影响这条运行的归属
     run = run_service.create_run(
         db, "chat", user_id, agent_id=agent_id, model_id=agent.model_id, conversation_id=conversation.id,
-        input_data={"message": message, "source": "chat"},
+        input_data={"message": message}, source=source, api_key_id=api_key_id,
     )
     return conversation.id, run.id
 

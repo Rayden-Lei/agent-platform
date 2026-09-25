@@ -195,12 +195,13 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
     return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": steps}
 
 
-async def run_workflow(db: Session, workflow_id: int, input_text: str, user, source: str = "ui") -> dict:
+async def run_workflow(db: Session, workflow_id: int, input_text: str, user, source: str = "ui", api_key_id: int | None = None) -> dict:
     """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构不合法 400 且不建运行记录。
-    source 记录触发来源（ui / api_key），与定时任务的 schedule 一起供运行记录页追溯。"""
+    source 记录触发来源（ui / api_key，经 API Key 时同时记 api_key_id），与定时任务的 schedule 一起供运行记录页追溯。"""
     w = get_workflow(db, workflow_id)
     _check_graph(w.graph)
-    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text, "source": source})
+    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text},
+                                 source=source, api_key_id=api_key_id)
     return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
 
 

@@ -100,6 +100,20 @@ def test_chat_streams_answer_then_done(client, auth_headers, make_agent, monkeyp
     assert [r.status for r in _runs_of(agent["id"])] == ["success"]
 
 
+def test_chat_via_api_key_is_recorded_with_key_id(client, auth_headers, make_agent, monkeypatch):
+    """运行来源区分登录对话与 API Key 调用（OP-09a）：此前 Key 发起的对话也记成 chat，按 Key 筛不到。"""
+    agent = make_agent()
+    _use_llm(monkeypatch, _AnswerModel(messages=iter(["一", "二"])))
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-runner-key", "quota": 5}).json()
+    try:
+        _chat(client, {"Authorization": "Bearer " + key["key"]}, agent["id"], "用 Key 问")
+        _chat(client, auth_headers, agent["id"], "登录后问")
+        runs = _runs_of(agent["id"])
+        assert [(r.source, r.api_key_id) for r in runs] == [("api_key", key["id"]), ("chat", None)]
+    finally:
+        client.delete(f"/api/v1/api-keys/{key['id']}", headers=auth_headers)
+
+
 def test_blank_message_rejected_before_any_write(client, auth_headers, make_agent, monkeypatch):
     agent = make_agent()
     _use_llm(monkeypatch, _AnswerModel(messages=iter(["不该走到模型"])))  # 万一校验回归也不去请求外网
