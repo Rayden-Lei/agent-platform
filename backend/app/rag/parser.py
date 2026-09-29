@@ -16,7 +16,7 @@ def parse_document(file_path: str, file_type: str) -> list:
         return parse_pdf(file_path)
     if ext == "docx":
         return parse_docx(file_path)
-    if ext in ("csv", "xlsx", "xls"):
+    if ext in ("csv", "xlsx"):  # .xls 是老格式，openpyxl 读不了；上传时已拒绝（kb_service.check_upload）
         return parse_table(file_path, ext)
     if ext in ("png", "jpg", "jpeg", "webp", "bmp"):
         return parse_image(file_path)
@@ -69,7 +69,7 @@ def parse_docx(file_path: str) -> list:
 
 
 def parse_table(file_path: str, ext: str) -> list:
-    """表格(csv/xlsx/xls)：首行作列名，每行拼成 "列名: 值 | ..." 片段并记录行号 row（从 2 起）。
+    """表格(csv/xlsx)：首行作列名，每行拼成 "列名: 值 | ..." 片段并记录行号 row（从 2 起）。
 
     csv 用 utf-8-sig 读取以兼容带 BOM 的文件；xlsx 用 read_only 模式降低内存占用。
     """

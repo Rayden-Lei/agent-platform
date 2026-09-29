@@ -85,6 +85,9 @@ export const updateKB = (id: number, data: KnowledgeBaseInput) => put<KnowledgeB
 export const deleteKB = (id: number) => del(`/knowledge-bases/${id}`)
 export const batchKBs = (ids: number[]) => batchAction('/knowledge-bases', ids, 'delete')
 export const listDocs = (kbId: number, params?: PageQuery) => get<Page<DocumentRow>>(`/knowledge-bases/${kbId}/documents`, params)
+// 上传策略：允许的扩展名与单个文件大小上限（MB），服务端是权威（不合规 400 / 413），前端只做上传前预检
+export interface UploadPolicy { extensions: string[]; max_mb: number }
+export const getUploadPolicy = () => get<UploadPolicy>('/knowledge-bases/upload-policy')
 // 文档上传走 FormData，axios 会自动带 multipart/form-data 请求头；不设超时（默认 30 秒），几十 MB 的表格传到对象存储要一两分钟
 export const uploadDoc = (kbId: number, file: File, onProgress?: (percent: number) => void) => {
   const fd = new FormData()

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, Popconfirm, Progress, Select, Space, Table, Tag, Tooltip, Typography, Upload, message } from 'antd'
 import { FileTextOutlined, PlayCircleOutlined, RedoOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons'
-import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow } from '../../api'
+import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow, type UploadPolicy } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
 import { useBatchAction } from '../../hooks/useBatchAction'
 import { statusOptions } from '../../constants/status'
@@ -19,7 +19,18 @@ import { errorText } from '../../utils/errors'
 
 // 知识库文档页签：上传、状态 / 文件名筛选、分页、失败原因、切片抽屉、重新解析、批量删除 / 重新解析。
 // 处理中的文档显示进度条（已入库 / 计划总数、速度、预计剩余），有处理中的文档时每 3 秒轮询一次，没有则停（docs/07 第 3 节）。
-interface Props { kbId: number; onChanged?: () => void }
+interface Props { kbId: number; uploadPolicy?: UploadPolicy | null; onChanged?: () => void }
+
+// 上传前预检（服务端仍会再校验，不合规 400 / 413）：挡掉明显传不上去的文件，省得几十 MB 传完才被拒
+function precheck(file: File, policy?: UploadPolicy | null): string | null {
+  if (!policy) return null
+  const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : ''
+  if (ext === 'xls') return `${file.name}：不支持 .xls（老版 Excel），请另存为 .xlsx 后上传`
+  if (!policy.extensions.includes(ext)) return `${file.name}：不支持的文件类型，支持 ${policy.extensions.join('、')}`
+  if (file.size > policy.max_mb * 1024 * 1024) return `${file.name}：超过 ${policy.max_mb} MB 上限`
+  if (file.size === 0) return `${file.name}：文件是空的`
+  return null
+}
 const PROCESSING = PROCESSING_STATUSES
 
 // 状态单元格：处理中给进度条与速度，终态给状态标签 + 总耗时；超过阈值没心跳标"疑似中断"
@@ -61,7 +72,7 @@ function StatusCell({ doc }: { doc: DocumentRow }) {
 // 能否"继续处理"：失败的、或处理中但已无心跳（中断）的
 const canResume = (doc: DocumentRow) => doc.status === 'failed' || docProgress(doc).stalled
 
-export default function DocTable({ kbId, onChanged }: Props) {
+export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
   const [status, setStatus] = useState<string | undefined>()
   const [q, setQ] = useState<string | undefined>()
   const [chunkDoc, setChunkDoc] = useState<DocumentRow | null>(null)
@@ -84,7 +95,9 @@ export default function DocTable({ kbId, onChanged }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <FilterBar onReset={() => { setStatus(undefined); setQ(undefined) }} onRefresh={list.reload} loading={list.loading}
         extra={
-          <Upload showUploadList={false} multiple customRequest={async ({ file, onSuccess, onError, onProgress }) => {
+          <Upload showUploadList={false} multiple accept={uploadPolicy?.extensions.map((e) => '.' + e).join(',')}
+            beforeUpload={(file) => { const problem = precheck(file, uploadPolicy); if (problem) { message.error(problem); return Upload.LIST_IGNORE } return true }}
+            customRequest={async ({ file, onSuccess, onError, onProgress }) => {
             // 大文件上传要一两分钟：把浏览器到服务端的进度报给 antd（按钮上的加载态），完成后进后台队列
             try { await uploadDoc(kbId, file as File, (percent) => onProgress?.({ percent })); message.success(`${(file as File).name} 上传完成，已进入处理队列`); list.reload(); onChanged?.(); onSuccess?.({}) } catch (e) { message.error(errorText(e, `${(file as File).name} 上传失败`)); onError?.(e as Error) }
           }}>

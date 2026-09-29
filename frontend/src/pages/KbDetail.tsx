@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, Popconfirm, Space, Tag, Typography, message } from 'antd'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { deleteKB, getKB } from '../api'
+import { deleteKB, getKB, getUploadPolicy } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
 import DetailPage from '../components/layout/DetailPage'
 import StatusTag from '../components/common/StatusTag'
@@ -23,6 +23,8 @@ export default function KbDetail() {
   const navigate = useNavigate()
   const kbId = Number(id)
   const { data: kb, loading, error, reload } = useAsyncData(() => getKB(kbId), [kbId], { errorText: '加载知识库失败' })
+  // 上传策略（扩展名白名单与大小上限）由服务端下发，文档页签据此设 accept 与上传前预检
+  const { data: uploadPolicy } = useAsyncData(getUploadPolicy, [], { errorText: '加载上传策略失败' })
   const [editing, setEditing] = useState(false)
   const remove = async () => { try { await deleteKB(kbId); message.success('已删除'); navigate('/knowledge-bases') } catch (e) { message.error(errorText(e, '删除失败')) } }
 
@@ -49,7 +51,7 @@ export default function KbDetail() {
           </Space>
         )}
         tabs={kb ? [
-          { key: 'documents', label: `文档（${kb.document_count}）`, children: <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}><EmbeddingAlert /><DocTable kbId={kb.id} onChanged={() => reload(true)} /></div> },
+          { key: 'documents', label: `文档（${kb.document_count}）`, children: <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}><EmbeddingAlert /><DocTable kbId={kb.id} uploadPolicy={uploadPolicy} onChanged={() => reload(true)} /></div> },
           { key: 'search', label: '检索评测', children: <SearchEval kbId={kb.id} /> },
           { key: 'stats', label: '统计', children: <KbStats kb={kb} /> },
           {

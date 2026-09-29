@@ -9,9 +9,10 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params, time_range
@@ -28,22 +29,29 @@ DocStatus = Literal["uploading", "parsing", "chunking", "ready", "failed"]
 class KnowledgeBaseIn(BaseModel):
     """创建 / 更新知识库的请求体：name 必填；embedding_model 指定向量化模型；
     chunk_size / chunk_overlap 为文档分块参数；is_public / visible_roles 控制可见范围。
+    取值范围 2026-09-29 起校验（422，docs/15 KB-03）：此前 chunk_overlap 大于 chunk_size、visible_roles 写错角色名都能存进去。
     """
 
-    name: str
-    description: str = ""
-    embedding_model: str = "text-embedding-3-small"
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field("", max_length=2000)
+    embedding_model: str = Field("text-embedding-3-small", max_length=128)
+    chunk_size: int = Field(500, ge=50, le=5000)
+    chunk_overlap: int = Field(50, ge=0, le=1000)
     is_public: bool = True
-    visible_roles: list[str] = []
+    visible_roles: list[Literal["admin", "developer", "caller"]] = []
+
+    @model_validator(mode="after")
+    def _overlap_below_size(self):
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap 必须小于 chunk_size")
+        return self
 
 
 class SearchIn(BaseModel):
-    """知识库检索请求体：query 检索词，top_k 返回条数，debug 返回检索调试信息。"""
+    """知识库检索请求体：query 检索词（1～1000 字），top_k 返回条数（1～50），debug 返回检索调试信息。"""
 
-    query: str
-    top_k: int = 4
+    query: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(4, ge=1, le=50)
     debug: bool = False
 
 
@@ -81,6 +89,12 @@ def batch_kbs(data: KbBatchIn, db: Session = Depends(get_db), user: User = Depen
     return run_batch(db, data.unique_ids(), lambda kb_id: kb_service.delete_kb(db, kb_id))
 
 
+@router.get("/upload-policy")
+def upload_policy(user: User = Depends(require_roles("admin", "developer"))):
+    """上传策略：允许的扩展名与大小上限（MB）。前端据此设 accept 与上传前预检，不硬编码。"""
+    return kb_service.upload_policy()
+
+
 @router.get("/{kb_id}")
 def get_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """知识库详情（含统计与引用它的智能体）。"""
@@ -108,14 +122,26 @@ async def upload_document(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    content = await file.read()
-    filename = file.filename or "unnamed"
+    """上传文档（docs/04 4.8）：文件名只保留最后一段并清洗，扩展名须在上传策略的白名单内（400），
+    超过 KB_UPLOAD_MAX_MB 413；这些都在写 MinIO、建文档行之前拒绝。"""
+    name, ext = await run_in_threadpool(kb_service.check_upload, db, kb_id, file.filename, file.size)
+    content = await _read_limited(file, settings.KB_UPLOAD_MAX_MB * 1024 * 1024)
     # 存 MinIO 是阻塞 IO（几十 MB 的文件走公网要几十秒），必须挪出事件循环 ——
     # 写在 async 路由里会占住整个进程：2026-09-06 一次上传卡了 436 秒，期间所有接口都不响应，页面看着像服务挂了
-    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, filename, content, file.content_type or "application/octet-stream")
+    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, name, ext, content, file.content_type or "application/octet-stream")
     # 解析 / 分块 / 向量化放入后台任务异步执行，接口先返回文档记录，前端轮询 status
     background_tasks.add_task(process_document, doc.id)
-    return {"id": doc.id, "kb_id": kb_id, "name": filename, "file_type": doc.file_type, "status": doc.status}
+    return {"id": doc.id, "kb_id": kb_id, "name": name, "file_type": doc.file_type, "status": doc.status}
+
+
+async def _read_limited(file: UploadFile, limit: int) -> bytes:
+    """分块读取并计数，超过上限 413。file.size 拿不到时（分块传输）也拦得住，不会先整块读进内存再判断。"""
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise kb_service.upload_too_large()
+    return bytes(buf)
 
 
 @router.get("/{kb_id}/documents")

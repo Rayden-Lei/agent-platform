@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # RAG 查询改写：默认关闭。开启后每条消息多一次模型调用（DeepSeek 类模型实测 4～9 秒），只在召回质量明显不足时打开
     RAG_QUERY_REWRITE_ENABLED: bool = False
     RAG_QUERY_REWRITE_TIMEOUT_SECONDS: int = 3
+    # 单个上传文件的大小上限（MB），超出 413。使用者真实导入过 40MB 级的 xlsx，留足余量；
+    # 前面有 nginx 时 client_max_body_size 要设成同值（nginx 默认 1MB）
+    KB_UPLOAD_MAX_MB: int = 200
     # 同时处理的文档数：向量模型与库都是共享资源，并发只会让每篇都变慢、进度与预计时间失真；排队的文档保持 uploading
     INGEST_CONCURRENCY: int = 1
     # 处理中的文档多久没有心跳视为中断：可以在页面"继续处理"；后端启动时自动续本机未完成的文档

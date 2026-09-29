@@ -300,7 +300,11 @@ def _process_document(doc_id: int, resume: bool = False) -> None:
         db.commit()
 
         with tempfile.TemporaryDirectory() as tmp:
-            local_path = os.path.join(tmp, doc.name)
+            # 本地文件名固定，不用上传时的文件名（2026-09-29 前拼 doc.name，以 / 开头的名字会让 join 丢掉 tmp、写到临时目录之外）；
+            # 存量文档的 file_type 也来自未清洗的文件名，拼完再确认仍在临时目录内
+            local_path = os.path.join(tmp, "source." + (doc.file_type or "bin"))
+            if not os.path.realpath(local_path).startswith(os.path.realpath(tmp) + os.sep):
+                raise ValueError(f"文件类型不合法：{doc.file_type!r}")
             download_file(doc.file_path, local_path)
             segments = parse_document(local_path, doc.file_type)
 

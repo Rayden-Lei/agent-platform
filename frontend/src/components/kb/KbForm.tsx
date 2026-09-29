@@ -41,7 +41,11 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
         </Form.Item>
         <div style={{ display: 'flex', gap: 12 }}>
           <Form.Item name="chunk_size" label="切片大小（字符）" style={{ flex: 1 }}><InputNumber min={50} max={5000} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="chunk_overlap" label="切片重叠" style={{ flex: 1 }}><InputNumber min={0} max={1000} style={{ width: '100%' }} /></Form.Item>
+          {/* 重叠不小于切片大小时切分会原地打转；服务端同样拦（422），这里提前提示 */}
+          <Form.Item name="chunk_overlap" label="切片重叠" style={{ flex: 1 }} dependencies={['chunk_size']}
+            rules={[({ getFieldValue }) => ({ validator: (_, v) => (v == null || v < getFieldValue('chunk_size') ? Promise.resolve() : Promise.reject(new Error('要小于切片大小'))) })]}>
+            <InputNumber min={0} max={1000} style={{ width: '100%' }} />
+          </Form.Item>
         </div>
         {editing && <Typography.Text type="secondary" style={{ fontSize: 12 }}>切片参数只影响之后上传的文档；已有文档可在详情页"重新解析"按新参数重建。</Typography.Text>}
         <Divider style={{ margin: '12px 0' }}>访问权限</Divider>

@@ -1,3 +1,5 @@
+import re
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +16,9 @@ from app.rag.retriever import retrieve, retrieve_with_stats
 SORTABLE = {"id": KnowledgeBase.id, "name": KnowledgeBase.name, "updated_at": KnowledgeBase.updated_at}
 DOC_SORTABLE = {"id": Document.id, "name": Document.name, "status": Document.status, "chunk_count": Document.chunk_count, "created_at": Document.created_at}
 DOC_STATUSES = ("uploading", "parsing", "chunking", "ready", "failed")
+# 允许上传的扩展名：与 rag/parser.parse_document 能解析的一致（docs/15 KB-03，2026-09-29 前不校验）
+UPLOAD_EXTENSIONS = ("txt", "md", "markdown", "pdf", "docx", "csv", "xlsx", "png", "jpg", "jpeg", "webp", "bmp")
+FILENAME_MAX_CHARS = 200
 
 
 def _kb_dict(k: KnowledgeBase, stats: dict | None = None, creator: str | None = None) -> dict:
@@ -132,16 +137,54 @@ def delete_kb(db: Session, kb_id: int) -> None:
     db.commit()
 
 
-def create_document(db: Session, kb_id: int, filename: str, content: bytes, content_type: str) -> Document:
-    """上传文档：先落 MinIO（对象名带 uuid 前缀防重名），库记录初始为 uploading，由异步解析管道置 ready/failed。"""
+def upload_policy() -> dict:
+    """上传策略（前端 accept 与大小预检用，不在前端硬编码）。"""
+    return {"extensions": list(UPLOAD_EXTENSIONS), "max_mb": settings.KB_UPLOAD_MAX_MB}
+
+
+def upload_too_large() -> BizError:
+    return BizError(413, f"文件超过 {settings.KB_UPLOAD_MAX_MB} MB 上限")
+
+
+def safe_filename(filename: str | None) -> str:
+    """上传的文件名只取最后一段（/ 与反斜杠都算分隔符），去掉控制字符，限长（保留扩展名）。
+    2026-09-29 前原样入库并拼进处理时的本地路径，以 / 开头的名字能让文件写到临时目录之外（docs/15 2.3 第 14 条）。"""
+    name = re.split(r"[\\/]", filename or "")[-1]
+    name = "".join(ch for ch in name if unicodedata.category(ch) != "Cc").strip()
+    if len(name) > FILENAME_MAX_CHARS:
+        stem, dot, ext = name.rpartition(".")
+        keep_ext = dot and 0 < len(ext) <= 10
+        name = stem[: FILENAME_MAX_CHARS - len(ext) - 1] + "." + ext if keep_ext else name[:FILENAME_MAX_CHARS]
+    return name or "unnamed"
+
+
+def check_upload(db: Session, kb_id: int, filename: str | None, size: int | None) -> tuple[str, str]:
+    """读文件内容之前的校验：知识库存在（404）、文件名清洗、扩展名在白名单（400）、已知大小时先比上限（413）。
+    返回 (清洗后的文件名, 扩展名)。.xls 单独提示：openpyxl 读不了老格式，此前上传后必然解析失败，不为它引入新依赖。"""
     get_kb(db, kb_id)
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
-    object_name = f"{uuid.uuid4().hex}_{filename}"
+    name = safe_filename(filename)
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext == "xls":
+        raise BizError(400, "不支持 .xls（老版 Excel），请另存为 .xlsx 后上传")
+    if ext not in UPLOAD_EXTENSIONS:
+        raise BizError(400, f"不支持的文件类型（{'.' + ext if ext else '没有扩展名'}），支持：{', '.join(UPLOAD_EXTENSIONS)}")
+    if size is not None and size > settings.KB_UPLOAD_MAX_MB * 1024 * 1024:
+        raise upload_too_large()
+    return name, ext
+
+
+def create_document(db: Session, kb_id: int, name: str, ext: str, content: bytes, content_type: str) -> Document:
+    """上传文档：先落 MinIO（对象名带 uuid 前缀防重名），库记录初始为 uploading，由异步解析管道置 ready/failed。
+    name / ext 须先经 check_upload 清洗与校验；空文件 400（解析出来什么都没有，只会留一篇失败的文档）。"""
+    if not content:
+        raise BizError(400, "文件是空的")
+    get_kb(db, kb_id)
+    object_name = f"{uuid.uuid4().hex}_{name}"
     upload_file(object_name, content, content_type or "application/octet-stream")
 
     from app.rag.pipeline import NODE_NAME
     # 记下由本节点处理：共享库上另一台后端重启时不会来抢这篇
-    doc = Document(kb_id=kb_id, name=filename, file_path=object_name, file_type=ext, status="uploading", processing_node=NODE_NAME)
+    doc = Document(kb_id=kb_id, name=name, file_path=object_name, file_type=ext, status="uploading", processing_node=NODE_NAME)
     db.add(doc)
     db.commit()
     db.refresh(doc)
