@@ -1,28 +1,27 @@
 import { useState } from 'react'
-import { Button, Form, Input, Select, Switch, Typography, message } from 'antd'
+import { Alert, Button, Form, Input, Select, Switch, Typography, message } from 'antd'
 import type { FormInstance } from 'antd'
-import { renderPromptTemplate, type PromptTemplateRow } from '../../api'
+import type { PromptRenderResult, PromptTemplateRow } from '../../api'
+import { errorText } from '../../utils/errors'
 
-// 智能体表单的提示词区块（FR-028）："从模板生成"开关：开启后选模板、按声明填变量、只读展示渲染结果，
-// system_prompt 不再手填（提交时传空串由后端渲染）；关闭后恢复手填。
+// 智能体装配页的提示词区块（FR-028）："从模板生成"开关：开启后选模板、按声明填变量、只读展示渲染结果，
+// system_prompt 不再手填（提交时传空串由后端渲染）；关闭后恢复手填。渲染预览的请求由页面注入（组件不发请求）。
 
 interface Props {
   form: FormInstance
   templates: PromptTemplateRow[]
+  onRender: (templateId: number, variables: Record<string, string>) => Promise<PromptRenderResult>
 }
 
-export default function AgentTemplateFields({ form, templates }: Props) {
+export default function AgentTemplateFields({ form, templates, onRender }: Props) {
   const useTemplate = Form.useWatch('use_template', form)
   const templateId = Form.useWatch('prompt_template_id', form)
-  const [preview, setPreview] = useState('')
+  const [preview, setPreview] = useState<PromptRenderResult | null>(null)
   const selected = templates.find((t) => t.id === templateId)
 
   const doPreview = async () => {
     if (!templateId) return
-    try {
-      const r = await renderPromptTemplate(templateId, form.getFieldValue('prompt_variables') || {})
-      setPreview(r.content)
-    } catch (e: any) { message.error(e.response?.data?.detail || '渲染失败') }
+    try { setPreview(await onRender(templateId, form.getFieldValue('prompt_variables') || {})) } catch (e) { message.error(errorText(e, '渲染失败')) }
   }
 
   return (
@@ -34,7 +33,7 @@ export default function AgentTemplateFields({ form, templates }: Props) {
         <>
           <Form.Item name="prompt_template_id" label="模板" rules={[{ required: true, message: '请选择模板' }]}>
             <Select showSearch optionFilterProp="label" placeholder="选择提示词模板" options={templates.map((t) => ({ value: t.id, label: `${t.name}（v${t.version}）` }))}
-              onChange={() => { form.setFieldValue('prompt_variables', {}); setPreview('') }} />
+              onChange={() => { form.setFieldValue('prompt_variables', {}); setPreview(null) }} />
           </Form.Item>
           {(selected?.variables || []).map((v) => (
             <Form.Item key={v.name} name={['prompt_variables', v.name]} label={`${v.name}${v.description ? `（${v.description}）` : ''}`}
@@ -43,11 +42,19 @@ export default function AgentTemplateFields({ form, templates }: Props) {
             </Form.Item>
           ))}
           <Button size="small" onClick={doPreview} disabled={!templateId}>预览渲染结果</Button>
-          {preview && <Input.TextArea value={preview} readOnly rows={4} style={{ marginTop: 8 }} />}
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>保存时按模板当前版本渲染进系统提示词；模板改版后不会自动更新，需重新保存。</Typography.Paragraph>
+          {preview && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+              {/* 缺必填变量时接口直接 400，不会走到这里；unused 是模板本身的问题，填了也不起作用 */}
+              {preview.unused.length > 0 && <Alert type="warning" showIcon message={`模板声明了这些变量，但内容里没有引用，填了也不起作用：${preview.unused.join('、')}`} />}
+              <Input.TextArea value={preview.content} readOnly autoSize={{ minRows: 4, maxRows: 16 }} />
+            </div>
+          )}
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>保存草稿时按模板当前版本渲染进系统提示词；模板改版后不会自动更新，需重新保存草稿并发布。</Typography.Paragraph>
         </>
       ) : (
-        <Form.Item name="system_prompt" label="系统提示词" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+        <Form.Item name="system_prompt" label="系统提示词" rules={[{ required: true }]}>
+          <Input.TextArea autoSize={{ minRows: 8, maxRows: 24 }} maxLength={20000} showCount />
+        </Form.Item>
       )}
     </>
   )

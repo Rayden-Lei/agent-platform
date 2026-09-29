@@ -58,7 +58,11 @@ export interface AgentDetail extends AgentRow {
   missing_kb_ids: number[]
   workflow: { id: number; name: string; status: string } | null
   prompt_template: { id: number; name: string; version: number; variables: { name: string; description?: string; required?: boolean; default?: string | null }[] } | null
+  // 草稿与线上两份同形快照（字段由后端 snapshot_of 定义）：发布弹窗与版本对比据此做字段级差异；从未发布时线上为 null
+  draft_snapshot: AgentSnapshot
+  live_snapshot: AgentSnapshot | null
 }
+export type AgentSnapshot = Record<string, unknown>
 // 发布 / 回滚上线的结果：published 生成了新线上版本或重新上线；unchanged 与线上一致，什么都没做
 export interface AgentPublishResult extends AgentRow { publish_result: 'published' | 'unchanged' }
 // 可对话智能体的对外资料（GET /agents/available）：任何登录角色都能取，只含这四个字段；名称与描述取线上快照
@@ -71,7 +75,7 @@ export interface AgentBrief {
 export interface AgentVersionRow {
   id: number
   version: number
-  snapshot: Record<string, unknown>
+  snapshot: AgentSnapshot // 已补齐成与草稿快照同形
   created_at: string
   created_by: number | null
   created_by_username: string | null

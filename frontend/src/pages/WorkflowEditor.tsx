@@ -9,6 +9,7 @@ import { PALETTE, PaletteList, buildDetail, degreeOf, paletteOf, toGraph } from 
 import { nodeTypes } from './workflow/FlowNode'
 import NodeConfigForm, { collectNodeConfig, configToFormValues } from './workflow/NodeConfigForm'
 import { useUnsaved } from '../store/unsaved'
+import { useGuardedNavigate } from '../hooks/useGuardedNavigate'
 import { errorText } from '../utils/errors'
 
 // 工作流画布编辑器（基于 @xyflow/react）：左侧节点库拖拽建节点，中间画布连线编排，
@@ -23,6 +24,7 @@ function EditorInner() {
   const [description, setDescription] = useState('')
   // 未保存标记：把当前画布序列化后与最近一次加载 / 保存的基线比较，只有真正改了才置 dirty
   const setDirty = useUnsaved((s) => s.setDirty)
+  const guardedNavigate = useGuardedNavigate()
   const baseline = useRef<string | null>(null)
   // ReactFlow 的节点/边状态：nodes 的 data 里挂 nodeType/config/detail 等业务数据
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -241,7 +243,8 @@ function EditorInner() {
     <div style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', marginBottom: 12, flexShrink: 0 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(isNew ? '/workflows' : `/workflows/${id}`)}>{isMobile ? '' : '返回'}</Button>
+          {/* 返回同样要过未保存拦截（2026-09-25 前直接跳走，改动静默丢失） */}
+          <Button icon={<ArrowLeftOutlined />} onClick={() => guardedNavigate(isNew ? '/workflows' : `/workflows/${id}`)}>{isMobile ? '' : '返回'}</Button>
           {isMobile && <Button icon={<MenuOutlined />} onClick={() => setShowPalette(true)}>节点</Button>}
           <Input value={name} onChange={(e) => setName(e.target.value)} style={{ width: isMobile ? 130 : 220 }} placeholder="工作流名称" />
           {!isMobile && <Input value={description} onChange={(e) => setDescription(e.target.value)} style={{ width: 320 }} placeholder="描述（可选，列表与详情页显示）" />}

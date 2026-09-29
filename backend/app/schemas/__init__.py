@@ -189,6 +189,9 @@ class AgentDetailOut(AgentOut):
     missing_kb_ids: list = Field(default_factory=list)
     workflow: Optional[dict] = None
     prompt_template: Optional[dict] = None
+    # 草稿与线上两份同形快照（字段由 runtime.agent_config.snapshot_of 定义）；从未发布时 live_snapshot 为空
+    draft_snapshot: dict = Field(default_factory=dict)
+    live_snapshot: Optional[dict] = None
 
 
 class AgentBriefOut(BaseModel):

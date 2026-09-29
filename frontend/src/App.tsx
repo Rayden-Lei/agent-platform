@@ -9,6 +9,8 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Models = lazy(() => import('./pages/Models'))
 const Agents = lazy(() => import('./pages/Agents'))
 const AgentDetail = lazy(() => import('./pages/AgentDetail'))
+const AgentCreate = lazy(() => import('./pages/AgentCreate'))
+const AgentEditor = lazy(() => import('./pages/AgentEditor'))
 const Chat = lazy(() => import('./pages/Chat'))
 const KnowledgeBases = lazy(() => import('./pages/KnowledgeBases'))
 const KbDetail = lazy(() => import('./pages/KbDetail'))
@@ -41,6 +43,9 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="agents" element={<Agents />} />
         <Route path="agents/:id" element={<AgentDetail />} />
+        {/* 智能体装配是二级页（docs/15 3.3）：先建后编，/agents/new 只建草稿，配置与调试在 /agents/:id/edit */}
+        <Route path="agents/new" element={<AgentCreate />} />
+        <Route path="agents/:id/edit" element={<AgentEditor />} />
         <Route path="prompt-templates" element={<PromptTemplates />} />
         <Route path="chat" element={<Chat />} />
         <Route path="models" element={<Models />} />

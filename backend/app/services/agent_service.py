@@ -195,7 +195,8 @@ def get_agent(db: Session, agent_id: int) -> Agent:
 
 def get_agent_detail(db: Session, agent_id: int) -> dict:
     """详情：基础字段 + 关联对象（模型、工具、知识库、工作流、模板）与悬空引用清单。
-    kb_ids / tool_ids 是 JSONB 数组无外键，知识库或工具删除后 ID 会残留，这里把查不到的 ID 显式列出。"""
+    kb_ids / tool_ids 是 JSONB 数组无外键，知识库或工具删除后 ID 会残留，这里把查不到的 ID 显式列出。
+    另给草稿与线上两份同形快照（snapshot_of 定义字段）：发布弹窗、版本对比按它们做字段级差异，前端不再自己维护字段清单。"""
     a = get_agent(db, agent_id)
     model = db.get(ModelConfig, a.model_id) if a.model_id else None
     tools = db.query(Tool).filter(Tool.id.in_(a.tool_ids)).order_by(Tool.id).all() if a.tool_ids else []
@@ -212,6 +213,8 @@ def get_agent_detail(db: Session, agent_id: int) -> dict:
         "missing_kb_ids": [i for i in (a.kb_ids or []) if i not in found_kbs],
         "workflow": {"id": workflow.id, "name": workflow.name, "status": workflow.status} if workflow else None,
         "prompt_template": {"id": template.id, "name": template.name, "version": template.version, "variables": template.variables} if template else None,
+        "draft_snapshot": snapshot_of(a),
+        "live_snapshot": _live_snapshot(db, a),
     }
 
 
@@ -373,7 +376,8 @@ def list_versions(db: Session, agent_id: int, params: PageParams) -> dict:
     models = dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
     templates = dict(db.query(PromptTemplate.id, PromptTemplate.name).filter(PromptTemplate.id.in_(template_ids)).all()) if template_ids else {}
     page["items"] = [{
-        "id": v.id, "version": v.version, "snapshot": v.snapshot, "created_at": v.created_at.isoformat(),
+        # 快照补齐成与 snapshot_of 同形（早期版本没有模板三字段），与草稿对比时不会把"缺键"当成差异
+        "id": v.id, "version": v.version, "snapshot": normalize_snapshot(v.snapshot), "created_at": v.created_at.isoformat(),
         "created_by": v.created_by, "created_by_username": creators.get(v.created_by), "note": v.note,
         "is_live": a.status == "published" and v.version == a.published_version,
         "model_name": models.get((v.snapshot or {}).get("model_id")),

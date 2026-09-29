@@ -156,6 +156,25 @@ def test_restore_to_draft_keeps_live_and_rollback_to_live_keeps_draft(client, au
     assert {"publish", "update", "restore", "rollback"} <= actions
 
 
+def test_detail_and_versions_give_snapshots_of_one_shape(client, auth_headers, make_agent):
+    """发布弹窗与版本对比按后端给的快照做字段级差异，前端不维护字段清单：几份快照的键必须一致。"""
+    never = make_agent(publish=False)
+    assert never["live_snapshot"] is None and never["draft_snapshot"]["system_prompt"] == "标记A"
+    agent = make_agent("标记A")
+    _save(client, auth_headers, agent, system_prompt="标记B")
+    detail = client.get(f"/api/v1/agents/{agent['id']}", headers=auth_headers).json()
+    assert (detail["live_snapshot"]["system_prompt"], detail["draft_snapshot"]["system_prompt"]) == ("标记A", "标记B")
+    assert set(detail["live_snapshot"]) == set(detail["draft_snapshot"])
+    db = SessionLocal()
+    try:  # 早期快照没有模板三字段
+        db.add(AgentVersion(agent_id=agent["id"], version=99, snapshot={"name": "早期", "system_prompt": "旧", "model_id": agent["model_id"]}))
+        db.commit()
+    finally:
+        db.close()
+    items = client.get(f"/api/v1/agents/{agent['id']}/versions", headers=auth_headers).json()["items"]
+    assert [v["version"] for v in items] == [99, 1] and all(set(v["snapshot"]) == set(detail["draft_snapshot"]) for v in items)
+
+
 def test_offline_blocks_every_entry_and_publish_brings_back(client, auth_headers, make_agent, monkeypatch):
     agent = make_agent()
     r = client.post(f"/api/v1/agents/{agent['id']}/offline", headers=auth_headers)
