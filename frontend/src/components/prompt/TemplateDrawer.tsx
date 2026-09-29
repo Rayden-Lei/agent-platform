@@ -52,12 +52,12 @@ export default function TemplateDrawer({ template, onClose, onEdit, onChanged }:
           {
             key: 'agents', label: `绑定智能体（${agents.data?.length ?? t.agents_count ?? 0}）`, children: agents.error ? <ErrorState compact message={agents.error} onRetry={() => agents.reload()} /> : agents.data?.length ? (
               <Space direction="vertical" size={6}>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>智能体发布时固化模板版本；标"旧版"的需要重新发布才用到当前 v{t.version}。</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>智能体保存草稿时按模板当前版本渲染；标"旧版"的要重新保存草稿并发布，才用到当前 v{t.version}。</Typography.Text>
                 {agents.data.map((a) => (
                   <span key={a.id}>
                     <ResourceLink type="agent" id={a.id} name={a.name} showIcon /> <StatusTag domain="agent" value={a.status} />
                     {a.prompt_template_version !== null && <Tag style={{ marginLeft: 6 }}>v{a.prompt_template_version}</Tag>}
-                    {a.outdated && <Tooltip title="已发布版本用的是旧模板，重新发布后生效"><Tag color="warning">旧版</Tag></Tooltip>}
+                    {a.outdated && <Tooltip title="草稿用的是旧模板版本，重新保存草稿并发布后生效"><Tag color="warning">旧版</Tag></Tooltip>}
                   </span>
                 ))}
               </Space>

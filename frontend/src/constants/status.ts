@@ -22,7 +22,7 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     schedule: { label: '定时任务', color: 'cyan' },
     debug: { label: '调试', color: 'orange' }, // 装配页当场调试，运营指标默认不计
   },
-  agent: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' } },
+  agent: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' }, offline: { label: '已下线', color: 'default' } },
   workflow: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' } },
   document: {
     uploading: { label: '上传中', color: 'processing' },

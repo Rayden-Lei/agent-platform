@@ -13,10 +13,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.core.exceptions import BizError
-from app.db.models import Agent, ModelConfig, RunNode, Tool
+from app.db.models import RunNode, Tool
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
+from app.runtime.agent_config import resolve_live_config, usable_model
 from app.tools.executor import execute_tool
 from app.tools.schema import check_tool_args
 from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
@@ -193,10 +194,11 @@ def _finalize_node_output(node_id: str, raw_output: Any, config: dict) -> dict:
 
 
 def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
-    """Agent 节点工厂：按 config.agent_id 查智能体，用其 system_prompt（可被 config.prompt 覆盖）调 LLM。
+    """Agent 节点工厂：按 config.agent_id 取智能体的线上版本，用其 system_prompt（可被 config.prompt 覆盖）调 LLM。
 
-    节点函数签名 (state) -> dict；agent 不存在时写 failed 节点日志并返回错误文案，
-    其他异常经 _node_failed 记录后重新抛出，由上层把整条运行置为 failed。
+    节点函数签名 (state) -> dict；与对话同一口径（runtime.agent_config）：只读线上快照不读草稿，
+    智能体不存在 / 未发布 / 已下线、模型不可用都经 _node_failed 记录后抛出，整条运行置为 failed。
+    2026-09-25 前读的是草稿行、不查模型停用，智能体不存在时还把错误文案当输出继续往下跑。
     default_ref（所有工厂同义）：并行分支内由编译期给出的前驱节点 id，未配 input_ref 时默认取它的输出。
     """
     agent_id = config.get("agent_id")
@@ -207,20 +209,16 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
         rn_id = _start_node(run_id, node_id, "agent", input_val)
         db = SessionLocal()
         try:
-            agent = db.get(Agent, agent_id)
-            if agent is None:
-                out = {"output": f"智能体不存在: {agent_id}"}
-                _finish_node(rn_id, "failed", out["output"], "智能体不存在")
-                return out
-            model = db.get(ModelConfig, agent.model_id)
-            llm = build_llm(model, agent.params)  # 与对话同一口径：智能体参数覆盖模型默认（FR-042）
+            live = resolve_live_config(db, agent_id)
+            model = usable_model(db, live.model_id)
+            llm = build_llm(model, live.params)  # 与对话同一口径：智能体参数覆盖模型默认（FR-042）
             # 经熔断包装：打开期直接抛 503，节点按失败收尾，错误文本含"熔断中"
             resp = guarded_invoke(model, llm, [
-                SystemMessage(content=prompt_override or agent.system_prompt),
+                SystemMessage(content=prompt_override or live.system_prompt),
                 HumanMessage(content=str(input_val)),
             ])
             out = _finalize_node_output(node_id, resp.content, config)
-            out["steps"] = [f"agent:{agent.name}"]
+            out["steps"] = [f"agent:{live.name}"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:

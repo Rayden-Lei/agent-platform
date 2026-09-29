@@ -35,7 +35,7 @@ export default function TemplateForm({ open, editing, onClose, onSaved }: Props)
       <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ variables: [] }}>
         <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 128 }]}><Input /></Form.Item>
         <Form.Item name="description" label="描述"><Input /></Form.Item>
-        <Form.Item name="content" label="内容" rules={[{ required: true }]} extra="用 {{变量名}} 引用下方声明的变量；内容或变量变化会自动升版本，绑定的智能体需重新发布才用到新版">
+        <Form.Item name="content" label="内容" rules={[{ required: true }]} extra="用 {{变量名}} 引用下方声明的变量；内容或变量变化会自动升版本，绑定的智能体重新保存草稿并发布后才用到新版">
           <Input.TextArea rows={10} placeholder={'你是{{role}}，请用{{tone}}的语气回答。'} />
         </Form.Item>
         <Form.Item name="variables" label="变量声明（最多 30 个）"><VariablesEditor /></Form.Item>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, Popconfirm, Space, Tag, message } from 'antd'
 import { DeleteOutlined, EditOutlined, MessageOutlined, RocketOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { deleteAgent, getAgent, publishAgent } from '../api'
+import { deleteAgent, getAgent, offlineAgent, publishAgent } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
 import DetailPage from '../components/layout/DetailPage'
 import StatusTag from '../components/common/StatusTag'
@@ -25,7 +25,14 @@ export default function AgentDetail() {
   const [editing, setEditing] = useState(false)
 
   const publish = async () => {
-    try { await publishAgent(agentId); message.success('已发布'); reload(true) } catch (e) { message.error(errorText(e, '发布失败')) }
+    try {
+      const r = await publishAgent(agentId)
+      message.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
+      reload(true)
+    } catch (e) { message.error(errorText(e, '发布失败')) }
+  }
+  const takeOffline = async () => {
+    try { await offlineAgent(agentId); message.success('已下线：对话、API Key 与工作流都不能再调用它'); reload(true) } catch (e) { message.error(errorText(e, '下线失败')) }
   }
   const remove = async () => {
     try { await deleteAgent(agentId); message.success('已删除'); navigate('/agents') } catch (e) { message.error(errorText(e, '删除失败')) }
@@ -36,7 +43,14 @@ export default function AgentDetail() {
       <DetailPage
         crumbs={[{ label: '智能体', to: '/agents' }, { label: agent?.name ?? `#${agentId}` }]}
         title={agent?.name ?? ''}
-        tags={agent && <Space size={4}><StatusTag domain="agent" value={agent.status} /><Tag>v{agent.version}</Tag>{agent.prompt_template_outdated && <Tag color="orange">模板有新版本</Tag>}</Space>}
+        tags={agent && (
+          <Space size={4}>
+            <StatusTag domain="agent" value={agent.status} />
+            {agent.published_version && <Tag>线上 v{agent.published_version}</Tag>}
+            {agent.has_unpublished_changes && <Tag color="gold">未发布修改</Tag>}
+            {agent.prompt_template_outdated && <Tag color="orange">模板有新版本</Tag>}
+          </Space>
+        )}
         meta={agent ? [
           { label: '模型', value: <ResourceLink type="model" id={agent.model_id} name={agent.model_name} /> },
           { label: '近 7 天运行', value: agent.runs_7d },
@@ -50,7 +64,8 @@ export default function AgentDetail() {
         extra={agent && (
           <Space>
             <Button type="primary" icon={<MessageOutlined />} disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?agent=${agent.id}`)}>对话</Button>
-            {agent.status !== 'published' && <Button icon={<RocketOutlined />} onClick={publish}>发布</Button>}
+            {(agent.status !== 'published' || agent.has_unpublished_changes) && <Button icon={<RocketOutlined />} onClick={publish}>{agent.status === 'offline' && !agent.has_unpublished_changes ? '重新上线' : '发布'}</Button>}
+            {agent.status === 'published' && <Popconfirm title="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" onConfirm={takeOffline}><Button>下线</Button></Popconfirm>}
             <Button icon={<EditOutlined />} onClick={() => setEditing(true)}>编辑</Button>
             <Popconfirm title="确定删除？会话、消息与运行记录会一并删除" onConfirm={remove}><Button danger icon={<DeleteOutlined />}>删除</Button></Popconfirm>
           </Space>
@@ -60,7 +75,7 @@ export default function AgentDetail() {
           { key: 'stats', label: '运行统计', children: <AgentStatsTab agentId={agent.id} /> },
           { key: 'runs', label: '运行记录', children: <RunsTable filters={{ agent_id: agent.id }} /> },
           { key: 'conversations', label: '我的会话', children: <AgentConversationsTab agentId={agent.id} /> },
-          { key: 'versions', label: `版本历史（v${agent.version}）`, children: <AgentVersionsTab agent={agent} onChanged={() => reload(true)} /> },
+          { key: 'versions', label: agent.published_version ? `版本历史（线上 v${agent.published_version}）` : '版本历史', children: <AgentVersionsTab agent={agent} onChanged={() => reload(true)} /> },
         ] : []}
       />
       <AgentForm open={editing} editing={agent} onClose={() => setEditing(false)} onSaved={() => reload(true)} />

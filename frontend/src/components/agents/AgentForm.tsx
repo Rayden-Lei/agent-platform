@@ -50,9 +50,10 @@ export default function AgentForm({ open, editing, onClose, onSaved }: Props) {
     payload.params = compactParams(payload.params) // 留空的键不提交：留空表示继承模型默认
     setSubmitting(true)
     try {
-      if (editing) await updateAgent(editing.id, payload)
+      // 更新带上打开时读到的 updated_at：别人在此期间改过就 409，不静默覆盖
+      if (editing) await updateAgent(editing.id, { ...payload, expected_updated_at: editing.updated_at ?? '' })
       else await createAgent(payload)
-      message.success('保存成功')
+      message.success(editing && editing.published_version ? '已保存草稿，发布后对外生效' : '保存成功')
       onSaved()
       onClose()
     } catch (e) {

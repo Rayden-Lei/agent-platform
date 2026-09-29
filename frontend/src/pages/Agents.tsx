@@ -49,7 +49,7 @@ export default function Agents() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<RobotOutlined />} title="智能体管理" description="提示词、模型、工具与知识库的组合；发布后才能对话，发布会生成版本快照。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增智能体</Button>} />}
+      header={<PageHeader icon={<RobotOutlined />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增智能体</Button>} />}
       filters={<AgentFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} models={models} loading={list.loading} />}
       batch={
         <BatchActionBar
@@ -57,7 +57,8 @@ export default function Agents() {
           onClear={list.clearSelection}
           running={batch.running}
           actions={[
-            { key: 'publish', label: '批量发布', confirm: `发布选中的 ${list.selectedKeys.length} 个智能体？每个都会生成新版本`, run: () => batch.run(() => batchAgents(list.selectedKeys, 'publish'), '已发布') },
+            { key: 'publish', label: '批量发布', confirm: `发布选中的 ${list.selectedKeys.length} 个智能体？草稿有改动的生成新版本并上线，与线上一致的不变`, run: () => batch.run(() => batchAgents(list.selectedKeys, 'publish'), '已发布') },
+            { key: 'offline', label: '批量下线', confirm: `下线选中的 ${list.selectedKeys.length} 个智能体？对话、API Key 与工作流都不能再调用，重新发布即恢复`, run: () => batch.run(() => batchAgents(list.selectedKeys, 'offline'), '已下线') },
             { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个智能体？会话与运行记录会一并删除`, run: () => batch.run(() => batchAgents(list.selectedKeys, 'delete'), '已删除') },
           ]}
         />

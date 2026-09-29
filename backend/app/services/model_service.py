@@ -1,7 +1,6 @@
 import logging
 
 from langchain_core.messages import HumanMessage
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -11,6 +10,7 @@ from app.core.security import encrypt_secret
 from app.db.models import Agent, ModelConfig, User
 from app.model_gateway.gateway import build_llm, guarded_ainvoke
 from app.schemas import ModelIn
+from app.services import agent_service
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def _to_dict(m: ModelConfig, agents_count: int = 0, creator: str | None = None) 
 
 def _related(db: Session, models: list) -> tuple[dict, dict]:
     ids = {m.id for m in models}
-    counts = dict(db.query(Agent.model_id, func.count(Agent.id)).filter(Agent.model_id.in_(ids)).group_by(Agent.model_id).all()) if ids else {}
+    counts = {mid: len(agent_ids) for mid, agent_ids in agent_service.agent_ids_using_models(db, ids).items()}
     creator_ids = {m.created_by for m in models if m.created_by}
     creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     return counts, creators
@@ -83,9 +83,10 @@ def get_model(db: Session, model_id: int) -> ModelConfig:
 
 
 def get_model_detail(db: Session, model_id: int) -> dict:
-    """模型详情：附引用它的智能体清单。"""
+    """模型详情：附引用它的智能体清单（草稿或线上版本引用，口径见 agent_service.agent_ids_using_models）。"""
     m = get_model(db, model_id)
-    agents = [{"id": a.id, "name": a.name, "status": a.status} for a in db.query(Agent).filter(Agent.model_id == model_id).order_by(Agent.id).all()]
+    agent_ids = agent_service.agent_ids_using_models(db, {model_id})[model_id]
+    agents = [{"id": a.id, "name": a.name, "status": a.status} for a in db.query(Agent).filter(Agent.id.in_(agent_ids)).order_by(Agent.id).all()] if agent_ids else []
     _, creators = _related(db, [m])
     return {**_to_dict(m, len(agents), creators.get(m.created_by)), "agents": agents}
 
@@ -119,12 +120,15 @@ def set_model_enabled(db: Session, model_id: int, enabled: bool, user: User) -> 
 
 
 def delete_model(db: Session, model_id: int, user: User) -> None:
-    """删除模型：先检查智能体引用，有引用则拒绝删除（避免悬空 model_id），删除前写审计。"""
+    """删除模型：草稿或线上版本仍引用它时拒绝删除（避免悬空 model_id），删除前写审计。
+
+    agents.model_id 是外键，直接删会被数据库拒绝，这里提前给出可读的错误。线上版本的快照是 JSON、不受外键保护：
+    草稿换了模型、线上还在用旧模型时删掉旧模型，线上对话会变成"模型不可用"（docs/15 3.2，2026-09-25 起一并检查）。
+    """
     m = get_model(db, model_id)
-    # agents.model_id 是外键，直接删会被数据库拒绝，这里提前给出可读的错误
-    ref_count = db.query(Agent).filter(Agent.model_id == model_id).count()
+    ref_count = len(agent_service.agent_ids_using_models(db, {model_id})[model_id])
     if ref_count:
-        raise BizError(409, f"该模型已被 {ref_count} 个智能体引用，无法删除")
+        raise BizError(409, f"该模型已被 {ref_count} 个智能体引用（草稿或线上版本），无法删除")
     record_audit(db, user, "delete", "model", model_id, detail={"name": m.name})
     db.delete(m)
     db.commit()

@@ -74,6 +74,12 @@ def _payload(model_id: int, name: str, **extra) -> dict:
     return {"name": name, "description": "", "model_id": model_id, "params": {}, "kb_ids": [], "tool_ids": [], "workflow_id": None, **extra}
 
 
+def _put(client, auth_headers, agent_id: int, body: dict):
+    """PUT 草稿要带读到的 updated_at（乐观锁，docs/15 D-11）：先取最新的再提交。"""
+    current = client.get(f"/api/v1/agents/{agent_id}", headers=auth_headers).json()
+    return client.put(f"/api/v1/agents/{agent_id}", headers=auth_headers, json={**body, "expected_updated_at": current["updated_at"]})
+
+
 def _bind(client, auth_headers, agents_cleanup, model_id, template_id, name=None, variables=None) -> dict:
     name = name or "pytest-tpl-agent-" + uuid.uuid4().hex[:6]
     r = client.post("/api/v1/agents", headers=auth_headers, json=_payload(model_id, name, prompt_template_id=template_id, prompt_variables=variables or {"role": "客服"}))
@@ -115,13 +121,13 @@ def test_template_upgrade_marks_outdated_until_agent_is_resaved(client, auth_hea
     listed = client.get("/api/v1/agents", headers=auth_headers, params={"q": a["name"]}).json()["items"][0]
     assert listed["prompt_template_outdated"] is True
     # 重新保存即按模板当前版本重新渲染
-    saved = client.put(f"/api/v1/agents/{a['id']}", headers=auth_headers, json=_payload(model_id, a["name"], prompt_template_id=template["id"], prompt_variables={"role": "客服", "tone": "严肃"}))
+    saved = _put(client, auth_headers, a["id"], _payload(model_id, a["name"], prompt_template_id=template["id"], prompt_variables={"role": "客服", "tone": "严肃"}))
     assert saved.status_code == 200, saved.text
     assert saved.json()["prompt_template_outdated"] is False and saved.json()["prompt_template_version"] == 2
     assert saved.json()["system_prompt"] == "新版：你是客服，语气严肃。"
 
 
-def test_publish_snapshot_includes_template_fields_and_rollback_restores_them(client, auth_headers, model_id, template, agents_cleanup):
+def test_publish_snapshot_includes_template_fields_and_restore_brings_them_back(client, auth_headers, model_id, template, agents_cleanup):
     a = _bind(client, auth_headers, agents_cleanup, model_id, template["id"])
     aid = a["id"]
     assert client.post(f"/api/v1/agents/{aid}/publish", headers=auth_headers).status_code == 200
@@ -129,18 +135,18 @@ def test_publish_snapshot_includes_template_fields_and_rollback_restores_them(cl
     assert bound_version["snapshot"]["prompt_template_id"] == template["id"]
     assert bound_version["snapshot"]["prompt_template_version"] == 1 and bound_version["snapshot"]["prompt_variables"] == {"role": "客服"}
     # 解绑后再发布一版，快照里模板字段为空
-    unbound = client.put(f"/api/v1/agents/{aid}", headers=auth_headers, json=_payload(model_id, a["name"], system_prompt="改成手填"))
+    unbound = _put(client, auth_headers, aid, _payload(model_id, a["name"], system_prompt="改成手填"))
     assert unbound.status_code == 200 and unbound.json()["prompt_template_id"] is None
     client.post(f"/api/v1/agents/{aid}/publish", headers=auth_headers)
     unbound_version = client.get(f"/api/v1/agents/{aid}/versions", headers=auth_headers).json()["items"][0]
     assert unbound_version["snapshot"]["prompt_template_id"] is None
-    # 回滚到绑定版本：三个字段与渲染结果一起恢复
-    rb = client.post(f"/api/v1/agents/{aid}/rollback/{bound_version['id']}", headers=auth_headers)
+    # 恢复到草稿（2026-09-25 起由 restore 承担，rollback 改为"回滚上线"不动草稿）：三个字段与渲染结果一起恢复
+    rb = client.post(f"/api/v1/agents/{aid}/versions/{bound_version['id']}/restore", headers=auth_headers)
     assert rb.status_code == 200, rb.text
     assert rb.json()["prompt_template_id"] == template["id"] and rb.json()["prompt_template_version"] == 1
     assert rb.json()["prompt_variables"] == {"role": "客服"} and rb.json()["system_prompt"] == "你是客服，语气友好。"
-    # 回滚到未绑定版本：三个字段恢复为空
-    rb2 = client.post(f"/api/v1/agents/{aid}/rollback/{unbound_version['id']}", headers=auth_headers)
+    # 恢复到未绑定版本：三个字段恢复为空
+    rb2 = client.post(f"/api/v1/agents/{aid}/versions/{unbound_version['id']}/restore", headers=auth_headers)
     assert rb2.json()["prompt_template_id"] is None and rb2.json()["prompt_variables"] == {} and rb2.json()["system_prompt"] == "改成手填"
 
 
@@ -148,7 +154,7 @@ def test_delete_bound_template_returns_409_until_unbound(client, auth_headers, m
     a = _bind(client, auth_headers, agents_cleanup, model_id, template["id"])
     r = client.delete(f"/api/v1/prompt-templates/{template['id']}", headers=auth_headers)
     assert r.status_code == 409 and r.json()["detail"] == "仍有 1 个智能体绑定该模板"
-    client.put(f"/api/v1/agents/{a['id']}", headers=auth_headers, json=_payload(model_id, a["name"], system_prompt="解绑"))
+    assert _put(client, auth_headers, a["id"], _payload(model_id, a["name"], system_prompt="解绑")).status_code == 200
     assert client.delete(f"/api/v1/prompt-templates/{template['id']}", headers=auth_headers).status_code == 200
 
 
@@ -181,7 +187,7 @@ def test_list_outdated_query_count_does_not_grow_with_agents(client, auth_header
 
 # ---------- 可对话智能体：caller 在对话页选不到智能体的修复（2026-09-25） ----------
 
-BRIEF_FIELDS = {"id", "name", "description", "updated_at"}
+BRIEF_FIELDS = {"id", "name", "description", "published_at"}  # 2026-09-25 起 updated_at（草稿编辑时间）换成发布时间
 
 
 @pytest.fixture

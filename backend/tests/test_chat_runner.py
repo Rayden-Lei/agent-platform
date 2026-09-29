@@ -1,54 +1,19 @@
 """对话入口与执行器（docs/15 3.5.3，FR-044）：入参与会话归属在写库之前拒绝、工具轮数上限、错误脱敏、单个会话接口。
 
-模型全用桩：把 chat_service.build_chat_context 换成返回桩模型的版本，不发任何网络请求。
+模型全用桩（tests/fakes）：把 chat_service.build_chat_context 换成返回桩模型的版本，不发任何网络请求。
 """
 import json
 import uuid
-from types import SimpleNamespace
 
 import pytest
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
 
 from app.config import settings
 from app.db.models import Conversation, Message, Run
 from app.db.session import SessionLocal
 from app.services import chat_service
-from app.tools.langchain_tools import build_tools
-
-# 熔断器按模型 id 计数：桩用负数 id，碰不到真实模型的熔断状态
-FAKE_MODEL = SimpleNamespace(id=-20260925, name="pytest-fake-model")
-
-
-class _AnswerModel(GenericFakeChatModel):
-    """流式吐出固定回答的桩；react 智能体会先 bind_tools，桩直接返回自己。"""
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-
-class _ToolLoopModel(BaseChatModel):
-    """每次都要求再调一次工具的桩。只实现非流式：流式桩会把 tool_calls 丢掉，react 智能体就不会进工具循环。"""
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        msg = AIMessage(content="", tool_calls=[{"name": "current_time", "args": {}, "id": "call_" + uuid.uuid4().hex[:8]}])
-        return ChatResult(generations=[ChatGeneration(message=msg)])
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    @property
-    def _llm_type(self) -> str:
-        return "pytest-tool-loop"
-
-
-def _use_llm(monkeypatch, llm) -> None:
-    def _build(db, agent_id, message_text, conversation_id, role=None):
-        return chat_service.ChatContext(model=FAKE_MODEL, llm=llm, tools=build_tools([]), system_prompt="你是测试助手",
-                                        citations=[], history_messages=[HumanMessage(content=message_text)])
-    monkeypatch.setattr(chat_service, "build_chat_context", _build)
+from tests.fakes import AnswerModel as _AnswerModel
+from tests.fakes import ToolLoopModel as _ToolLoopModel
+from tests.fakes import use_llm as _use_llm
 
 
 def _events(response) -> list[dict]:

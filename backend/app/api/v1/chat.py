@@ -52,10 +52,10 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     """
     via_api_key = is_api_key_request(request)
     # 同步的库操作放线程池，不阻塞事件循环
-    conversation_id, run_id = await run_in_threadpool(
+    prepared = await run_in_threadpool(
         chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id,
         "api_key" if via_api_key else "chat", getattr(request.state, "api_key_id", None) if via_api_key else None,
     )
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
-                                conversation_id=conversation_id, run_id=run_id)
+                                conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version)
     return StreamingResponse(_sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")

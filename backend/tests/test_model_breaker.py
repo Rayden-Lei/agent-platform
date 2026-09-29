@@ -238,6 +238,8 @@ def test_agent_node_fails_fast_after_threshold(client, auth_headers, monkeypatch
     _FailingChatOpenAI.calls = 0
     mid = _create_model(client, auth_headers, "pytest-breaker-model")
     agent = client.post("/api/v1/agents", headers=auth_headers, json={"name": "pytest-breaker-agent", "description": "", "system_prompt": "你是助手", "model_id": mid}).json()
+    # 工作流智能体节点只跑线上版本（docs/15 3.2），没发布的会以"智能体未发布"失败、碰不到模型
+    assert client.post(f"/api/v1/agents/{agent['id']}/publish", headers=auth_headers).status_code == 200
     graph = {
         "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
         "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}],

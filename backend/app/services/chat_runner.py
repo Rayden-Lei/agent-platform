@@ -32,7 +32,7 @@ TOOL_RESULT_PREVIEW_CHARS = 200  # 工具结果下发与落库的截断长度
 
 @dataclass(frozen=True)
 class ChatTurn:
-    """一轮对话的执行参数；conversation_id / run_id 由 prepare_chat 事先建好。"""
+    """一轮对话的执行参数；conversation_id / run_id / agent_version 由 prepare_chat 事先定好，构建上下文按同一版本取配置。"""
 
     agent_id: int
     user_id: int
@@ -40,6 +40,7 @@ class ChatTurn:
     message: str
     conversation_id: int
     run_id: int
+    agent_version: int
 
 
 class ToolRoundsExceeded(Exception):
@@ -100,7 +101,8 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
     try:
         try:
             # 检索、历史装配要几百毫秒到几秒，放线程池，不拖住事件循环上的其他请求
-            ctx = await run_in_threadpool(chat_service.build_chat_context, db, turn.agent_id, turn.message, turn.conversation_id, role=turn.role)
+            ctx = await run_in_threadpool(chat_service.build_chat_context, db, turn.agent_id, turn.message, turn.conversation_id,
+                                          role=turn.role, agent_version=turn.agent_version)
         except Exception as e:
             if not isinstance(e, BizError):
                 logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", turn.run_id, turn.agent_id)

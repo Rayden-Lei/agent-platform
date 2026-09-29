@@ -53,7 +53,7 @@ export default function TemplateVersionsTab({ template, onRolledBack }: Props) {
           render: (_, v) => (
             <Space size={4}>
               <Button size="small" disabled={template.version === v.version} onClick={() => toggleDiff(v)}>{diffId === v.id ? '看原文' : '与当前对比'}</Button>
-              <Popconfirm title={`回滚到 v${v.version}？会生成新版本，已绑定的智能体需重新发布`} onConfirm={() => rollback(v)} disabled={template.version === v.version}>
+              <Popconfirm title={`回滚到 v${v.version}？会生成新版本，已绑定的智能体重新保存草稿并发布后才用到它`} onConfirm={() => rollback(v)} disabled={template.version === v.version}>
                 <Button size="small" disabled={template.version === v.version}>回滚</Button>
               </Popconfirm>
             </Space>

@@ -3,7 +3,7 @@ import uuid
 
 import pytest
 
-from app.db.models import Conversation, Message
+from app.db.models import Agent, Conversation, Message
 from app.db.session import SessionLocal
 from app.tools.langchain_tools import build_tools
 
@@ -88,8 +88,17 @@ def test_models_toggle_filters_and_agents_count(client, auth_headers):
 def test_agents_list_filters_and_detail_reports_missing_references(client, auth_headers):
     m = _model(client, auth_headers)
     t = _tool(client, auth_headers, "pytest-depth-tool-" + uuid.uuid4().hex[:4])
-    agent = client.post("/api/v1/agents", headers=auth_headers, json={"name": "pytest-depth-agent-" + uuid.uuid4().hex[:4], "description": "", "system_prompt": "x", "model_id": m["id"], "tool_ids": [t["id"], 999999999], "kb_ids": [999999998]}).json()
+    created = client.post("/api/v1/agents", headers=auth_headers, json={"name": "pytest-depth-agent-" + uuid.uuid4().hex[:4], "description": "", "system_prompt": "x", "model_id": m["id"], "tool_ids": [t["id"]]})
     try:
+        assert created.status_code == 200, created.text
+        agent = created.json()
+        # 2026-09-25 起保存会校验引用，悬空 ID 只会来自更早的存量数据、删知识库或恢复旧版本：直接写库模拟
+        db = SessionLocal()
+        try:
+            db.query(Agent).filter(Agent.id == agent["id"]).update({"tool_ids": [t["id"], 999999999], "kb_ids": [999999998]})
+            db.commit()
+        finally:
+            db.close()
         by_model = client.get("/api/v1/agents", headers=auth_headers, params={"model_id": m["id"]}).json()
         assert [a["id"] for a in by_model["items"]] == [agent["id"]] and by_model["items"][0]["model_name"] == m["name"]
         assert by_model["items"][0]["created_by_username"] == "admin" and by_model["items"][0]["runs_7d"] == 0
@@ -100,7 +109,9 @@ def test_agents_list_filters_and_detail_reports_missing_references(client, auth_
         assert detail["model"]["name"] == m["name"] and detail["tools"] == [{"id": t["id"], "name": t["name"], "type": "http", "is_enabled": True}]
         assert detail["missing_tool_ids"] == [999999999] and detail["missing_kb_ids"] == [999999998] and detail["knowledge_bases"] == []
     finally:
-        client.delete(f"/api/v1/agents/{agent['id']}", headers=auth_headers)
+        # 收尾不依赖前置结果：智能体没建出来时照样删工具与模型（2026-09-25 曾因这里取 agent['id'] 报错留下两条）
+        if created.status_code == 200:
+            client.delete(f"/api/v1/agents/{created.json()['id']}", headers=auth_headers)
         client.delete(f"/api/v1/tools/{t['id']}", headers=auth_headers)
         client.delete(f"/api/v1/models/{m['id']}", headers=auth_headers)
 

@@ -251,6 +251,8 @@ def test_current_user_message_not_duplicated_in_context(client, auth_headers, db
     agent = client.post("/api/v1/agents", headers=auth_headers, json={
         "name": "pytest-summary-agent", "description": "", "system_prompt": "你是助手", "model_id": mid,
     }).json()
+    # 对话只读线上版本（发布语义，FR-039）：先发布，否则构建上下文 403「智能体未发布」
+    assert client.post(f"/api/v1/agents/{agent['id']}/publish", headers=auth_headers).status_code == 200
     try:
         conversation.agent_id = agent["id"]
         db.add(Message(conversation_id=conversation.id, role="user", content="早先的问题"))

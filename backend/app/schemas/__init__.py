@@ -105,16 +105,39 @@ class AgentIn(BaseModel):
     """创建 / 更新智能体。system_prompt 与 prompt_template_id 二选一（FR-028）：
     绑定模板时 system_prompt 必须省略或为空，服务端用模板 + prompt_variables 渲染写入。"""
 
-    name: str
-    description: str = ""
-    system_prompt: str = ""
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field("", max_length=2000)
+    system_prompt: str = Field("", max_length=20000)
     model_id: int
     params: ModelParams = Field(default_factory=ModelParams)  # 覆盖模型的 default_params，留空的键继承
-    kb_ids: list = Field(default_factory=list)
-    tool_ids: list = Field(default_factory=list)
+    # 每个知识库对话时都要并行检索一次，不能无界；ID 必须是整数，重复的去掉
+    kb_ids: list[int] = Field(default_factory=list, max_length=20)
+    tool_ids: list[int] = Field(default_factory=list, max_length=20)
     workflow_id: Optional[int] = None
     prompt_template_id: Optional[int] = None
     prompt_variables: dict = Field(default_factory=dict)
+
+    @field_validator("kb_ids", "tool_ids")
+    @classmethod
+    def _dedupe_ids(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
+
+
+class AgentUpdateIn(AgentIn):
+    """更新草稿：整体覆盖。expected_updated_at 是读到的 updated_at（乐观锁），与库中不一致 409，防止两个人同时改互相覆盖（docs/15 D-11）。"""
+
+    expected_updated_at: datetime
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise ValueError("expected_updated_at 必须带时区，原样回传读取时拿到的 updated_at")
+        return value
+
+
+class PublishIn(BaseModel):
+    note: Optional[str] = Field(None, max_length=200)  # 发布说明，进版本历史与审计
 
 
 class AgentOut(BaseModel):
@@ -144,6 +167,16 @@ class AgentOut(BaseModel):
     updated_at: Optional[str] = None
     runs_7d: int = 0
     last_run_at: Optional[str] = None
+    # 发布语义（FR-039）：本对象的配置字段是草稿；线上版本号与发布时间；草稿与线上快照是否不同（计算值，不入库）
+    published_version: Optional[int] = None
+    published_at: Optional[str] = None
+    has_unpublished_changes: bool = False
+
+
+class AgentPublishOut(AgentOut):
+    """发布 / 回滚上线的结果：published 生成了新线上版本或重新上线；unchanged 与线上一致，什么都没做（幂等）。"""
+
+    publish_result: str
 
 
 class AgentDetailOut(AgentOut):
@@ -160,10 +193,11 @@ class AgentDetailOut(AgentOut):
 
 class AgentBriefOut(BaseModel):
     """可对话智能体的对外资料（GET /agents/available）。caller 与 API Key 都拿得到，
-    字段白名单靠这个模型保证：提示词、模型、工具、知识库、模板变量一律不出。"""
+    字段白名单靠这个模型保证：提示词、模型、工具、知识库、模板变量一律不出。
+    名称与描述取线上快照；时间是发布时间 —— 不能用 updated_at，那是草稿的编辑时间（2026-09-25 一次切换）。"""
 
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
     description: Optional[str] = None
-    updated_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None

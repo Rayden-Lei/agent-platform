@@ -41,7 +41,7 @@ export default function PromptTemplates() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<FileTextOutlined />} title="提示词模板" description="带变量的系统提示词；内容或变量变化自动升版本，智能体发布时固化所用版本。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模板</Button>} />}
+      header={<PageHeader icon={<FileTextOutlined />} title="提示词模板" description="带变量的系统提示词；内容或变量变化自动升版本。绑定的智能体保存草稿时按模板当前版本渲染，发布后对外生效。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模板</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索模板名称" />

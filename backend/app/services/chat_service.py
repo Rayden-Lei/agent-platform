@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy.orm import Session
 
@@ -12,11 +12,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.core.exceptions import BizError
-from app.db.models import Agent, Conversation, Message, ModelConfig, Run, Tool
+from app.db.models import Conversation, Message, ModelConfig, Run, Tool
 from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
+from app.runtime.agent_config import load_version_config, resolve_live_config, usable_model
 from app.services import run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
@@ -220,27 +221,26 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, 
     return citations, acl_rejected, rerank_mode
 
 
-def get_published_agent(db: Session, agent_id: int) -> Agent:
-    """取已发布（published）的智能体；不存在抛 404，未发布抛 403。"""
-    agent = db.get(Agent, agent_id)
-    if agent is None:
-        raise BizError(404, "智能体不存在")
-    if agent.status != "published":
-        raise BizError(403, "智能体未发布")
-    return agent
+class PreparedChat(NamedTuple):
+    """prepare_chat 的结果：会话、运行记录，以及这轮回答用的线上版本号（构建上下文按同一版本取配置）。"""
+
+    conversation_id: int
+    run_id: int
+    agent_version: int
 
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None,
-                 source: str = "chat", api_key_id: int | None = None) -> tuple[int, int]:
-    """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。返回 (conversation_id, run_id)。
+                 source: str = "chat", api_key_id: int | None = None) -> PreparedChat:
+    """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。
 
-    所有拒绝都发生在写库之前：消息全是空白 400、智能体不存在 404 / 未发布 403、会话不属于本人或不属于该智能体 404。
+    所有拒绝都发生在写库之前：消息全是空白 400、智能体不存在 404 / 未发布或已下线 403、会话不属于本人或不属于该智能体 404。
     长度上限由路由的 ChatIn 管（422）。source 区分登录对话（chat）与 API Key 调用（api_key，同时记 api_key_id），
     2026-09-25 前 API Key 发起的对话也记成 chat，运行记录按 Key 筛不到。
+    配置读线上版本（草稿与线上分离，FR-039）：运行记录的 model_id 与 agent_version 都取线上快照，不取草稿行。
     """
     if not message.strip():
         raise BizError(400, "消息不能为空")
-    agent = get_published_agent(db, agent_id)
+    live = resolve_live_config(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
@@ -255,23 +255,25 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
         db.refresh(conversation)
 
     db.add(Message(conversation_id=conversation.id, role="user", content=message))
-    # model_id / conversation_id 是统计与追溯用的快照：智能体后来换模型不影响这条运行的归属
+    # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属
     run = run_service.create_run(
-        db, "chat", user_id, agent_id=agent_id, model_id=agent.model_id, conversation_id=conversation.id,
-        input_data={"message": message}, source=source, api_key_id=api_key_id,
+        db, "chat", user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
+        input_data={"message": message}, source=source, api_key_id=api_key_id, agent_version=live.version,
     )
-    return conversation.id, run.id
+    return PreparedChat(conversation.id, run.id, live.version)
 
 
-def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None) -> ChatContext:
-    """构建对话上下文：LLM、工具、系统提示（含 RAG 引用，带权限过滤 + 证据绑定）与多轮历史消息。"""
-    agent = db.get(Agent, agent_id)
-    model = db.get(ModelConfig, agent.model_id)
-    if model is None or not model.is_enabled:
-        raise BizError(400, "模型不可用")
+def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
+                       agent_version: int | None = None) -> ChatContext:
+    """构建对话上下文：LLM、工具、系统提示（含 RAG 引用，带权限过滤 + 证据绑定）与多轮历史消息。
 
-    llm = build_llm(model, agent.params)  # 智能体参数覆盖模型默认（FR-042）
-    tool_dbs = db.query(Tool).filter(Tool.id.in_(agent.tool_ids)).all() if agent.tool_ids else []
+    配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本）；不传时取当前线上版本。
+    """
+    live = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
+    model = usable_model(db, live.model_id)
+
+    llm = build_llm(model, live.params)  # 智能体参数覆盖模型默认（FR-042）
+    tool_dbs = db.query(Tool).filter(Tool.id.in_(live.tool_ids)).all() if live.tool_ids else []
     tools = build_tools(tool_dbs)
 
     kb_context = ""
@@ -279,9 +281,9 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
     acl_rejected = 0
     rerank_mode = None
     started = time.perf_counter()
-    if agent.kb_ids:
+    if live.kb_ids:
         queries = _queries_for(model, llm, message_text)
-        citations, acl_rejected, rerank_mode = _retrieve_all(agent.kb_ids, queries, role)
+        citations, acl_rejected, rerank_mode = _retrieve_all(live.kb_ids, queries, role)
         if citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
@@ -290,7 +292,7 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
                 + "\n\n约束：参考片段未覆盖的内容，如实回答『知识库中没有相关信息』，禁止编造。"
             )
     retrieval_ms = int((time.perf_counter() - started) * 1000)
-    system_prompt = agent.system_prompt + (("\n\n" + kb_context) if kb_context else "")
+    system_prompt = live.system_prompt + (("\n\n" + kb_context) if kb_context else "")
 
     conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
