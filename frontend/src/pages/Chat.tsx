@@ -9,13 +9,11 @@ import ChatPanel from '../components/chat/ChatPanel'
 import ConversationList from '../components/chat/ConversationList'
 import { useChatStream } from '../components/chat/useChatStream'
 import { toChatMessages } from '../components/chat/messages'
-import { FULL_CAPABILITIES, type ChatCapabilities, type Msg } from '../components/chat/types'
+import { CHAT_MESSAGE_MAX_CHARS, FULL_CAPABILITIES, type ChatCapabilities, type Msg } from '../components/chat/types'
 import { errorText } from '../utils/errors'
 
 const { useBreakpoint } = Grid
 const PAGE = 50
-// 与后端 CHAT_MESSAGE_MAX_CHARS 的默认值一致；这里只是体验，超长的权威拒绝在后端（422）
-const CHAT_MESSAGE_MAX_CHARS = 8000
 
 // 聊天页：左侧按当前智能体过滤的会话列表 + 右侧对话面板（ChatPanel，与装配页调试、分享访客页共用）。
 // 智能体与会话通过 ?agent= 与 ?conversation= 深链，可从智能体详情、运行详情跳入；发送走 SSE 流式接口（useChatStream + chatAgentStream）。

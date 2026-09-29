@@ -19,16 +19,17 @@ interface Props {
   onSend: (text: string) => void
   onStop: () => void
   onRegenerate: () => void
+  onShowDetails?: (msg: Msg) => void // 调试面板：回答脚注的"详情"
 }
 
-export default function ChatPanel({ header, messages, sending, loading, emptyHint, isMobile, inputDisabled, inputPlaceholder, maxLength, capabilities, onSend, onStop, onRegenerate }: Props) {
+export default function ChatPanel({ header, messages, sending, loading, emptyHint, isMobile, inputDisabled, inputPlaceholder, maxLength, capabilities, onSend, onStop, onRegenerate, onShowDetails }: Props) {
   const caps = { ...MINIMAL_CAPABILITIES, ...capabilities }
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 8, minWidth: 0, minHeight: 0, background: '#fff' }}>
       {header && (
         <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>{header}</div>
       )}
-      <MessageList messages={messages} sending={sending} isMobile={isMobile} loading={loading} emptyHint={emptyHint} capabilities={caps} />
+      <MessageList messages={messages} sending={sending} isMobile={isMobile} loading={loading} emptyHint={emptyHint} capabilities={caps} onShowDetails={onShowDetails} />
       <ChatInput
         disabled={inputDisabled} sending={sending} placeholder={inputPlaceholder} maxLength={maxLength} compact={isMobile}
         canRegenerate={caps.allowRegenerate && messages.some((m) => m.role === 'user')}

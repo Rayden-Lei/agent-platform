@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Button, Card, Descriptions, Input, InputNumber, Space, Tag, Typography, message } from 'antd'
+import { Button, Descriptions, Input, InputNumber, Tag, Typography, message } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import { searchKB, type SearchHit, type SearchStats } from '../../api'
 import EmptyState from '../common/EmptyState'
+import HitCard, { type HitLocation } from '../trace/HitCard'
 import { errorText } from '../../utils/errors'
 
-const { Paragraph, Text } = Typography
+const { Text } = Typography
 
 // 检索评测：带 debug 统计的库内检索，看候选数 / 鉴权剔除 / 词法命中 / 分数分布与每条命中的向量 / 词法得分。
 interface Props { kbId: number }
@@ -55,23 +56,9 @@ export default function SearchEval({ kbId }: Props) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {results.map((r, idx) => (
-            <Card key={r.chunk_id ?? idx} size="small" title={
-              <Space size={8} wrap>
-                <Tag color="blue">#{idx + 1}</Tag>
-                <Text strong>{r.doc_name || '文档 ' + r.doc_id}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>score {typeof r.score === 'number' ? r.score.toFixed(4) : r.score}</Text>
-              </Space>
-            }>
-              <Paragraph style={{ marginBottom: 8, fontSize: 13 }} ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>{r.content}</Paragraph>
-              {typeof r.vector_score === 'number' && (
-                <Space size={6} wrap>
-                  <Tag>向量 {r.vector_score}</Tag>
-                  <Tag>词法 {r.keyword_score}</Tag>
-                  {typeof r.rerank_score === 'number' && <Tag color="success">重排 {r.rerank_score.toFixed(4)}</Tag>}
-                  {(r.matched_keywords || []).map((k) => <Tag key={k} color="cyan">{k}</Tag>)}
-                </Space>
-              )}
-            </Card>
+            <HitCard key={r.chunk_id ?? idx} rank={idx + 1} docName={r.doc_name} docId={r.doc_id} score={r.score} content={r.content}
+              vectorScore={r.vector_score} keywordScore={r.keyword_score} rerankScore={r.rerank_score} matchedKeywords={r.matched_keywords}
+              location={r.meta as HitLocation} />
           ))}
         </div>
       )}

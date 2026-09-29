@@ -13,9 +13,10 @@ interface Props {
   loading?: boolean
   emptyHint: string
   capabilities: ChatCapabilities
+  onShowDetails?: (msg: Msg) => void // 调试：打开某条回答的调用链与实际提示词
 }
 
-export default function MessageList({ messages, sending, isMobile, loading, emptyHint, capabilities }: Props) {
+export default function MessageList({ messages, sending, isMobile, loading, emptyHint, capabilities, onShowDetails }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, sending])
   return (
@@ -33,7 +34,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
               </>
             ) : (
               <div className="assistant-bubble" style={{ maxWidth: isMobile ? '94%' : '78%' }}>
-                <AssistantMessage msg={m} streaming={isStreaming} capabilities={capabilities} />
+                <AssistantMessage msg={m} streaming={isStreaming} capabilities={capabilities} onShowDetails={onShowDetails} />
               </div>
             )}
           </div>

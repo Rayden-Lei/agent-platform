@@ -58,15 +58,24 @@ export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React
             last.tools = next
           }
         }),
-        onError: (errMsg) => patchLast((last) => { last.content += '\n[错误] ' + errMsg }),
-        // 流结束：附带 token 用量、运行记录 id（可跳详情）与消息 id
-        onDone: (evt) => patchLast((last) => { if (evt.usage) last.usage = evt.usage; last.runId = evt.run_id; last.id = evt.message_id; last.createdAt = new Date().toISOString() }),
+        onError: (errMsg) => patchLast((last) => { last.content += '\n[错误] ' + errMsg; last.failed = true }),
+        // 仅调试：实际系统提示词与调用链步骤挂在这条回答上，"详情"里看
+        onPrompt: (prompt) => patchLast((last) => { last.prompt = prompt }),
+        onTrace: (step) => patchLast((last) => { last.trace = [...(last.trace || []), step] }),
+        // 流结束：附带 token 用量、运行记录 id（可跳详情）与消息 id；调试另带耗时与成本
+        onDone: (evt) => patchLast((last) => {
+          if (evt.usage) last.usage = evt.usage
+          last.runId = evt.run_id; last.id = evt.message_id; last.metrics = evt.metrics; last.createdAt = new Date().toISOString()
+        }),
       }, controller.signal)
       if (newCid && newCid !== conversationId) onConversationCreated(newCid)
     } catch (e) {
       // 主动停止产生 AbortError，属预期行为，静默返回不提示错误
       if ((e as { name?: string }).name === 'AbortError') return
-      message.error((e as Error).message || '发送失败')
+      const text = (e as Error).message || '发送失败'
+      message.error(text)
+      // 建流前就被拒（422 / 400 等）时占位气泡是空的：写上原因并标失败，不留一个空白回答
+      patchLast((last) => { if (!last.content) last.content = '[错误] ' + text; last.failed = true })
     } finally {
       setSending(false)
       abortRef.current = null
