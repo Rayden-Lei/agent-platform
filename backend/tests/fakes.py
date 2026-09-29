@@ -6,10 +6,10 @@
 import uuid
 from types import SimpleNamespace
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.language_models.chat_models import BaseChatModel, generate_from_stream
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 from app.services import chat_service
 from app.tools.langchain_tools import build_tools
@@ -40,6 +40,36 @@ class ToolLoopModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "pytest-tool-loop"
+
+
+class ScriptedModel(BaseChatModel):
+    """按脚本逐次回答的流式桩：第 n 次调用取 script[n]，("tool", 工具名) 要求调一次无参工具，("text", 文本) 直接回答。
+    每次调用都带用量（输入 10×n、输出 2），用来断言一轮里多次模型调用的用量要相加。
+    实现 _stream 而不是只实现 _generate：langgraph 以 messages 模式流式时走它，工具参数才会以分块（tool_call_chunks）到达。"""
+
+    script: list
+    calls: int = 0
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        kind, value = self.script[min(self.calls, len(self.script) - 1)]
+        self.calls += 1
+        usage = {"input_tokens": 10 * self.calls, "output_tokens": 2, "total_tokens": 10 * self.calls + 2}
+        if kind == "tool":
+            chunk = AIMessageChunk(content="", usage_metadata=usage,
+                                   tool_call_chunks=[{"name": value, "args": "{}", "id": "call_" + uuid.uuid4().hex[:8], "index": 0}])
+        else:
+            chunk = AIMessageChunk(content=value, usage_metadata=usage)
+        yield ChatGenerationChunk(message=chunk)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return generate_from_stream(self._stream(messages, stop, run_manager, **kwargs))
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    @property
+    def _llm_type(self) -> str:
+        return "pytest-scripted"
 
 
 def use_llm(monkeypatch, llm, captured: list | None = None) -> None:

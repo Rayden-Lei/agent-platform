@@ -43,7 +43,9 @@ def _serialize(db: Session, rows: list, with_graph: bool = False) -> list[dict]:
     creator_ids = {w.created_by for w in rows if w.created_by}
     creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     since = datetime.now(timezone.utc) - timedelta(days=7)
-    runs = {wid: (count, last) for wid, count, last in db.query(Run.workflow_id, func.count(Run.id), func.max(Run.started_at)).filter(Run.workflow_id.in_(ids), Run.started_at >= since).group_by(Run.workflow_id).all()} if ids else {}
+    # 近 7 天运行不计调试（docs/15 D-05；工作流调试台在第 2 批，口径先对齐）
+    runs = {wid: (count, last) for wid, count, last in db.query(Run.workflow_id, func.count(Run.id), func.max(Run.started_at)).filter(
+        Run.workflow_id.in_(ids), Run.started_at >= since, run_service.operational_only()).group_by(Run.workflow_id).all()} if ids else {}
     schedules = dict(db.query(ScheduledJob.workflow_id, func.count(ScheduledJob.id)).filter(ScheduledJob.workflow_id.in_(ids)).group_by(ScheduledJob.workflow_id).all()) if ids else {}
     items = []
     for w in rows:

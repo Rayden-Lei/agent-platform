@@ -10,6 +10,7 @@ from app.core.prompt_render import render
 from app.db.models import Agent, AgentVersion, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
+from app.services import run_service
 
 SORTABLE = {"id": Agent.id, "name": Agent.name, "status": Agent.status, "version": Agent.version, "updated_at": Agent.updated_at}
 
@@ -31,7 +32,7 @@ class _Related:
         since = datetime.now(timezone.utc) - timedelta(days=7)
         # 近 7 天运行不计装配页调试（docs/15 D-05）：运营指标看的是真实使用
         rows = db.query(Run.agent_id, func.count(Run.id), func.max(Run.started_at)).filter(
-            Run.agent_id.in_(ids), Run.started_at >= since, Run.source != "debug",
+            Run.agent_id.in_(ids), Run.started_at >= since, run_service.operational_only(),
         ).group_by(Run.agent_id).all() if ids else []
         self.runs = {agent_id: (count, last) for agent_id, count, last in rows}
 
@@ -61,9 +62,9 @@ def _single_out(db: Session, a: Agent) -> dict:
     return _Related(db, [a]).to_dict(a)
 
 
-def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
-    """system_prompt 与模板二选一（FR-028）。绑定模板：用模板当前版本 + prompt_variables 渲染写入 system_prompt，
-    记下模板版本；缺必填变量 400。不绑定：行为与以前相同，三个模板字段清空。"""
+def _prompt_fields(db: Session, data: AgentIn) -> dict:
+    """system_prompt 与模板二选一（FR-028），算出提示词四个字段，不写库（保存与调试共用）。绑定模板：用模板当前版本 +
+    prompt_variables 渲染成 system_prompt，记下模板版本；缺必填变量 400。不绑定：三个模板字段为空。"""
     if data.prompt_template_id:
         if (data.system_prompt or "").strip():
             raise BizError(400, "绑定模板时不能同时手填 system_prompt")
@@ -73,15 +74,22 @@ def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
         result = render(template.content, template.variables or [], data.prompt_variables)
         if result.missing:
             raise BizError(400, "缺少必填变量：" + ", ".join(result.missing))
-        a.system_prompt = result.text
-        a.prompt_template_id = template.id
-        a.prompt_template_version = template.version
-        a.prompt_variables = data.prompt_variables or {}
-    else:
-        a.system_prompt = data.system_prompt or ""
-        a.prompt_template_id = None
-        a.prompt_template_version = None
-        a.prompt_variables = {}
+        return {"system_prompt": result.text, "prompt_template_id": template.id, "prompt_template_version": template.version,
+                "prompt_variables": data.prompt_variables or {}}
+    return {"system_prompt": data.system_prompt or "", "prompt_template_id": None, "prompt_template_version": None, "prompt_variables": {}}
+
+
+def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
+    for field, value in _prompt_fields(db, data).items():
+        setattr(a, field, value)
+
+
+def inline_snapshot(db: Session, data: AgentIn) -> dict:
+    """装配页调试的内联配置（编辑器当前内容，含未保存修改）→ 与 snapshot_of 同形的快照。
+    校验与保存同一口径（引用 404 / 400、模板渲染），不写 agents 行（docs/15 3.4）。"""
+    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    return {"name": data.name, "description": data.description, "model_id": data.model_id, "params": data.params.to_dict(),
+            "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "workflow_id": data.workflow_id, **_prompt_fields(db, data)}
 
 
 def list_agents(db: Session, params: PageParams, q: str = None, status: str = None, model_id: int = None,

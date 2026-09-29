@@ -34,11 +34,12 @@ def snapshot_of(agent: Agent) -> dict:
 
 
 @dataclass(frozen=True)
-class LiveAgentConfig:
-    """一次回答用的智能体配置：某个发布版本的快照，外加版本号（运行记录要记下回答用的是哪一版）。"""
+class AgentRunConfig:
+    """一次回答用的智能体配置。对外入口是某个发布版本的快照，version 为版本号（运行记录要记下回答用的是哪一版）；
+    装配页调试用的是编辑器里的内容或已保存的草稿，version 为 None。"""
 
     agent_id: int
-    version: int
+    version: int | None
     name: str
     description: str | None
     system_prompt: str
@@ -48,7 +49,16 @@ class LiveAgentConfig:
     tool_ids: list
 
 
-def resolve_live_config(db, agent_id: int) -> LiveAgentConfig:
+def run_config_from_snapshot(agent_id: int, snapshot: dict, version: int | None = None) -> AgentRunConfig:
+    """快照（库里的发布版本、草稿的 snapshot_of、调试请求里的内联配置）→ 回答用的配置，三种来源只走这一条路。"""
+    snap = normalize_snapshot(snapshot)
+    return AgentRunConfig(
+        agent_id=agent_id, version=version, name=snap["name"], description=snap["description"], system_prompt=snap["system_prompt"] or "",
+        model_id=snap["model_id"], params=snap["params"], kb_ids=snap["kb_ids"], tool_ids=snap["tool_ids"],
+    )
+
+
+def resolve_live_config(db, agent_id: int) -> AgentRunConfig:
     """当前线上版本的配置。不存在 404；已下线 403「智能体已下线」；从未发布 403「智能体未发布」。"""
     agent = db.get(Agent, agent_id)
     if agent is None:
@@ -60,17 +70,13 @@ def resolve_live_config(db, agent_id: int) -> LiveAgentConfig:
     return load_version_config(db, agent_id, agent.published_version)
 
 
-def load_version_config(db, agent_id: int, version: int) -> LiveAgentConfig:
+def load_version_config(db, agent_id: int, version: int) -> AgentRunConfig:
     """指定版本的配置，不再检查上下线：对话在建运行记录时已按线上版本定好版本号，构建上下文用同一个版本，
     中途有人发布也不会让"运行记录上的版本"和"实际回答用的配置"对不上。"""
     av = db.query(AgentVersion).filter(AgentVersion.agent_id == agent_id, AgentVersion.version == version).one_or_none()
     if av is None:
         raise BizError(409, f"智能体的线上版本 v{version} 缺失，请重新发布")
-    snap = normalize_snapshot(av.snapshot)
-    return LiveAgentConfig(
-        agent_id=agent_id, version=version, name=snap["name"], description=snap["description"], system_prompt=snap["system_prompt"] or "",
-        model_id=snap["model_id"], params=snap["params"], kb_ids=snap["kb_ids"], tool_ids=snap["tool_ids"],
-    )
+    return run_config_from_snapshot(agent_id, av.snapshot, version)
 
 
 def usable_model(db, model_id: int) -> ModelConfig:

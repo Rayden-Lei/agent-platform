@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
@@ -12,13 +12,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.core.exceptions import BizError
-from app.db.models import Conversation, Message, ModelConfig, Run, Tool
+from app.db.models import Agent, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool
 from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
-from app.runtime.agent_config import load_version_config, resolve_live_config, usable_model
-from app.services import run_service, settings_service
+from app.runtime.agent_config import AgentRunConfig, load_version_config, resolve_live_config, run_config_from_snapshot, snapshot_of, usable_model
+from app.schemas import AgentIn
+from app.services import agent_service, chat_trace, run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ class ChatContext:
     acl_rejected: int = 0
     rerank_mode: str | None = None  # 本轮检索实际用的重排后端（model / lexical），写进审计
     summary_pending: bool = False  # 待折叠消息已攒够一批：响应结束后在后台刷新会话摘要，不占用本轮首字节
+    trace: list = field(default_factory=list)  # 装配阶段的调用链步骤（改写、检索），只有调试才收集
+    retrieval_ms: int = 0
 
 
 def _history_to_messages(rows: list) -> list:
@@ -194,13 +197,23 @@ def _queries_for(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
     return _rewrite_queries(model, llm, message_text)
 
 
-def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, int, str | None]:
-    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。返回 (引用列表, 鉴权剔除数, 重排模式)。"""
+class Retrieval(NamedTuple):
+    citations: list
+    acl_rejected: int
+    rerank_mode: str | None
+    steps: list  # 每个 (知识库, 查询) 一条调用链步骤（chat_trace.retrieve_step），调试下发，线上暂不用
+
+
+def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict | None = None) -> Retrieval:
+    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。"""
     pairs = [(kb_id, q) for kb_id in kb_ids for q in queries]
     top_k = settings_service.runtime_value("rag_top_k")  # 每库召回条数是运行时参数（页面可改），一次请求内取一次保持一致
+    kb_names = kb_names or {}
 
     def _one(pair):
-        return pair[0], retrieve_with_stats(pair[0], pair[1], top_k, role=role)
+        clock = chat_trace.Clock()
+        result = retrieve_with_stats(pair[0], pair[1], top_k, role=role)
+        return pair[0], result, chat_trace.retrieve_step(kb_names.get(pair[0], f"知识库 #{pair[0]}"), pair[1], result, clock)
 
     if len(pairs) == 1:
         results = [_one(pairs[0])]
@@ -210,7 +223,7 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, 
     merged: dict = {}
     acl_rejected = 0
     rerank_mode = None
-    for kb_id, stats in results:
+    for kb_id, stats, _ in results:
         acl_rejected += stats["stats"].get("acl_rejected", 0)
         rerank_mode = stats["stats"].get("rerank_mode") or rerank_mode
         for item in stats["items"]:
@@ -218,7 +231,7 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None) -> tuple[list, 
             if key not in merged or item["score"] > merged[key]["score"]:
                 merged[key] = {"kb_id": kb_id, "chunk_id": item["chunk_id"], "doc_name": item["doc_name"], "content": item["content"], "score": item["score"]}
     citations = sorted(merged.values(), key=lambda x: -x["score"])[: top_k * len(kb_ids)]
-    return citations, acl_rejected, rerank_mode
+    return Retrieval(citations, acl_rejected, rerank_mode, [step for _, _, step in results])
 
 
 class PreparedChat(NamedTuple):
@@ -263,36 +276,45 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
     return PreparedChat(conversation.id, run.id, live.version)
 
 
-def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
-                       agent_version: int | None = None) -> ChatContext:
-    """构建对话上下文：LLM、工具、系统提示（含 RAG 引用，带权限过滤 + 证据绑定）与多轮历史消息。
-
-    配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本）；不传时取当前线上版本。
-    """
-    live = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
-    model = usable_model(db, live.model_id)
-
-    llm = build_llm(model, live.params)  # 智能体参数覆盖模型默认（FR-042）
-    tool_dbs = db.query(Tool).filter(Tool.id.in_(live.tool_ids)).all() if live.tool_ids else []
+def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False) -> ChatContext:
+    """按一份智能体配置装配 LLM、工具与检索（含 RAG 引用，带权限过滤 + 证据绑定），历史消息由调用方补。
+    线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。"""
+    model = usable_model(db, cfg.model_id)
+    llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）
+    tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids else []
     tools = build_tools(tool_dbs)
 
     kb_context = ""
-    citations = []
-    acl_rejected = 0
-    rerank_mode = None
+    retrieval = Retrieval([], 0, None, [])
+    steps: list = []
     started = time.perf_counter()
-    if live.kb_ids:
+    if cfg.kb_ids:
+        clock = chat_trace.Clock()
         queries = _queries_for(model, llm, message_text)
-        citations, acl_rejected, rerank_mode = _retrieve_all(live.kb_ids, queries, role)
-        if citations:
+        if trace and settings.RAG_QUERY_REWRITE_ENABLED:
+            steps.append(chat_trace.make_step("rewrite", "查询改写", clock, input={"message": message_text}, output=queries))
+        kb_names = dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all()) if trace else None
+        retrieval = _retrieve_all(cfg.kb_ids, queries, role, kb_names)
+        steps.extend(retrieval.steps)
+        if retrieval.citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
                 "不得做超出材料的推测或跨片段拼接推导：\n"
-                + "\n".join(f"[{i + 1}] {c['content']}" for i, c in enumerate(citations))
+                + "\n".join(f"[{i + 1}] {c['content']}" for i, c in enumerate(retrieval.citations))
                 + "\n\n约束：参考片段未覆盖的内容，如实回答『知识库中没有相关信息』，禁止编造。"
             )
     retrieval_ms = int((time.perf_counter() - started) * 1000)
-    system_prompt = live.system_prompt + (("\n\n" + kb_context) if kb_context else "")
+    system_prompt = cfg.system_prompt + (("\n\n" + kb_context) if kb_context else "")
+    return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=retrieval.citations, history_messages=[],
+                       acl_rejected=retrieval.acl_rejected, rerank_mode=retrieval.rerank_mode, trace=steps if trace else [], retrieval_ms=retrieval_ms)
+
+
+def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
+                       agent_version: int | None = None) -> ChatContext:
+    """构建线上对话的上下文：配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本），
+    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。"""
+    cfg = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
+    ctx = _context_from_config(db, cfg, message_text, role)
 
     conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
@@ -301,10 +323,57 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
         history = history[:-1]
     lc_messages, summary_pending = _build_history_messages(conversation, history, settings.CHAT_HISTORY_MAX_MESSAGES)
     lc_messages.append(HumanMessage(content=message_text))
-    logger.info("对话上下文就绪 agent_id=%s 检索 %dms 引用 %d 条 历史 %d 条", agent_id, retrieval_ms, len(citations), len(lc_messages) - 1)
+    ctx.history_messages, ctx.summary_pending = lc_messages, summary_pending
+    logger.info("对话上下文就绪 agent_id=%s 检索 %dms 引用 %d 条 历史 %d 条", agent_id, ctx.retrieval_ms, len(ctx.citations), len(lc_messages) - 1)
+    return ctx
 
-    return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=citations,
-                       history_messages=lc_messages, acl_rejected=acl_rejected, rerank_mode=rerank_mode, summary_pending=summary_pending)
+
+@dataclass(frozen=True)
+class DebugTurn:
+    """装配页调试的一轮（docs/15 3.4）：调试对象的配置、前端带来的调试历史、source=debug 的运行记录。不建会话、不落消息。"""
+
+    agent_id: int
+    user_id: int
+    role: str
+    message: str
+    history: tuple
+    run_id: int
+    config: AgentRunConfig
+    config_source: str  # inline 编辑器当前内容 / draft 已保存的草稿 / live 线上版本
+
+
+def prepare_debug(db: Session, user, agent_id: int, message: str, history: list[dict], config_source: str, config: AgentIn | None) -> DebugTurn:
+    """解析调试对象的配置并建运行记录。所有拒绝都在写库之前：消息全空白 400、智能体不存在 404、
+    inline / draft 的引用校验与保存同一口径（模型不存在 404、停用 400、工具或知识库缺失 400）、live 却从未发布 400。
+    线上版本的模型后来被停用这类情况与线上对话一样，在流里以"模型不可用"结束。"""
+    if not message.strip():
+        raise BizError(400, "消息不能为空")
+    agent = db.get(Agent, agent_id)
+    if agent is None:
+        raise BizError(404, "智能体不存在")
+    if config_source == "inline":
+        cfg = run_config_from_snapshot(agent_id, agent_service.inline_snapshot(db, config))
+    elif config_source == "draft":
+        draft = snapshot_of(agent)
+        agent_service.validate_agent_config(db, draft["model_id"], draft["tool_ids"], draft["kb_ids"])
+        cfg = run_config_from_snapshot(agent_id, draft)
+    else:
+        if agent.published_version is None:
+            raise BizError(400, "智能体还没有发布过，没有线上版本可调试")
+        cfg = load_version_config(db, agent_id, agent.published_version)
+    # 调试运行照常记成本（模型消耗要能追溯），运营指标按 source=debug 排除（D-05）
+    run = run_service.create_run(db, "chat", user.id, agent_id=agent_id, model_id=cfg.model_id,
+                                 input_data={"message": message, "config_source": config_source}, source="debug", agent_version=cfg.version)
+    return DebugTurn(agent_id, user.id, user.role, message, tuple(history), run.id, cfg, config_source)
+
+
+def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
+    """调试上下文：配置取调试对象，历史用前端带来的调试历史，按与线上相同的记忆条数截断，不模拟会话摘要。"""
+    ctx = _context_from_config(db, turn.config, turn.message, turn.role, trace=True)
+    recent = list(turn.history)[-settings.CHAT_HISTORY_MAX_MESSAGES:]
+    ctx.history_messages = [HumanMessage(content=h["content"]) if h["role"] == "user" else AIMessage(content=h["content"]) for h in recent]
+    ctx.history_messages.append(HumanMessage(content=turn.message))
+    return ctx
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:

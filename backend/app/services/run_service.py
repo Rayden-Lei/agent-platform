@@ -24,6 +24,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def operational_only():
+    """运营指标的过滤条件：不计装配页调试（docs/15 D-05）。工作台、智能体 / 工作流统计、列表的近 7 天运行都用它；
+    按模型的消耗照常计入（调试花的钱要能追溯），运行记录页不排除、可按来源筛出。"""
+    return Run.source != "debug"
+
+
 def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, workflow_id: int = None,
                input_data: dict = None, model_id: int = None, conversation_id: int = None, *,
                source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None) -> Run:
@@ -161,8 +167,8 @@ def list_runs(db: Session, params: PageParams, run_type: str = None, status: str
 
 
 def recent_runs(db: Session, limit: int = 10) -> list[dict]:
-    """最近的 N 条运行（工作台用），带关联名称。"""
-    runs = db.query(Run).order_by(Run.id.desc()).limit(limit).all()
+    """最近的 N 条运行（工作台用），带关联名称；不含调试运行（反复调试会把真实运行挤出去）。"""
+    runs = db.query(Run).filter(operational_only()).order_by(Run.id.desc()).limit(limit).all()
     related = _Related(db, runs)
     return [related.to_dict(r) for r in runs]
 

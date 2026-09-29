@@ -76,8 +76,8 @@ def _empty_metrics() -> dict:
 
 
 def _runs_query(db: Session, since: datetime | None = None, run_type: str | None = None, agent_id: int | None = None, workflow_id: int | None = None):
-    """统计基础查询：只扫 runs（成本读快照列 cost，无需 JOIN），带可选过滤。"""
-    query = db.query().select_from(Run)
+    """统计基础查询：只扫 runs（成本读快照列 cost，无需 JOIN），带可选过滤；不计装配页调试（运营指标口径，D-05）。"""
+    query = db.query().select_from(Run).filter(run_service.operational_only())
     if since is not None:
         query = query.filter(Run.started_at >= since)
     if run_type:
@@ -143,7 +143,7 @@ def agent_usage(db: Session, days: int = 30, agent_id: int | None = None) -> dic
         db.query(Agent.id, Agent.name, Agent.status, Agent.model_id, ModelConfig.name.label("model_name"), func.max(Run.started_at).label("last_run_at"), *_metric_columns())
         .select_from(Agent)
         .outerjoin(ModelConfig, ModelConfig.id == Agent.model_id)
-        .outerjoin(Run, and_(Run.agent_id == Agent.id, Run.started_at >= since))
+        .outerjoin(Run, and_(Run.agent_id == Agent.id, Run.started_at >= since, run_service.operational_only()))
         .group_by(Agent.id, ModelConfig.name)
         .order_by(func.count(Run.id).desc(), Agent.id)
     )
@@ -177,7 +177,7 @@ def workflow_usage(db: Session, days: int = 30, workflow_id: int | None = None) 
     query = (
         db.query(Workflow.id, Workflow.name, Workflow.status, func.max(Run.started_at).label("last_run_at"), *_metric_columns())
         .select_from(Workflow)
-        .outerjoin(Run, and_(Run.workflow_id == Workflow.id, Run.started_at >= since))
+        .outerjoin(Run, and_(Run.workflow_id == Workflow.id, Run.started_at >= since, run_service.operational_only()))
         .group_by(Workflow.id)
         .order_by(func.count(Run.id).desc(), Workflow.id)
     )
@@ -214,7 +214,7 @@ def overview(db: Session) -> dict:
         "running": db.query(func.count(Run.id)).filter(Run.status == "running").scalar(),
         # 超过 1 小时仍 running 的记录通常是进程被杀后没收尾的幽灵记录
         "stuck_running": db.query(func.count(Run.id)).filter(Run.status == "running", Run.started_at < datetime.now(timezone.utc) - timedelta(hours=1)).scalar(),
-        "failed_today": db.query(func.count(Run.id)).filter(Run.status == "failed", Run.started_at >= today_since).scalar(),
+        "failed_today": db.query(func.count(Run.id)).filter(Run.status == "failed", Run.started_at >= today_since, run_service.operational_only()).scalar(),
         "failed_documents": db.query(func.count(Document.id)).filter(Document.status == "failed").scalar(),
         "processing_documents": db.query(func.count(Document.id)).filter(Document.status.in_(("uploading", "parsing", "chunking"))).scalar(),
         "open_breakers": sum(1 for b in status.get("model_breakers", []) if b.get("state") == "open"),

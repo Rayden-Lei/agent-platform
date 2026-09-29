@@ -190,16 +190,6 @@ def test_list_outdated_query_count_does_not_grow_with_agents(client, auth_header
 BRIEF_FIELDS = {"id", "name", "description", "published_at"}  # 2026-09-25 起 updated_at（草稿编辑时间）换成发布时间
 
 
-@pytest.fixture
-def caller_headers(client, auth_headers):
-    username = "pytest-agent-caller-" + uuid.uuid4().hex[:6]
-    created = client.post("/api/v1/users", headers=auth_headers, json={"username": username, "password": "caller123", "role": "caller"})
-    assert created.status_code == 200, created.text
-    token = client.post("/api/v1/auth/login", json={"username": username, "password": "caller123"}).json()["token"]
-    yield {"Authorization": "Bearer " + token}
-    client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
-
-
 def _published_and_draft(client, auth_headers, agents_cleanup, model_id) -> str:
     """建一个已发布、一个草稿，名字共用前缀便于 q 精确圈定；返回前缀。"""
     prefix = "pytest-avail-" + uuid.uuid4().hex[:6]

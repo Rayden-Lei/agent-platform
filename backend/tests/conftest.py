@@ -1,4 +1,5 @@
 import os
+import uuid
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -41,6 +42,17 @@ def auth_headers(client, admin_login):
     assert res.status_code == 200, res.text
     token = res.json()["token"]
     return {"Authorization": "Bearer " + token}
+
+
+@pytest.fixture
+def caller_headers(client, auth_headers):
+    """临时 caller 账号的登录头（用例结束删掉账号）。验证"调用者被拒"类负向用例用。"""
+    username = "pytest-caller-" + uuid.uuid4().hex[:6]
+    created = client.post("/api/v1/users", headers=auth_headers, json={"username": username, "password": "caller123", "role": "caller"})
+    assert created.status_code == 200, created.text
+    token = client.post("/api/v1/auth/login", json={"username": username, "password": "caller123"}).json()["token"]
+    yield {"Authorization": "Bearer " + token}
+    client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
 
 
 @pytest.fixture
