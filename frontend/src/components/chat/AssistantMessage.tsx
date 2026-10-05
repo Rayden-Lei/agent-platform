@@ -1,4 +1,4 @@
-import { Button, Space, Typography, message } from 'antd'
+import { Button, Space, Typography } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import AnswerMarkdown from './AnswerMarkdown'
@@ -6,6 +6,7 @@ import ContextCards from './ContextCards'
 import ThinkingTrace from './ThinkingTrace'
 import ToolChips from './ToolChips'
 import type { ChatCapabilities, Msg } from './types'
+import { copyText } from '../../utils/clipboard'
 import { formatCost, formatNumber } from '../../utils/format'
 import { formatDuration, fromNow } from '../../utils/time'
 
@@ -18,7 +19,8 @@ interface Props { msg: Msg; streaming?: boolean; capabilities: ChatCapabilities;
 
 export default function AssistantMessage({ msg, streaming, capabilities, onShowDetails }: Props) {
   const hasContent = msg.content.length > 0
-  const copy = () => navigator.clipboard?.writeText(msg.content).then(() => message.success('已复制'))
+  // http 下没有剪贴板：此前 navigator.clipboard 为空时点了没有任何反应，现在会提示手动复制
+  const copy = () => copyText(msg.content)
   const usageText = capabilities.showUsage && msg.usage?.total_tokens
     ? `Token ${formatNumber(msg.usage.total_tokens)}（输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} / 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}）`
     : ''
@@ -51,7 +53,7 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
           <Space size={4}>
             {capabilities.showDebugMeta && onShowDetails && (msg.trace?.length || msg.prompt) && <Button size="small" type="link" onClick={() => onShowDetails(msg)}>详情</Button>}
             {msg.runId && capabilities.showRunLink && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
-            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} />
+            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} aria-label="复制回答" title="复制回答" />
           </Space>
         </div>
       )}

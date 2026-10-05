@@ -43,7 +43,7 @@ function CitationMark({ indices, citations }: { indices: number[]; citations: Ci
         return (
           <Popover
             key={idx}
-            trigger="hover"
+            trigger={['hover', 'click']} // 触屏没有悬停，点按也要能看到出处（docs/15 CH-14）
             placement="top"
             content={<CitationPopover citation={citation} index={idx} />}
           >

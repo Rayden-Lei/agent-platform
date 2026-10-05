@@ -2,7 +2,9 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：内容铺到刘海与底部手势条下，由 env(safe-area-inset-*) 自行留白（styles.css 的 #root、对话输入条）；
+         interactive-widget=resizes-content：Android Chrome 弹出键盘时缩小布局视口，钉底的输入框跟着上移（iOS 忽略，见 useVisualViewportHeight） -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>智枢 · 智能体中台</title>
   </head>
   <body>

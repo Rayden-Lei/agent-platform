@@ -97,6 +97,13 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
 }
+/* viewport-fit=cover 之后横屏的刘海在左右两侧：整站左右让出安全区（竖屏与桌面为 0）；
+   底部安全区只由钉底的对话输入条自己留（ChatInput），其余页面底部没有要点的东西（docs/15 CH-14） */
+#root {
+  box-sizing: border-box;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
 /* ===== 表格内部滚动，分页固定底部 =====
    只传 scroll.x 时 antd 的滚动容器是 .ant-table-content（内联 overflow: auto hidden，要 !important 才能改成纵向也滚），
    没有 .ant-table-header / .ant-table-body；表头用 position: sticky 钉在容器顶部。 */
@@ -237,6 +244,14 @@ html, body, #root {
 .context-card-index { color: #1e40af; font-weight: 600; }
 
 .usage-footer { font-size: 12px; color: #94a3b8; padding-top: 2px; }
+
+/* 触屏（手指点按）：消息上的操作与引用角标的可点区域放大到 44×44 左右（docs/07 第 11 节；鼠标设备不变） */
+@media (pointer: coarse) {
+  .usage-footer .ant-btn { min-width: 44px; min-height: 44px; }
+  .usage-footer a { display: inline-flex; align-items: center; min-height: 44px; }
+  .citation-mark { display: inline-block; padding: 6px 6px; margin: -6px -2px; }
+  .chat-input-bar .ant-btn { min-width: 44px; min-height: 44px; }
+}
 
 /* ===== 页面深度优化：列表页 / 详情页骨架 ===== */
 .page-header { display: flex; flex-direction: column; }

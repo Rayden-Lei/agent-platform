@@ -3,6 +3,7 @@ import { Drawer, Grid } from 'antd'
 import { useParams } from 'react-router-dom'
 import { useShareAccess } from '../hooks/useShareAccess'
 import { useShareChat } from '../hooks/useShareChat'
+import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight'
 import ChatPanel from '../components/chat/ChatPanel'
 import ConversationList from '../components/chat/ConversationList'
 import { CHAT_MESSAGE_MAX_CHARS } from '../components/chat/types'
@@ -22,6 +23,7 @@ export default function SharePage() {
   const ready = access.phase === 'ready'
   const chat = useShareChat(code, ready, access.reenter)
   const [listOpen, setListOpen] = useState(false)
+  const viewportHeight = useVisualViewportHeight() // 手机键盘弹出时整页跟着缩，输入框贴在键盘上沿（CH-14）
 
   if (access.phase === 'password') {
     return <SharePasswordForm agentName={access.info?.agent_name} error={access.passwordError} submitting={access.entering} onSubmit={access.submitPassword} />
@@ -31,7 +33,7 @@ export default function SharePage() {
 
   const newConversation = () => { chat.newConversation(); setListOpen(false) }
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f5f7fa' }}>
+    <div style={{ height: viewportHeight ? `${viewportHeight}px` : '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f5f7fa', paddingTop: 'env(safe-area-inset-top)', boxSizing: 'border-box' }}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 960, margin: '0 auto', padding: isMobile ? 0 : 16 }}>
         <ChatPanel
           header={<ShareHeader name={info.agent_name} description={info.description} onOpenList={() => setListOpen(true)} onNew={newConversation} />}
