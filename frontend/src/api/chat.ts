@@ -108,8 +108,9 @@ export async function streamSse(url: string, body: ChatPayload | DebugChatPayloa
     signal, // 传入 AbortSignal 即可由调用方（"停止"按钮）中断整个流
   })
   if (res.status === 401) {
-    clearLoginAndRedirect()
-    throw new Error('登录已失效，请重新登录')
+    const detail = await res.json().then((b) => (typeof b?.detail === 'string' ? b.detail : undefined), () => undefined) // 响应体不是 JSON 时没有原因可带
+    clearLoginAndRedirect(detail)
+    throw new Error(detail || '登录已失效，请重新登录')
   }
   if (!res.ok) throw new Error(await streamErrorText(res))
   if (!res.body) throw new Error('响应无内容')

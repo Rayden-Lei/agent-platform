@@ -55,7 +55,9 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
     user = db.get(User, user_id)
     if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号不可用")
+        # 401 而不是 403（docs/15 OP-02，2026-10-05）：凭证已经不能用了，前端只在 401 时清登录态回登录页；
+        # 此前 403 时页面停在原处、每个请求都报"账号不可用"。API Key 的归属账号停用仍是 403（api_key_service）
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号已停用或不存在，请重新登录")
     # 令牌版本对不上 = 签发之后重置过密码、停用过或改过密：旧会话作废。没有 ver 的令牌是 OP-04 之前签发的，
     # 那时所有人的版本都是 0，按 0 比对（之后任何一次吊销都会让它失效）
     if payload.get("ver", 0) != user.token_version:

@@ -106,7 +106,9 @@ def test_api_key_cannot_change_password(client, auth_headers, key_scope):
 def test_disabling_a_user_revokes_its_tokens_even_after_reenabling(client, auth_headers, account):
     old = _login(client, account["username"], account["password"])
     client.put(f"/api/v1/users/{account['id']}", headers=auth_headers, json={"is_active": False})
-    assert client.get("/api/v1/auth/me", headers=old).status_code == 403
+    # 2026-10-05 起停用账号的登录令牌是 401（OP-02）：前端只在 401 清登录态回登录页，此前 403 时页面停在原处一直报错
+    disabled = client.get("/api/v1/auth/me", headers=old)
+    assert disabled.status_code == 401 and disabled.json()["detail"] == "账号已停用或不存在，请重新登录"
     client.put(f"/api/v1/users/{account['id']}", headers=auth_headers, json={"is_active": True})
     assert client.get("/api/v1/auth/me", headers=old).status_code == 401  # 重新启用也不复活停用前的会话
 

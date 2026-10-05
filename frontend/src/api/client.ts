@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAuth } from '../store/auth'
+import { loginPathFor, setLoginNotice } from '../utils/redirect'
 
 // 与后端 core/deps.MUST_CHANGE_PASSWORD_DETAIL 一致：必须改密的账号调改密以外的接口时的 403 文案
 export const MUST_CHANGE_PASSWORD_DETAIL = '请先修改初始密码'
@@ -12,12 +13,14 @@ const client = axios.create({
   timeout: 30000,
 })
 
-// 凭证失效（401）：清掉本地登录态并跳回登录页。axios 拦截器与对话流（fetch，绕开拦截器）共用这一处
-export function clearLoginAndRedirect() {
+// 凭证失效（401）：清掉本地登录态并跳回登录页，带上当前页（登录后回来）与原因（如"账号已停用"，登录页显示一次）。
+// axios 拦截器与对话流（fetch，绕开拦截器）共用这一处（docs/15 OP-02；此前固定跳 /login、登录后回首页）
+export function clearLoginAndRedirect(notice?: string) {
   localStorage.removeItem('token')
   localStorage.removeItem('user')
   if (!window.location.pathname.startsWith('/login')) {
-    window.location.href = '/login'
+    setLoginNotice(notice)
+    window.location.href = loginPathFor(window.location.pathname + window.location.search)
   }
 }
 
@@ -45,7 +48,7 @@ client.interceptors.response.use(
       err.response.data.detail = `${err.response.data.detail}（${retryAfter} 秒后可重试）`
     }
     // 401：凭证失效（统一处理，各页面无需重复写）
-    if (err.response?.status === 401) clearLoginAndRedirect()
+    if (err.response?.status === 401) clearLoginAndRedirect(typeof err.response?.data?.detail === 'string' ? err.response.data.detail : undefined)
     // 403「请先修改初始密码」：登录后被管理员重置、要求改密（docs/15 OP-04）。标到登录态上，布局层据此弹出改密框
     if (err.response?.status === 403 && err.response?.data?.detail === MUST_CHANGE_PASSWORD_DETAIL) {
       const { token, user, setAuth } = useAuth.getState()

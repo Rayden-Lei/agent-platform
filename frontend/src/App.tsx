@@ -1,6 +1,7 @@
 import { lazy } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './store/auth'
+import { loginPathFor } from './utils/redirect'
 import AppLayout from './components/AppLayout'
 import Login from './pages/Login'
 
@@ -27,10 +28,11 @@ const Schedules = lazy(() => import('./pages/Schedules'))
 const PromptTemplates = lazy(() => import('./pages/PromptTemplates'))
 const SystemSettings = lazy(() => import('./pages/SystemSettings'))
 
-// 路由守卫：未登录（无 token）时重定向到 /login，已登录则渲染受保护的子路由
+// 路由守卫：未登录（无 token）时重定向到 /login 并带上当前页（登录后回来，docs/15 OP-02），已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { token } = useAuth()
-  if (!token) return <Navigate to="/login" replace />
+  const location = useLocation()
+  if (!token) return <Navigate to={loginPathFor(location.pathname + location.search)} replace />
   return children
 }
 

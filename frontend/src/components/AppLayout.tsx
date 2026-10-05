@@ -10,6 +10,7 @@ import SideNav from './layout/SideNav'
 import DegradedBanner from './layout/DegradedBanner'
 import ForcePasswordModal from './layout/ForcePasswordModal'
 import { changeMyPassword } from '../api'
+import { useSessionSync } from '../hooks/useSessionSync'
 
 const { Sider, Header, Content } = Layout
 const { useBreakpoint } = Grid
@@ -23,6 +24,7 @@ export default function AppLayout() {
   const screens = useBreakpoint() // antd 响应式断点
   const isMobile = !screens.md // md 以下视为移动端：侧边栏改为抽屉
   const [drawerOpen, setDrawerOpen] = useState(false) // 移动端抽屉是否展开
+  useSessionSync() // 进入应用与切回页面时刷新角色、菜单与"必须改密"（docs/15 OP-02）
 
   // 必须改密：改完旧令牌全部失效（token_version +1），先换上新令牌再整页重载，免得页面上还在跑的请求带着旧令牌 401 被踢回登录页
   const changePassword = async (oldPassword: string, newPassword: string) => {
