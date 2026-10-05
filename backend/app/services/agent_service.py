@@ -10,7 +10,7 @@ from app.core.prompt_render import render
 from app.db.models import Agent, AgentVersion, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
-from app.services import run_service
+from app.services import kb_service, run_service
 
 SORTABLE = {"id": Agent.id, "name": Agent.name, "status": Agent.status, "version": Agent.version, "updated_at": Agent.updated_at}
 
@@ -179,9 +179,23 @@ def validate_agent_config(db: Session, model_id: int, tool_ids: list, kb_ids: li
     _check_ids(db, KnowledgeBase, kb_ids, "知识库")
 
 
+def _check_new_kbs_visible(db: Session, kb_ids: list, existing: list, role: str) -> None:
+    """这次新增绑定的知识库须对保存人可见（docs/15 3.3、KB-01）：不可见与不存在同一句提示，不暴露受限库是否存在。
+    已有绑定不追溯 —— admin 绑上的受限库，developer 只改提示词照样能保存；对话检索按访问者身份过滤，绑定本身不泄露内容。"""
+    kept = set(existing or [])
+    added = [i for i in kb_ids if i not in kept]
+    if not added:
+        return
+    visible = {i for (i,) in db.query(KnowledgeBase.id).filter(KnowledgeBase.id.in_(added), kb_service.visible_kb_filter(role))}
+    hidden = [i for i in added if i not in visible]
+    if hidden:
+        raise BizError(400, f"知识库不存在：{', '.join(str(i) for i in hidden)}")
+
+
 def create_agent(db: Session, data: AgentIn, user: User) -> dict:
     """新建智能体：初始为草稿态（draft），created_by 记录创建人。引用校验或模板渲染失败时不落库。"""
     validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    _check_new_kbs_visible(db, data.kb_ids, [], user.role)
     a = Agent(
         name=data.name,
         description=data.description,
@@ -242,6 +256,7 @@ def update_agent(db: Session, agent_id: int, data: AgentUpdateIn, user: User) ->
     if a.updated_at != data.expected_updated_at:
         raise BizError(409, "已被他人修改，请刷新后再改")
     validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    _check_new_kbs_visible(db, data.kb_ids, a.kb_ids, user.role)
     before = snapshot_of(a)
     a.name = data.name
     a.description = data.description

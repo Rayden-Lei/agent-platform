@@ -13,11 +13,12 @@ from app.services.settings_service import runtime_value
 RRF_K = 60  # RRF 倒排融合常数
 
 
-def _kb_allows(role: str, kb: KnowledgeBase | None) -> bool:
+def kb_allows(role: str, kb: KnowledgeBase | None) -> bool:
     """知识库级鉴权（第一道闸门，召回之前）：admin 可见全部；其他角色只能检索公开库，或 visible_roles 含该角色的库。
 
     读的是 knowledge_bases 行的当前值。切片 meta 里的 is_public / visible_roles 是入库时的快照，改权限后不回写，
     拿它鉴权会让改权限对存量切片不生效（2026-09-25 之前就是这样），现在只留作审计。库不存在视为无权。
+    管理面的 kb_service.visible_kb_filter 是同一规则的 SQL 写法；知识库详情的"各身份能否检索"直接调本函数（docs/15 KB-01）。
     """
     if kb is None:
         return False
@@ -29,9 +30,9 @@ def _kb_allows(role: str, kb: KnowledgeBase | None) -> bool:
 def _authorize(role: str, kb: KnowledgeBase, chunk) -> bool:
     """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色可见。
 
-    与 _kb_allows 同一口径（06 第 8 节：两道闸门语义一致）；召回层万一混进别的库的切片，在这里拦下。
+    与 kb_allows 同一口径（06 第 8 节：两道闸门语义一致）；召回层万一混进别的库的切片，在这里拦下。
     """
-    return chunk.kb_id == kb.id and _kb_allows(role, kb)
+    return chunk.kb_id == kb.id and kb_allows(role, kb)
 
 
 def _rrf_fuse(candidates: dict) -> None:
@@ -49,7 +50,7 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, timin
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
     mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
-    调用前必须已过 _kb_allows：无权的库根本不进这里，连查询向量化都不做。
+    调用前必须已过 kb_allows：无权的库根本不进这里，连查询向量化都不做。
     """
     timings = timings if timings is not None else {}
     started = time.perf_counter()
@@ -202,7 +203,7 @@ def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", ro
     db = SessionLocal()
     try:
         kb = db.get(KnowledgeBase, kb_id)
-        if not _kb_allows(role, kb):
+        if not kb_allows(role, kb):
             return []
         candidates = _collect_candidates(db, kb_id, query, top_k, mode)
         ranked, _ = _rank_and_authorize(query, candidates, role, kb)
@@ -217,7 +218,7 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
     db = SessionLocal()
     try:
         kb = db.get(KnowledgeBase, kb_id)
-        if not _kb_allows(role, kb):
+        if not kb_allows(role, kb):
             # 无权检索这个库：不召回、不做查询向量化；kb_denied 让评测页与调用方能区分"没命中"和"没权限"
             return {"items": [], "stats": {
                 "query": query, "keywords": [], "candidate_count": 0, "acl_rejected": 0, "returned": 0,

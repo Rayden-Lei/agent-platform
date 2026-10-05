@@ -109,7 +109,7 @@ export default function AgentEditor() {
         <div ref={scrollRef} style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', display: compact && pane === 'debug' ? 'none' : undefined }}>
           <Form form={form} layout="vertical" onFinish={onSave} onValuesChange={onValuesChange} scrollToFirstError>
             <ConfigSections form={form} models={models?.items ?? []} templates={templates?.items ?? []}
-              kbOptions={(kbs?.items ?? []).map((k) => ({ value: k.id, label: k.name }))}
+              kbOptions={mergeOptions(kbs?.items ?? [], agent?.knowledge_bases ?? [])}
               toolOptions={(tools?.items ?? []).map((t) => ({ value: t.id, label: t.is_enabled ? t.name : `${t.name}（已停用）` }))}
               onRenderTemplate={renderPromptTemplate} />
           </Form>
@@ -124,4 +124,11 @@ export default function AgentEditor() {
       <PublishModal agent={publishOpen ? agent : null} names={names} onClose={() => setPublishOpen(false)} onPublish={onPublish} />
     </div>
   )
+}
+
+// 知识库下拉 = 当前角色可见的前 100 个 + 本智能体已绑定的（详情里带名称）：管理员绑上的受限库对开发者不在列表里（docs/15 KB-01），
+// 超过 100 个时靠后的也不在，不补上就只显示一个数字
+function mergeOptions(listed: { id: number; name: string }[], bound: { id: number; name: string }[]) {
+  const seen = new Set(listed.map((k) => k.id))
+  return [...listed, ...bound.filter((k) => !seen.has(k.id))].map((k) => ({ value: k.id, label: k.name }))
 }

@@ -4,7 +4,8 @@ import { createKB, updateKB, type KnowledgeBaseInput, type KnowledgeBaseRow } fr
 import { statusOptions } from '../../constants/status'
 import { errorText } from '../../utils/errors'
 
-// 知识库新建 / 编辑弹窗：名称、描述、向量模型（建库后不可改）、切片参数（只影响之后上传的文档）、访问权限。
+// 知识库新建 / 编辑弹窗：名称、描述、向量模型（建库后不可改）、切片参数（只影响之后上传的文档）。
+// 访问权限只在新建时设初始值；之后在详情的"访问权限"页签改（docs/15 KB-01），编辑只提交名称、描述与切片参数。
 interface Props {
   open: boolean
   editing: KnowledgeBaseRow | null
@@ -24,7 +25,8 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
   const onSubmit = async (values: KnowledgeBaseInput) => {
     setSubmitting(true)
     try {
-      const saved = editing ? await updateKB(editing.id, values) : await createKB(values)
+      const { name, description, chunk_size, chunk_overlap } = values
+      const saved = editing ? await updateKB(editing.id, { name, description, chunk_size, chunk_overlap }) : await createKB(values)
       message.success(editing ? '已保存' : '创建成功')
       onSaved(saved)
       onClose()
@@ -47,16 +49,21 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
             <InputNumber min={0} max={1000} style={{ width: '100%' }} />
           </Form.Item>
         </div>
-        {editing && <Typography.Text type="secondary" style={{ fontSize: 12 }}>切片参数只影响之后上传的文档；已有文档可在详情页"重新解析"按新参数重建。</Typography.Text>}
-        <Divider style={{ margin: '12px 0' }}>访问权限</Divider>
-        <Form.Item name="is_public" label="公开（所有角色可见）" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item noStyle shouldUpdate={(prev, cur) => prev.is_public !== cur.is_public}>
-          {({ getFieldValue }) => !getFieldValue('is_public') && (
-            <Form.Item name="visible_roles" label="可见角色（非公开时生效）" extra="检索与对话引用都按此过滤，保存后立即生效，已入库的切片不用重新解析">
-              <Select mode="multiple" placeholder="选择可访问的角色" options={statusOptions('role')} />
+        {editing ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>切片参数只影响之后上传的文档；已有文档可在详情页"重新解析"按新参数重建。访问权限在详情页的"访问权限"页签修改。</Typography.Text>
+        ) : (
+          <>
+            <Divider style={{ margin: '12px 0' }}>初始访问权限</Divider>
+            <Form.Item name="is_public" label="公开（所有角色可见）" valuePropName="checked"><Switch /></Form.Item>
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.is_public !== cur.is_public}>
+              {({ getFieldValue }) => !getFieldValue('is_public') && (
+                <Form.Item name="visible_roles" label="可见角色（非公开时生效）" extra="建好后可在详情页的“访问权限”页签修改；管理员始终可见">
+                  <Select mode="multiple" placeholder="选择可访问的角色" options={statusOptions('role')} />
+                </Form.Item>
+              )}
             </Form.Item>
-          )}
-        </Form.Item>
+          </>
+        )}
       </Form>
     </Modal>
   )

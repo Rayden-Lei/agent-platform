@@ -23,16 +23,23 @@ export interface KnowledgeBaseRow {
   created_at: string | null
   updated_at: string | null
 }
-export interface KnowledgeBaseInput {
+// 编辑只改这四项（多带字段服务端 422）；权限走 updateKBAccess，向量模型建库后不可改（docs/15 KB-01）
+export interface KnowledgeBaseUpdateInput {
   name: string
   description?: string
-  embedding_model?: string
   chunk_size?: number
   chunk_overlap?: number
-  is_public?: boolean
-  visible_roles?: string[]
 }
-export interface KnowledgeBaseDetail extends KnowledgeBaseRow { agents: { id: number; name: string; status: string }[] }
+export interface KbAccessInput { is_public: boolean; visible_roles: string[] }
+// 新建：另带向量模型与初始访问权限
+export interface KnowledgeBaseInput extends KnowledgeBaseUpdateInput, Partial<KbAccessInput> { embedding_model?: string }
+// 绑定本库的智能体：草稿绑定（in_draft）或在线智能体的线上版本绑定（in_live）
+export interface KbBoundAgent { id: number; name: string; status: string; in_draft: boolean; in_live: boolean }
+// 各身份能否检索本库：服务端用检索闸门同一函数算出，前端不另写规则；anonymous 是分享链接的匿名访客
+export interface KbAccess { admin: boolean; developer: boolean; caller: boolean; anonymous: boolean }
+export interface KnowledgeBaseDetail extends KnowledgeBaseRow { agents: KbBoundAgent[]; access: KbAccess }
+// 访问权限的变更记录：create 是建库时的初始权限（before 为空），update_access 是之后的每次修改
+export interface KbAccessChange { id: number; action: 'create' | 'update_access'; username: string | null; created_at: string | null; before: KbAccessInput | null; after: KbAccessInput }
 export type DocumentStatus = 'uploading' | 'parsing' | 'chunking' | 'ready' | 'failed'
 export interface DocumentRow {
   id: number
@@ -81,7 +88,9 @@ export interface SearchStats {
 export const listKBs = (params?: PageQuery) => get<Page<KnowledgeBaseRow>>('/knowledge-bases', params)
 export const getKB = (id: number) => get<KnowledgeBaseDetail>(`/knowledge-bases/${id}`)
 export const createKB = (data: KnowledgeBaseInput) => post<KnowledgeBaseRow>('/knowledge-bases', data)
-export const updateKB = (id: number, data: KnowledgeBaseInput) => put<KnowledgeBaseRow>(`/knowledge-bases/${id}`, data)
+export const updateKB = (id: number, data: KnowledgeBaseUpdateInput) => put<KnowledgeBaseRow>(`/knowledge-bases/${id}`, data)
+export const updateKBAccess = (id: number, data: KbAccessInput) => put<KnowledgeBaseDetail>(`/knowledge-bases/${id}/access`, data)
+export const listKBAccessChanges = (id: number, params?: PageQuery) => get<Page<KbAccessChange>>(`/knowledge-bases/${id}/access-log`, params)
 export const deleteKB = (id: number) => del(`/knowledge-bases/${id}`)
 export const batchKBs = (ids: number[]) => batchAction('/knowledge-bases', ids, 'delete')
 export const listDocs = (kbId: number, params?: PageQuery) => get<Page<DocumentRow>>(`/knowledge-bases/${kbId}/documents`, params)

@@ -233,7 +233,7 @@ def _write_batch(db, doc: Document, kb: KnowledgeBase, start: int, batch: list, 
             meta={
                 **chunk["meta"],
                 "index": start + offset,
-                # 入库时的知识库权限快照，只供审计：检索鉴权读知识库行的当前值（改权限不回写这里，见 retriever._kb_allows）
+                # 入库时的知识库权限快照，只供审计：检索鉴权读知识库行的当前值（改权限不回写这里，见 retriever.kb_allows）
                 "kb_id": kb.id,
                 "doc_id": doc.id,
                 "is_public": kb.is_public,

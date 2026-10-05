@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { Button, Popconfirm, Space, Tag, Typography, message } from 'antd'
 import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { deleteKB, getKB, getUploadPolicy } from '../api'
+import { deleteKB, getKB, getUploadPolicy, listKBAccessChanges, updateKBAccess, type KbAccessInput } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
+import { useAuth } from '../store/auth'
 import DetailPage from '../components/layout/DetailPage'
 import StatusTag from '../components/common/StatusTag'
 import ResourceLink from '../components/common/ResourceLink'
@@ -13,20 +14,34 @@ import KbForm from '../components/kb/KbForm'
 import DocTable from '../components/kb/DocTable'
 import SearchEval from '../components/kb/SearchEval'
 import KbStats from '../components/kb/KbStats'
+import KbAccessTab from '../components/kb/KbAccessTab'
 import { statusLabel } from '../constants/status'
 import { errorText } from '../utils/errors'
 import { formatNumber } from '../utils/format'
 
-// 知识库详情页：文档（上传 / 筛选 / 重新解析 / 切片）/ 检索评测 / 统计 / 引用它的智能体；头部编辑与删除。
+// 知识库详情页：文档（上传 / 筛选 / 重新解析 / 切片）/ 检索评测 / 统计 / 访问权限 / 引用它的智能体；头部编辑与删除。
 export default function KbDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const kbId = Number(id)
+  const myRole = useAuth((s) => s.user?.role)
   const { data: kb, loading, error, reload } = useAsyncData(() => getKB(kbId), [kbId], { errorText: '加载知识库失败' })
   // 上传策略（扩展名白名单与大小上限）由服务端下发，文档页签据此设 accept 与上传前预检
   const { data: uploadPolicy } = useAsyncData(getUploadPolicy, [], { errorText: '加载上传策略失败' })
+  // 访问权限的变更记录只取最近 20 条（页签里注明总数）
+  const changes = useAsyncData(() => listKBAccessChanges(kbId, { page: 1, page_size: 20 }), [kbId], { errorText: '加载变更记录失败' })
   const [editing, setEditing] = useState(false)
+  const [savingAccess, setSavingAccess] = useState(false)
   const remove = async () => { try { await deleteKB(kbId); message.success('已删除'); navigate('/knowledge-bases') } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const saveAccess = async (policy: KbAccessInput) => {
+    setSavingAccess(true)
+    try {
+      await updateKBAccess(kbId, policy)
+      message.success('访问权限已保存，立即生效')
+      reload(true)
+      changes.reload(true)
+    } catch (e) { message.error(errorText(e, '保存失败')) } finally { setSavingAccess(false) }
+  }
 
   return (
     <>
@@ -55,10 +70,21 @@ export default function KbDetail() {
           { key: 'search', label: '检索评测', children: <SearchEval kbId={kb.id} /> },
           { key: 'stats', label: '统计', children: <KbStats kb={kb} /> },
           {
+            key: 'access', label: '访问权限', children: (
+              <KbAccessTab kb={kb} myRole={myRole} saving={savingAccess} onSave={saveAccess} changes={changes.data?.items ?? null}
+                changesTotal={changes.data?.total} changesError={changes.error} onRetryChanges={() => changes.reload()} />
+            ),
+          },
+          {
             key: 'agents', label: `引用（${kb.agents.length}）`, children: kb.agents.length ? (
               <Space direction="vertical">
-                <Typography.Text type="secondary">绑定了该知识库的智能体；改权限或重新解析会影响它们的检索结果。</Typography.Text>
-                {kb.agents.map((a) => <span key={a.id}><ResourceLink type="agent" id={a.id} name={a.name} showIcon /> <StatusTag domain="agent" value={a.status} /></span>)}
+                <Typography.Text type="secondary">草稿或线上版本绑定了该知识库的智能体；改权限或重新解析会影响它们的检索结果。</Typography.Text>
+                {kb.agents.map((a) => (
+                  <span key={a.id}>
+                    <ResourceLink type="agent" id={a.id} name={a.name} showIcon /> <StatusTag domain="agent" value={a.status} />
+                    {a.in_live && <Tag style={{ marginLeft: 4 }}>线上版本</Tag>}{a.in_draft && <Tag>草稿</Tag>}
+                  </span>
+                ))}
               </Space>
             ) : <EmptyState description="还没有智能体绑定该知识库；在智能体表单里选择即可" />,
           },

@@ -1,7 +1,7 @@
-"""知识库（KB）路由：知识库 CRUD、文档上传 / 解析 / 重新解析 / 分块查看、批量操作、库内检索。
+"""知识库（KB）路由：知识库 CRUD、访问权限、文档上传 / 解析 / 重新解析 / 分块查看、批量操作、库内检索。
 
-除检索接口把当前用户角色传给 service 做可见性过滤（ACL）外，其余接口仅允许
-admin / developer 角色访问。文档解析在后台任务中异步执行。
+仅 admin / developer 角色访问；每个接口再按知识库的可见性过滤（docs/15 KB-01）：
+知识库对当前角色不可见时一律 404「知识库不存在」，列表里也看不到。文档解析在后台任务中异步执行。
 """
 
 from datetime import datetime
@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -24,27 +24,42 @@ from app.services import kb_service
 router = APIRouter(prefix="/knowledge-bases", tags=["kb"])
 
 DocStatus = Literal["uploading", "parsing", "chunking", "ready", "failed"]
+KbRole = Literal["admin", "developer", "caller"]
 
 
-class KnowledgeBaseIn(BaseModel):
-    """创建 / 更新知识库的请求体：name 必填；embedding_model 指定向量化模型；
-    chunk_size / chunk_overlap 为文档分块参数；is_public / visible_roles 控制可见范围。
-    取值范围 2026-09-29 起校验（422，docs/15 KB-03）：此前 chunk_overlap 大于 chunk_size、visible_roles 写错角色名都能存进去。
-    """
+class KnowledgeBaseUpdateIn(BaseModel):
+    """更新知识库的请求体：名称、描述、文档分块参数。取值范围 2026-09-29 起校验（422，docs/15 KB-03）。
+    2026-10-05 起权限改走 PUT /{kb_id}/access、向量模型建库后不可改：带 is_public / visible_roles / embedding_model 一律 422，
+    不悄悄忽略 —— 此前整体覆盖时，只想改名称的保存会把别人刚改的权限盖回去（docs/15 KB-01）。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=128)
     description: str = Field("", max_length=2000)
-    embedding_model: str = Field("text-embedding-3-small", max_length=128)
     chunk_size: int = Field(500, ge=50, le=5000)
     chunk_overlap: int = Field(50, ge=0, le=1000)
-    is_public: bool = True
-    visible_roles: list[Literal["admin", "developer", "caller"]] = []
 
     @model_validator(mode="after")
     def _overlap_below_size(self):
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap 必须小于 chunk_size")
         return self
+
+
+class KnowledgeBaseIn(KnowledgeBaseUpdateIn):
+    """创建知识库的请求体：在更新字段之外，embedding_model 记录向量化模型，is_public / visible_roles 是初始访问权限。"""
+
+    model_config = ConfigDict(extra="ignore")  # 建库契约不变，不继承更新体的 forbid
+    embedding_model: str = Field("text-embedding-3-small", max_length=128)
+    is_public: bool = True
+    visible_roles: list[KbRole] = []
+
+
+class KbAccessIn(BaseModel):
+    """访问权限：is_public 为真时所有角色可见；否则只有 visible_roles 内的角色可见（admin 始终可见）。"""
+
+    is_public: bool
+    visible_roles: list[KbRole] = []
 
 
 class SearchIn(BaseModel):
@@ -73,7 +88,7 @@ def list_kbs(
     user: User = Depends(require_roles("admin", "developer")),
 ):
     """知识库列表（分页），支持名称模糊、公开 / 受限过滤；sort 可选 id / name / updated_at；附文档与切片统计。"""
-    return kb_service.list_kbs(db, params, q, is_public, sort)
+    return kb_service.list_kbs(db, user, params, q, is_public, sort)
 
 
 @router.post("")
@@ -86,7 +101,7 @@ def create_kb(data: KnowledgeBaseIn, db: Session = Depends(get_db), user: User =
 @router.post("/batch")
 def batch_kbs(data: KbBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量删除知识库：逐条独立执行并返回成功与失败清单。"""
-    return run_batch(db, data.unique_ids(), lambda kb_id: kb_service.delete_kb(db, kb_id))
+    return run_batch(db, data.unique_ids(), lambda kb_id: kb_service.delete_kb(db, kb_id, user))
 
 
 @router.get("/upload-policy")
@@ -97,20 +112,32 @@ def upload_policy(user: User = Depends(require_roles("admin", "developer"))):
 
 @router.get("/{kb_id}")
 def get_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """知识库详情（含统计与引用它的智能体）。"""
-    return kb_service.get_kb_detail(db, kb_id)
+    """知识库详情（含统计、绑定它的智能体、各身份能否检索）。"""
+    return kb_service.get_kb_detail(db, kb_id, user)
 
 
 @router.put("/{kb_id}")
-def update_kb(kb_id: int, data: KnowledgeBaseIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """按 ID 更新知识库配置。"""
-    return kb_service.update_kb(db, kb_id, data)
+def update_kb(kb_id: int, data: KnowledgeBaseUpdateIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """更新名称、描述与切片参数；权限走 PUT /{kb_id}/access。"""
+    return kb_service.update_kb(db, kb_id, data, user)
+
+
+@router.put("/{kb_id}/access")
+def update_access(kb_id: int, data: KbAccessIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """改访问权限，立即生效、不用重新解析；非 admin 不能把自己排除在外（400）。返回与详情同形的知识库。"""
+    return kb_service.update_access(db, kb_id, data, user)
+
+
+@router.get("/{kb_id}/access-log")
+def list_access_changes(kb_id: int, params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """访问权限的变更记录（建库时的初始权限与每次修改，新的在前），分页。"""
+    return kb_service.list_access_changes(db, kb_id, user, params)
 
 
 @router.delete("/{kb_id}")
 def delete_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """按 ID 删除知识库。"""
-    kb_service.delete_kb(db, kb_id)
+    kb_service.delete_kb(db, kb_id, user)
     return {"code": 0, "message": "ok"}
 
 
@@ -124,11 +151,11 @@ async def upload_document(
 ):
     """上传文档（docs/04 4.8）：文件名只保留最后一段并清洗，扩展名须在上传策略的白名单内（400），
     超过 KB_UPLOAD_MAX_MB 413；这些都在写 MinIO、建文档行之前拒绝。"""
-    name, ext = await run_in_threadpool(kb_service.check_upload, db, kb_id, file.filename, file.size)
+    name, ext = await run_in_threadpool(kb_service.check_upload, db, kb_id, user, file.filename, file.size)
     content = await _read_limited(file, settings.KB_UPLOAD_MAX_MB * 1024 * 1024)
     # 存 MinIO 是阻塞 IO（几十 MB 的文件走公网要几十秒），必须挪出事件循环 ——
     # 写在 async 路由里会占住整个进程：2026-09-06 一次上传卡了 436 秒，期间所有接口都不响应，页面看着像服务挂了
-    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, name, ext, content, file.content_type or "application/octet-stream")
+    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, user, name, ext, content, file.content_type or "application/octet-stream")
     # 解析 / 分块 / 向量化放入后台任务异步执行，接口先返回文档记录，前端轮询 status
     background_tasks.add_task(process_document, doc.id)
     return {"id": doc.id, "kb_id": kb_id, "name": name, "file_type": doc.file_type, "status": doc.status}
@@ -159,17 +186,18 @@ def list_documents(
 ):
     """知识库下的文档列表（分页），可按状态、文件名、类型、上传时间区间过滤；sort 可选 id / name / status / chunk_count / created_at。"""
     created_from, created_to = time_range(created_from, created_to)
-    return kb_service.list_documents(db, kb_id, params, status, q, file_type, created_from, created_to, sort)
+    return kb_service.list_documents(db, kb_id, user, params, status, q, file_type, created_from, created_to, sort)
 
 
 # 固定路径必须声明在 /{doc_id} 之前
 @router.post("/{kb_id}/documents/batch")
 def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """批量删除 / 重新解析文档：逐条独立执行；重新解析的文档排进后台任务。"""
+    """批量删除 / 重新解析文档：逐条独立执行；重新解析的文档排进后台任务。知识库不可见时整个请求 404，不逐条报失败。"""
+    kb_service.get_kb(db, kb_id, user.role)
     queued: list[int] = []
 
     def _apply(doc_id: int) -> None:
-        doc = kb_service.apply_document_batch_action(db, kb_id, doc_id, data.action)
+        doc = kb_service.apply_document_batch_action(db, kb_id, doc_id, data.action, user)
         if doc is not None:
             queued.append(doc.id)
 
@@ -182,7 +210,7 @@ def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: Backgro
 @router.post("/{kb_id}/documents/{doc_id}/resume")
 def resume_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """中断后继续处理：失败或已无心跳的处理中文档，从已入库的切片接着向量化（切片参数没变时不重来）；正常处理中 400。"""
-    doc = kb_service.prepare_resume(db, kb_id, doc_id)
+    doc = kb_service.prepare_resume(db, kb_id, doc_id, user)
     background_tasks.add_task(process_document, doc.id, True)
     return {"id": doc.id, "status": doc.status, "chunk_count": doc.chunk_count, "chunk_total": doc.chunk_total}
 
@@ -190,7 +218,7 @@ def resume_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, 
 @router.post("/{kb_id}/documents/{doc_id}/reprocess")
 def reprocess_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """重新解析文档（失败的文档重试，或切片参数改了之后重建）：清掉旧切片后排进后台任务；处理中的文档 400。"""
-    doc = kb_service.prepare_reprocess(db, kb_id, doc_id)
+    doc = kb_service.prepare_reprocess(db, kb_id, doc_id, user)
     background_tasks.add_task(process_document, doc.id)
     return {"id": doc.id, "status": doc.status}
 
@@ -198,17 +226,17 @@ def reprocess_document(kb_id: int, doc_id: int, background_tasks: BackgroundTask
 @router.get("/{kb_id}/documents/{doc_id}/chunks")
 def list_chunks(kb_id: int, doc_id: int, params: PageParams = Depends(page_params), db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """指定文档的分块列表（分页），用于查看解析结果。"""
-    return kb_service.list_document_chunks(db, kb_id, doc_id, params)
+    return kb_service.list_document_chunks(db, kb_id, doc_id, user, params)
 
 
 @router.delete("/{kb_id}/documents/{doc_id}")
 def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """删除指定文档及其分块。"""
-    kb_service.delete_document(db, kb_id, doc_id)
+    kb_service.delete_document(db, kb_id, doc_id, user)
     return {"code": 0, "message": "ok"}
 
 
 @router.post("/{kb_id}/search")
 def search(kb_id: int, data: SearchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """在知识库内检索。传入当前用户角色用于可见性过滤（ACL）。"""
-    return kb_service.search_kb(db, kb_id, data.query, data.top_k, debug=data.debug, role=user.role)
+    """在知识库内检索（检索评测）：知识库不可见 404；按当前角色检索。"""
+    return kb_service.search_kb(db, kb_id, user, data.query, data.top_k, debug=data.debug)
