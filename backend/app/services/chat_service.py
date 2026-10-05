@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -19,7 +20,7 @@ from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.runtime.agent_config import AgentRunConfig, load_version_config, resolve_live_config, run_config_from_snapshot, snapshot_of, usable_model
 from app.schemas import AgentIn
-from app.services import agent_service, api_key_service, chat_trace, run_service, settings_service
+from app.services import agent_service, api_key_service, chat_trace, conversation_service, run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -243,40 +244,97 @@ class PreparedChat(NamedTuple):
     agent_version: int
 
 
+class ReplayChat(NamedTuple):
+    """同一会话里重复的 client_message_id：不落消息、不调模型，回放首次的结果（docs/15 3.7.1 幂等）。
+    status 为 success 时带首次回答（message_id / content / citations / usage）；failed、cancelled 时带 error。"""
+
+    conversation_id: int
+    run_id: int | None
+    status: str
+    message_id: int | None = None
+    content: str = ""
+    citations: list | None = None
+    usage: dict | None = None
+    error: str | None = None
+
+
+def _replay_of(db: Session, conversation_id: int, client_message_id: str) -> ReplayChat | None:
+    """同一会话里这个 client_message_id 首次的结果；没发过返回 None。首次还在生成 → 409（让调用方稍后用同一个 id 再试）。"""
+    first = db.query(Message).filter(Message.conversation_id == conversation_id, Message.client_message_id == client_message_id,
+                                     Message.role == "user").first()
+    if first is None:
+        return None
+    run = db.get(Run, first.run_id) if first.run_id else None
+    if run is None:
+        # 用户消息与运行记录同一次提交，正常不会出现；运行记录被删了才会这样
+        return ReplayChat(conversation_id, None, "failed", error="上次请求的运行记录已不存在，请换一个 client_message_id 重试")
+    if run.status not in run_service.FINAL_STATUSES:
+        raise BizError(409, "该消息正在处理，请稍后用同一个 client_message_id 重试")
+    if run.status == "success":
+        answer = db.query(Message).filter(Message.run_id == run.id, Message.role == "assistant").first()
+        return ReplayChat(conversation_id, run.id, "success", message_id=answer.id if answer else None,
+                          content=answer.content if answer else "", citations=(answer.citations or []) if answer else [], usage=run.token_usage)
+    error = run.error or ("上次请求已中断（已生成的部分见会话消息）" if run.status == "cancelled" else "上次请求失败")
+    return ReplayChat(conversation_id, run.id, run.status, error=f"{error}；如需重新生成请换一个 client_message_id")
+
+
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None,
-                 api_key: ApiKey | None = None) -> PreparedChat:
+                 api_key: ApiKey | None = None, end_user: str | None = None, client_message_id: str | None = None) -> PreparedChat | ReplayChat:
     """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。
 
-    所有拒绝都发生在写库之前：消息全是空白 400、API Key 的作用域里没有该智能体 403、智能体不存在 404 / 未发布或已下线 403、
-    会话不属于本人或不属于该智能体 404。长度上限由路由的 ChatIn 管（422）。
+    所有拒绝都发生在写库之前：消息全是空白 400、登录请求带 end_user 400、API Key 的作用域里没有该智能体 403、
+    智能体不存在 404 / 未发布或已下线 403、会话不属于本次调用方或不属于该智能体 404。长度与字符集由路由的 ChatIn 管（422）。
     api_key 不为空表示 Key 发起的对话：运行记录 source=api_key 并记 api_key_id（2026-09-25 前也记成 chat，按 Key 筛不到）；
     作用域判定在服务层（docs/15 3.7.1，2026-10-05 前 Key 能调归属人能调的任意已发布智能体）。
+    会话通道（docs/15 3.7.1）：Key 建的会话 channel=api、记 api_key_id 与 end_user，只有同一个 Key 与 end_user 能续聊；
+    界面会话 channel=ui。归属判定只在 conversation_service.owns 一处。
+    幂等：续聊时带了会话里已出现过的 client_message_id，返回 ReplayChat（不落消息、不调模型）；
+    首轮（不带 conversation_id）不在幂等范围内。并发的同一条撞上部分唯一索引时按"首次仍在生成"409。
     配置读线上版本（草稿与线上分离，FR-039）：运行记录的 model_id 与 agent_version 都取线上快照，不取草稿行。
     """
     if not message.strip():
         raise BizError(400, "消息不能为空")
+    conversation_service.check_end_user(api_key, end_user)
     api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
         # 还要属于该智能体：否则智能体 A 能接着写 B 的会话（深链只带 conversation 时对话页会落到第一个智能体）
-        if conversation is None or conversation.user_id != user_id or conversation.agent_id != agent_id:
+        if conversation is None or not conversation_service.owns(conversation, user_id, api_key, end_user) or conversation.agent_id != agent_id:
             raise BizError(404, "会话不存在或不属于该智能体")
+        if client_message_id:
+            replay = _replay_of(db, conversation.id, client_message_id)
+            if replay is not None:
+                return replay
     if conversation is None:
         title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 标题取首条消息开头（模型生成标题已于 2026-08-29 移除）
-        conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title)
+        conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title,
+                                    channel=conversation_service.CHANNEL_API if api_key else conversation_service.CHANNEL_UI,
+                                    api_key_id=api_key.id if api_key else None, end_user=end_user)
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
 
-    db.add(Message(conversation_id=conversation.id, role="user", content=message))
-    # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属
+    user_message = Message(conversation_id=conversation.id, role="user", content=message, client_message_id=client_message_id)
+    db.add(user_message)
+    try:
+        db.flush()  # 先撞部分唯一索引：并发的同一条 client_message_id 在这里失败，不会先建出运行记录
+    except IntegrityError:
+        db.rollback()
+        replay = _replay_of(db, conversation.id, client_message_id) if client_message_id else None
+        if replay is None:
+            raise
+        return replay
+    # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属。
+    # 用户消息与运行记录同一次提交：并发的重复请求不会读到"有消息、还没挂上运行记录"的中间状态
     run = run_service.create_run(
         db, "chat", user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
         input_data={"message": message}, source="api_key" if api_key else "chat", api_key_id=api_key.id if api_key else None,
-        agent_version=live.version,
+        agent_version=live.version, commit=False,
     )
+    user_message.run_id = run.id
+    db.commit()
     return PreparedChat(conversation.id, run.id, live.version)
 
 
@@ -382,9 +440,11 @@ def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
     return ctx
 
 
-def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None) -> Message:
-    """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。"""
-    msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage, tool_calls=tool_calls or [])
+def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None,
+                           run_id: int | None = None) -> Message:
+    """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。run_id 是这一轮的运行记录，幂等回放据此找回首次的回答。"""
+    msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage,
+                  tool_calls=tool_calls or [], run_id=run_id)
     db.add(msg)
     db.commit()
     db.refresh(msg)
@@ -410,6 +470,6 @@ def finalize_cancelled_chat(db: Session, run_id: int, conversation_id: int, part
     if run is None or run.status in run_service.FINAL_STATUSES:
         return False
     if partial_content:
-        save_assistant_message(db, conversation_id, partial_content, citations, usage or {}, tool_calls)
+        save_assistant_message(db, conversation_id, partial_content, citations, usage or {}, tool_calls, run_id=run_id)
     run_service.finalize_run(db, run, "cancelled", output={"content": partial_content}, usage=usage or None)
     return True

@@ -32,12 +32,13 @@ def operational_only():
 
 def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, workflow_id: int = None,
                input_data: dict = None, model_id: int = None, conversation_id: int = None, *,
-               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None) -> Run:
+               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None, commit: bool = True) -> Run:
     """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务/调试）都必须走这里，
     否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version 是统计与追溯用的快照。
 
     source 必须显式传（没有默认值）：漏传会被当成界面触发，调试流量就混进运营指标。input 只放本次的业务输入，
     来源等元数据走列（2026-09-25 前写在 input.source / input.scheduled）。
+    commit=False 时只 flush（拿到 id），由调用方与同一事务里的其他写入一起提交：对话要让用户消息与运行记录原子落库（幂等回放靠这条关联）。
     """
     if source not in RUN_SOURCES:
         raise ValueError(f"运行来源只能是 {RUN_SOURCES}，收到: {source}")
@@ -48,6 +49,9 @@ def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, w
         status="running", input=input_data or {}, started_at=_now(),
     )
     db.add(run)
+    if not commit:
+        db.flush()
+        return run
     db.commit()
     db.refresh(run)
     return run

@@ -252,7 +252,8 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
             async for event in _agent_events(ctx, state, started, run_id=turn.run_id, tool_result_chars=TOOL_RESULT_PREVIEW_CHARS, trace=False):
                 yield event
             usage = state.usage()
-            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, citations, usage, state.tool_calls)
+            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, citations, usage,
+                                                    state.tool_calls, turn.run_id)
             await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
             finished = True
             logger.info("对话完成 run_id=%s 首字节 %sms 总 %dms", turn.run_id, state.first_token_ms if state.first_token_ms is not None else "-", int((time.perf_counter() - started) * 1000))
@@ -272,6 +273,20 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
             except Exception:
                 logger.exception("对话中断收尾失败 run_id=%s", turn.run_id)
         db.close()
+
+
+async def replay_chat(replay: chat_service.ReplayChat) -> AsyncIterator[dict]:
+    """幂等回放（docs/15 3.7.1）：同一会话里重复的 client_message_id 不落消息、不调模型，按首次的结果下发同样的事件形状——
+    首次完成：citations（有的话）+ 一条 delta 带回答全文 + done（首次的 message_id / run_id，replayed=true）；
+    首次失败或中断：一条 error 带首次的错误文案。首次仍在生成的在 prepare_chat 就 409 了，到不了这里。"""
+    if replay.status != "success":
+        yield {"type": "error", "message": replay.error}
+        return
+    if replay.citations:
+        yield {"type": "citations", "citations": replay.citations}
+    yield {"type": "delta", "content": replay.content}
+    yield {"type": "done", "message_id": replay.message_id, "run_id": replay.run_id, "conversation_id": replay.conversation_id,
+           "usage": replay.usage, "replayed": True}
 
 
 def _log_failure(e: Exception, run_id: int, agent_id: int) -> None:

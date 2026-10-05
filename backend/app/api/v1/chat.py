@@ -19,17 +19,22 @@ from app.config import settings
 from app.core.deps import current_api_key, get_current_user, require_roles
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import AgentIn
+from app.schemas import CALLER_ID_PATTERN, AgentIn
 from app.services import chat_runner, chat_service
 
 router = APIRouter(tags=["chat"])
 
 
 class ChatIn(BaseModel):
-    """对话请求体：message 为用户消息（1～CHAT_MESSAGE_MAX_CHARS 字符，全是空白由服务层返回 400）；conversation_id 为空表示开启新对话。"""
+    """对话请求体：message 为用户消息（1～CHAT_MESSAGE_MAX_CHARS 字符，全是空白由服务层返回 400）；conversation_id 为空表示开启新对话。
+    end_user：API Key 背后的终端用户（只对 Key 生效，登录请求带了 400），同一个 Key 下不同终端用户的会话互不可见；
+    client_message_id：幂等键，续聊时重复提交同一个不会重复落消息、重复调模型，而是回放首次的结果（docs/15 3.7.1）。
+    两者 1～64 字、只能是字母数字与 ._:@-（422）。"""
 
     message: str = Field(min_length=1, max_length=settings.CHAT_MESSAGE_MAX_CHARS)
     conversation_id: int | None = None
+    end_user: str | None = Field(None, pattern=CALLER_ID_PATTERN)
+    client_message_id: str | None = Field(None, pattern=CALLER_ID_PATTERN)
 
 
 # 调试历史由前端保存并随请求带上（docs/15 3.4）：条数与总长都要有界，否则一次请求就能塞进任意大的上下文
@@ -86,7 +91,10 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     # Key 对话的检索范围（docs/15 3.7.1）；在 prepare_chat 提交之前取，提交后 ORM 对象过期、再读会多一次查询
     kb_scope = list(api_key.kb_ids or []) if api_key else None
     # 同步的库操作放线程池，不阻塞事件循环
-    prepared = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id, api_key)
+    prepared = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id, api_key,
+                                       data.end_user, data.client_message_id)
+    if isinstance(prepared, chat_service.ReplayChat):  # 重复的 client_message_id：回放首次的结果
+        return StreamingResponse(_sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
                                 kb_scope=kb_scope)

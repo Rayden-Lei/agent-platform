@@ -228,6 +228,8 @@ class Message(Base):
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False)
     client_message_id = Column(String(64), nullable=True)
+    # 这一轮对话的运行记录（用户消息与回答都记）：带 client_message_id 重试时据此回放首次的结果（docs/15 3.7.1）
+    run_id = Column(BigInteger, ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
     tool_calls = Column(JSONB, nullable=False, default=list)
     citations = Column(JSONB, nullable=False, default=list)
     token_usage = Column(JSONB, nullable=False, default=dict)

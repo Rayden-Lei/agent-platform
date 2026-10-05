@@ -31,6 +31,11 @@ class UserOut(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+# API Key 调用方传的标识（docs/15 3.7.1）：end_user 是 Key 背后的终端用户、client_message_id 是消息幂等键。
+# 只收这些字符：它们会进库、进日志、做等值比对，不能带空白与任意文本；违反 422
+CALLER_ID_PATTERN = r"^[A-Za-z0-9._:@-]{1,64}$"
+
+
 class MeOut(UserOut):
     """GET /auth/me：当前用户 + 对外地址 public_base_url（docs/15 PB-07：分享链接、API 调用示例用；空串表示前端用当前访问的地址）。"""
     public_base_url: str = ""
