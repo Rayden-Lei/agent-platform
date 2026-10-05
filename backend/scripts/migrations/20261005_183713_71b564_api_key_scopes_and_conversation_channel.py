@@ -78,7 +78,8 @@ def main() -> None:
         keys = unscoped_keys(conn)
         print("要改为 api 通道的会话：", [c["id"] for c in convs] or "无")
         print("作用域为空的 Key：", [f"{k['id']}「{k['name']}」{k['username']}{'' if k['is_enabled'] else '（已停用）'}" for k in keys] or "无",
-              "（加 --disable-unscoped-keys 才会停用）" if keys and not disable_keys else "")
+              # 只在还有启用中的空作用域 Key 时提示；都已停用再提示会让人以为还没执行（2026-10-06 部署时看到过）
+              "（加 --disable-unscoped-keys 才会停用）" if any(k["is_enabled"] for k in keys) and not disable_keys else "")
         if not apply:
             print("以上为预览，未写库；确认后加 --apply 执行")
             return
