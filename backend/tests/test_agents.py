@@ -231,5 +231,19 @@ def test_api_key_lists_available_agents(client, auth_headers, model_id, agents_c
         client.delete(f"/api/v1/api-keys/{key['id']}", headers=auth_headers)
 
 
+def test_single_available_agent_follows_the_live_version(client, auth_headers, caller_headers, model_id, agents_cleanup):
+    """GET /agents/available/{id}：深链与可对话智能体超过一页时用它定位当前智能体（docs/15 AG-05）。"""
+    prefix = _published_and_draft(client, auth_headers, agents_cleanup, model_id)
+    pub_id, draft_id = agents_cleanup[0], agents_cleanup[1]
+    one = client.get(f"/api/v1/agents/available/{pub_id}", headers=caller_headers)
+    assert one.status_code == 200 and one.json()["name"] == f"{prefix}-pub" and set(one.json()) == {"id", "name", "description", "published_at"}
+    draft = client.get(f"/api/v1/agents/available/{draft_id}", headers=caller_headers)
+    assert draft.status_code == 403 and draft.json()["detail"] == "智能体未发布"
+    assert client.get("/api/v1/agents/available/999999999", headers=caller_headers).status_code == 404
+    assert client.post(f"/api/v1/agents/{pub_id}/offline", headers=auth_headers).status_code == 200
+    offline = client.get(f"/api/v1/agents/available/{pub_id}", headers=caller_headers)
+    assert offline.status_code == 403 and offline.json()["detail"] == "智能体已下线"
+
+
 def test_available_agents_requires_login(client):
     assert client.get("/api/v1/agents/available").status_code == 401

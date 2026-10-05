@@ -3,7 +3,7 @@ import { Button, Col, Row, Space, Typography } from 'antd'
 import { MessageOutlined, PartitionOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth'
-import { getDailyRunStats, getModelUsage, getStatsOverview } from '../api'
+import { getDailyRunStats, getModelUsage, getStatsOverview, listAvailableAgents, listConversations, OPTIONS_PAGE } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
 import ErrorState from '../components/common/ErrorState'
 import KpiCards from '../components/dashboard/KpiCards'
@@ -12,6 +12,7 @@ import ConsumptionSection from '../components/dashboard/ConsumptionSection'
 import TodoPanel from '../components/dashboard/TodoPanel'
 import RecentRuns from '../components/dashboard/RecentRuns'
 import ResourceSummary from '../components/dashboard/ResourceSummary'
+import CallerHome from '../components/dashboard/CallerHome'
 
 // 工作台：横幅与快捷入口 → 今日指标（环比）→ 运行趋势与状态分布 → 待处理与最近运行 → 模型消耗 → 资源概览。
 // 整页可滚是 docs/07 第 1 节的唯一例外；数据来自 /stats/overview、/stats/runs/daily、/stats/models。
@@ -19,13 +20,16 @@ export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [days, setDays] = useState(7)
-  const overview = useAsyncData(() => getStatsOverview(), [], { errorText: '加载工作台概览失败' })
-  const daily = useAsyncData(() => getDailyRunStats({ days }), [days], { errorText: '加载运行趋势失败' })
-  const models = useAsyncData(() => getModelUsage({ days }), [days], { errorText: '加载模型用量失败' })
   const isManager = user?.role === 'admin' || user?.role === 'developer'
+  // 运营统计只对 admin / developer 开放；调用者不请求（此前照样发 3 个 /stats 请求拿 403），改看可对话的智能体与最近会话
+  const overview = useAsyncData(() => getStatsOverview(), [], { auto: isManager, errorText: '加载工作台概览失败' })
+  const daily = useAsyncData(() => getDailyRunStats({ days }), [days], { auto: isManager, errorText: '加载运行趋势失败' })
+  const models = useAsyncData(() => getModelUsage({ days }), [days], { auto: isManager, errorText: '加载模型用量失败' })
+  const callerAgents = useAsyncData(() => listAvailableAgents(OPTIONS_PAGE), [], { auto: !isManager, errorText: '加载智能体失败' })
+  const recent = useAsyncData(() => listConversations({ page: 1, page_size: 5 }), [], { auto: !isManager, errorText: '加载最近会话失败' })
 
   const quickActions = [
-    { label: '创建智能体', icon: <PlusOutlined />, path: '/agents' },
+    { label: '创建智能体', icon: <PlusOutlined />, path: '/agents/new' },
     { label: '新建工作流', icon: <PartitionOutlined />, path: '/workflows/new' },
     { label: '上传文档', icon: <UploadOutlined />, path: '/knowledge-bases' },
     { label: '开始对话', icon: <MessageOutlined />, path: '/chat' },
@@ -47,7 +51,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {!isManager ? null : overview.error ? (
+      {!isManager ? (
+        <CallerHome agents={callerAgents.data?.items ?? null} agentsTotal={callerAgents.data?.total} conversations={recent.data?.items ?? null}
+          agentsError={callerAgents.error} conversationsError={recent.error} onRetry={() => { callerAgents.reload(); recent.reload() }}
+          onOpenAgent={(a) => navigate(`/chat?agent=${a.id}`)}
+          onOpenConversation={(c) => navigate(`/chat?${c.agent_id ? `agent=${c.agent_id}&` : ''}conversation=${c.id}`)} />
+      ) : overview.error ? (
         <ErrorState message={overview.error} onRetry={() => overview.reload()} />
       ) : (
         <>

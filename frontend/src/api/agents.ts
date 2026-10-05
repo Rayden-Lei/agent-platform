@@ -87,6 +87,8 @@ export interface AgentVersionRow {
 
 export const listAgents = (params?: PageQuery) => get<Page<AgentRow>>('/agents', params)
 export const listAvailableAgents = (params?: PageQuery) => get<Page<AgentBrief>>('/agents/available', params)
+// 单个可对话智能体：未发布或已下线 403、不存在 404；深链与超过一页时定位当前智能体
+export const getAvailableAgent = (id: number) => get<AgentBrief>(`/agents/available/${id}`)
 export const getAgent = (id: number) => get<AgentDetail>(`/agents/${id}`)
 export const createAgent = (data: AgentInput) => post<AgentRow>('/agents', data)
 export const updateAgent = (id: number, data: AgentUpdateInput) => put<AgentRow>(`/agents/${id}`, data)

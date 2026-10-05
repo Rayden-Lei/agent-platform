@@ -8,7 +8,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
 from app.db.models import Agent, AgentVersion, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
-from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, snapshot_of
+from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
 from app.services import run_service
 
@@ -149,6 +149,12 @@ def list_available_agents(db: Session, params: PageParams, q: str = None) -> dic
     return paginate(query.order_by(Agent.id.asc()), params, lambda r: {
         "id": r.id, "name": (r.snapshot or {}).get("name"), "description": (r.snapshot or {}).get("description"), "published_at": r.published_at,
     })
+
+
+def get_available_agent(db: Session, agent_id: int) -> dict:
+    """单个可对话智能体（与列表同一口径）：名称与描述取线上快照；不存在 404、未发布 403「智能体未发布」、已下线 403「智能体已下线」。"""
+    live = resolve_live_config(db, agent_id)
+    return {"id": agent_id, "name": live.name, "description": live.description, "published_at": db.get(Agent, agent_id).published_at}
 
 
 def _check_ids(db: Session, model_cls, ids: list, label: str) -> None:

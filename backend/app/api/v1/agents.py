@@ -69,6 +69,13 @@ def list_available_agents(
     return agent_service.list_available_agents(db, params, q)
 
 
+@router.get("/available/{agent_id}", response_model=AgentBriefOut)
+def get_available_agent(agent_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """单个可对话智能体的对外资料（任何登录身份含 API Key）：不存在 404、未发布或已下线 403。
+    深链进对话页、可对话智能体超过一页时用它定位当前智能体（docs/15 AG-05）。"""
+    return agent_service.get_available_agent(db, agent_id)
+
+
 @router.get("/{agent_id}", response_model=AgentDetailOut)
 def get_agent(agent_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """智能体详情（草稿）：基础字段 + 线上版本信息 + 关联的模型 / 工具 / 知识库 / 工作流 / 模板对象与悬空引用清单。"""

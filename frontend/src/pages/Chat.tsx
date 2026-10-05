@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Grid, Select, Typography, message } from 'antd'
 import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
-import { chatAgentStream, deleteConversation, getConversation, listAvailableAgents, listConversations, listMessages, OPTIONS_PAGE, type AgentBrief, type ChatTransport, type ConversationRow } from '../api'
+import { chatAgentStream, deleteConversation, getConversation, listConversations, listMessages, type ChatTransport, type ConversationRow } from '../api'
 import { visibleNavItems } from '../constants/nav'
+import { useAvailableAgents } from '../hooks/useAvailableAgents'
 import { useQueryState } from '../hooks/useQueryState'
 import { useAuth } from '../store/auth'
 import ChatPanel from '../components/chat/ChatPanel'
@@ -23,7 +24,7 @@ export default function Chat() {
   const [query, setQuery] = useQueryState<{ agent?: string; conversation?: string }>({ agent: undefined, conversation: undefined })
   const agentId = query.agent ? Number(query.agent) : undefined
   const conversationId = query.conversation ? Number(query.conversation) : null
-  const [agents, setAgents] = useState<AgentBrief[]>([])
+  const { agents, loaded: agentsLoaded, remote: remoteSearch, onSearch } = useAvailableAgents(agentId)
   const role = useAuth((s) => s.user?.role)
   const canManageAgents = visibleNavItems(role).some((item) => item.key === '/agents')
   // docs/15 D-19：admin / developer 全部可见；调用者不看运行记录链接（无权访问）与工具入参和结果（可能含内部地址）
@@ -39,25 +40,23 @@ export default function Chat() {
   // 可对话列表只含已发布的智能体，所有角色都能取（管理用的 /agents 列表 caller 无权访问）。
   // URL 没带智能体时：带了会话就按会话定智能体（落到第一个的话接着发送会被 404 拒绝），都没带默认第一个
   useEffect(() => {
-    listAvailableAgents(OPTIONS_PAGE)
-      .then(async (p) => {
-        setAgents(p.items)
-        if (agentId) return
-        const patch: { agent?: string; conversation?: string } = { agent: p.items[0] ? String(p.items[0].id) : undefined }
-        if (conversationId) {
-          try {
-            const conv = await getConversation(conversationId)
-            if (conv.agent_id) patch.agent = String(conv.agent_id)
-          } catch (e) {
-            message.error(errorText(e, '会话不存在或已删除'))
-            patch.conversation = undefined
-          }
+    if (!agentsLoaded || agentId) return
+    const pick = async () => {
+      const patch: { agent?: string; conversation?: string } = { agent: agents[0] ? String(agents[0].id) : undefined }
+      if (conversationId) {
+        try {
+          const conv = await getConversation(conversationId)
+          if (conv.agent_id) patch.agent = String(conv.agent_id)
+        } catch (e) {
+          message.error(errorText(e, '会话不存在或已删除'))
+          patch.conversation = undefined
         }
-        setQuery(patch)
-      })
-      .catch((e) => message.error(errorText(e, '加载智能体失败')))
+      }
+      setQuery(patch)
+    }
+    pick()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [agentsLoaded])
 
   const loadConversations = useCallback(async (page = 1) => {
     if (!agentId) return
@@ -94,7 +93,8 @@ export default function Chat() {
 
   const agentSelector = (
     <Select
-      placeholder="选择已发布的智能体" style={{ width: '100%' }} value={agentId} showSearch optionFilterProp="label"
+      placeholder="选择已发布的智能体" style={{ width: '100%' }} value={agentId} showSearch
+      {...(remoteSearch ? { filterOption: false, onSearch } : { optionFilterProp: 'label' })}
       onChange={(v) => { setQuery({ agent: String(v), conversation: undefined }); setMessages([]) }}
       options={agents.map((a) => ({ value: a.id, label: a.name }))}
       notFoundContent={<Typography.Text type="secondary">{canManageAgents ? '没有已发布的智能体，先去智能体页发布一个' : '还没有可用的智能体，请联系管理员发布'}</Typography.Text>}
