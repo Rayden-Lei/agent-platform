@@ -31,6 +31,8 @@ export interface SystemStatus {
   // 只列非 closed 的模型熔断器；open 的同时会出现在 degraded
   model_breakers: ModelBreakerStatus[]
   scheduler: SchedulerStatus
+  // 来源 IP 自检（docs/15 PB-07）：开了 TRUSTED_PROXY_ENABLED 却没收到合法 X-Real-IP 时 ok=false，同时出现在 degraded；resolved 是本次请求解析出的来源
+  client_ip: { trusted_proxy: boolean; real_ip_header: boolean; resolved: string | null; ok: boolean }
   degraded: DegradedItem[]
 }
 export const getSystemStatus = () => get<SystemStatus>('/system/status')

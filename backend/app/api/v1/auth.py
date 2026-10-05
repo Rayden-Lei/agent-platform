@@ -3,10 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.deps import anonymous_rate_limit, get_current_user, is_api_key_request
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas import ChangePasswordIn, LoginIn, TokenOut, UserOut
+from app.schemas import ChangePasswordIn, LoginIn, MeOut, TokenOut, UserOut
 from app.services import auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -18,10 +19,10 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     return auth_service.login(db, data.username, data.password)
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=MeOut)
 def me(user: User = Depends(get_current_user)):
-    """查询当前登录用户信息。需携带有效 Token（JWT 或 API Key）。必须改密的账号也能调（core/deps 放行）。"""
-    return UserOut.model_validate(user)
+    """查询当前登录用户信息与对外地址 public_base_url（docs/15 PB-07）。需携带有效 Token（JWT 或 API Key）。必须改密的账号也能调（core/deps 放行）。"""
+    return MeOut(**UserOut.model_validate(user).model_dump(), public_base_url=settings.PUBLIC_BASE_URL)
 
 
 @router.put("/me/password", response_model=TokenOut)

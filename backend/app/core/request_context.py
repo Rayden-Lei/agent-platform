@@ -73,6 +73,12 @@ def _valid_ip(value: str | None) -> str | None:
     return value
 
 
+def has_valid_real_ip(headers) -> bool:
+    """请求是否带了合法的 X-Real-IP。/system/status 的自检用（docs/15 PB-07）：TRUSTED_PROXY_ENABLED 打开说明后端在代理后面，
+    每个经代理的请求都该带这个头；没有时 resolve_client_ip 会改取 X-Forwarded-For 首项，那是客户端能伪造的。"""
+    return _valid_ip(headers.get(CLIENT_IP_HEADER_REAL)) is not None
+
+
 def resolve_client_ip(scope) -> str | None:
     """从 ASGI scope 解析客户端 IP。
 

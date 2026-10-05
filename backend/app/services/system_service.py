@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core import rate_limiter
+from app.core.request_context import get_client_ip
 from app.db.models import ScheduledJob
 from app.model_gateway import breaker
 from app.rag.embeddings import MODE_MODEL, embedding_status
@@ -44,16 +45,28 @@ def _scheduler_status(db: Session) -> dict:
         return {"running": False, "registered_jobs": 0, "enabled_jobs": enabled, "reason": str(e)[:200]}
 
 
-def get_system_status(db: Session) -> dict:
-    """汇总运行状态。degraded 非空即代表当前有能力在降级运行，前端据此提示。"""
+def _client_ip_status(real_ip_header: bool) -> dict:
+    """来源 IP 是否可信（docs/15 PB-07）：开了 TRUSTED_PROXY_ENABLED 却没收到合法的 X-Real-IP，说明代理没有覆写来源，
+    后端会退到 X-Forwarded-For 首项（客户端能伪造），按 IP 的限流、登录尝试次数与 Key 来源白名单都可能被绕过。
+    开关没开时不判定：本机开发经代理访问时来源恒为回环地址，属预期；开关是否该开由上线步骤把关（分享开放前提）。"""
+    return {"trusted_proxy": settings.TRUSTED_PROXY_ENABLED, "real_ip_header": real_ip_header, "resolved": get_client_ip(),
+            "ok": not settings.TRUSTED_PROXY_ENABLED or real_ip_header}
+
+
+def get_system_status(db: Session, real_ip_header: bool = False) -> dict:
+    """汇总运行状态。degraded 非空即代表当前有能力在降级运行，前端据此提示。
+    real_ip_header：本次请求是否带了合法的 X-Real-IP（路由层判定），用于来源 IP 自检。"""
     database = _database_status(db)
     embedding = embedding_status()
     login_guard = auth_service.login_guard_status()
     rate_limit = rate_limiter.status()
     model_breakers = breaker.status()
     scheduler = _scheduler_status(db)
+    client_ip = _client_ip_status(real_ip_header)
 
     degraded = []
+    if not client_ip["ok"]:
+        degraded.append({"item": "client_ip", "message": "代理没有覆写 X-Real-IP，来源 IP 不可信：按 IP 的限流与 API Key 来源白名单可能被伪造绕过"})
     if embedding["mode"] != MODE_MODEL:
         degraded.append({"item": "embedding", "message": embedding["reason"]})
     rerank = rerank_status()
@@ -85,5 +98,6 @@ def get_system_status(db: Session) -> dict:
         "rate_limit": rate_limit,
         "model_breakers": model_breakers,
         "scheduler": scheduler,
+        "client_ip": client_ip,
         "degraded": degraded,
     }

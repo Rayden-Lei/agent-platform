@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # 只有后端确实在反向代理之后才能打开：打开后会信任 X-Real-IP / X-Forwarded-For，
     # 能直连后端的调用方就可以伪造来源 IP 绕过黑白名单
     TRUSTED_PROXY_ENABLED: bool = False
+    # 对外地址（docs/15 PB-07）：分享链接、API 调用示例里给外部用的地址，如 https://agent.example.com。
+    # 经 GET /auth/me 下发；留空时前端用浏览器当前访问的地址（经内网 IP 访问时生成的链接外部打不开，上线须配置）
+    PUBLIC_BASE_URL: str = ""
     # 入口限流（FR-025）：按自然分钟固定窗口计数；总开关关闭或 Redis 不可用时放行并报降级。
     # 三个维度：API Key（单 Key 可覆盖）、登录用户、匿名 IP（仅登录接口）
     RATE_LIMIT_ENABLED: bool = True
@@ -106,6 +109,18 @@ class Settings(BaseSettings):
             parts = urlsplit(item)
             if parts.scheme not in ("http", "https") or not parts.netloc or parts.path or parts.query or parts.fragment:
                 raise ValueError(f"CORS_ORIGINS 含非法源 {item!r}，应形如 http://host:port")
+        return value
+
+    @field_validator("PUBLIC_BASE_URL")
+    @classmethod
+    def _check_public_base_url(cls, value: str) -> str:
+        """空，或形如 https://host[:port][/前缀] 的地址；去掉末尾斜杠，前端直接拼 /s/xxx。配错启动即报错，不留到外部打不开链接才发现。"""
+        value = value.strip().rstrip("/")
+        if not value:
+            return ""
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+            raise ValueError(f"PUBLIC_BASE_URL 不是合法地址 {value!r}，应形如 https://agent.example.com")
         return value
 
     @field_validator("IP_DENYLIST")

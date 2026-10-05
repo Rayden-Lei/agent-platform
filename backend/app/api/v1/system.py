@@ -1,10 +1,11 @@
 """系统管理路由：运行状态查询、运行时可调参数。本模块仅允许 admin / developer 角色访问，改参数仅 admin。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, StrictFloat, StrictInt
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_roles
+from app.core.request_context import has_valid_real_ip
 from app.db.models import User
 from app.db.session import get_db
 from app.services import settings_service, system_service
@@ -23,9 +24,10 @@ class SystemSettingsIn(BaseModel):
 
 
 @router.get("/status")
-def system_status(db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """运行状态与降级项。含依赖可用性，属运维信息，不对 caller 与 API Key 开放。"""
-    return system_service.get_system_status(db)
+def system_status(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """运行状态与降级项。含依赖可用性，属运维信息，不对 caller 与 API Key 开放。
+    本次请求是否带合法的 X-Real-IP 在这里判定后传给服务层，用于"代理有没有覆写来源"的自检（docs/15 PB-07）。"""
+    return system_service.get_system_status(db, real_ip_header=has_valid_real_ip(request.headers))
 
 
 @router.get("/settings")

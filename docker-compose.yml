@@ -45,6 +45,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:18056}
       IP_DENYLIST: ${IP_DENYLIST:-}
       TRUSTED_PROXY_ENABLED: ${TRUSTED_PROXY_ENABLED:-false}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_API_KEY_PER_MINUTE: ${RATE_LIMIT_API_KEY_PER_MINUTE:-60}
       RATE_LIMIT_USER_PER_MINUTE: ${RATE_LIMIT_USER_PER_MINUTE:-300}
@@ -63,6 +64,9 @@ services:
   web:
     build: ./frontend
     container_name: agent-web
+    environment:
+      # nginx 模板渲染时替换（frontend/nginx.conf）；必须有定义，空值即只许同源嵌入
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
     ports:
       - "18056:80"
     depends_on:

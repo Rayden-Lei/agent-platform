@@ -31,6 +31,11 @@ class UserOut(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class MeOut(UserOut):
+    """GET /auth/me：当前用户 + 对外地址 public_base_url（docs/15 PB-07：分享链接、API 调用示例用；空串表示前端用当前访问的地址）。"""
+    public_base_url: str = ""
+
+
 class TokenOut(BaseModel):
     token: str
     user: UserOut
