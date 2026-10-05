@@ -43,16 +43,26 @@ export interface ApiKeyRow {
   is_enabled: boolean
   allowed_ips: string[]          // 来源白名单（IP 或 CIDR），空 = 不限制
   rate_limit_per_minute: number  // 每分钟限速，0 = 用服务端全局默认
+  // 资源作用域（docs/15 3.7.1）：只能调这些智能体与工作流，检索除公开库外只放行这些库；三者都空的是迁移前建的、调不了任何资源
+  agent_ids: number[]
+  workflow_ids: number[]
+  kb_ids: number[]
+  scope: { agents: ApiKeyScopeItem[]; workflows: ApiKeyScopeItem[]; knowledge_bases: ApiKeyScopeItem[] }
   user_id: number
   username: string | null        // 创建人，admin 视角区分归属
   last_used_at: string | null
   created_at: string | null
 }
+// 作用域里的资源；name 为 null 表示资源已删除
+export interface ApiKeyScopeItem { id: number; name: string | null }
 export interface ApiKeyInput {
   name: string
   quota: number
   allowed_ips: string[]
   rate_limit_per_minute: number
+  agent_ids: number[]   // 三类作用域至少一个非空（服务端 400）
+  workflow_ids: number[]
+  kb_ids: number[]
 }
 export const listApiKeys = (params?: PageQuery) => get<Page<ApiKeyRow>>('/api-keys', params)
 // API Key 创建时服务端会返回一次明文 key，之后不再可查（见 ApiKeys 页）

@@ -8,6 +8,7 @@ import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
 import { useOpenParam } from '../hooks/useOpenParam'
 import { useAsyncData } from '../hooks/useAsyncData'
+import { useApiKeyScopeOptions } from '../hooks/useApiKeyScopeOptions'
 import ListPage from '../components/layout/ListPage'
 import PageHeader from '../components/layout/PageHeader'
 import FilterBar from '../components/layout/FilterBar'
@@ -35,6 +36,7 @@ export default function ApiKeys() {
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [current, setCurrent] = useState<ApiKeyRow | null>(null)
   const owners = useAsyncData(() => (isAdmin ? listUsers(OPTIONS_PAGE) : Promise.resolve({ items: [] as { id: number; username: string }[] })), [isAdmin])
+  const scopeOptions = useApiKeyScopeOptions(formOpen) // 授权范围的下拉，表单打开时才取
   const list = usePagedList<ApiKeyRow>(listApiKeys, { filters, selectable: true, emptyText: <EmptyState description="还没有 API Key。生成后外部系统可用它调用对话与工作流接口。" action={{ label: '生成 Key', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => { const row = list.items.find((k) => k.id === id); if (row) setCurrent(row); else message.warning('该 Key 不在当前列表里') })
@@ -61,7 +63,7 @@ export default function ApiKeys() {
       ]} />}
     >
       <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      <ApiKeyForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} onCreated={setCreatedKey} />
+      <ApiKeyForm open={formOpen} editing={editing} scopeOptions={scopeOptions} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} onCreated={setCreatedKey} />
       <CreatedKeyModal value={createdKey} onClose={() => setCreatedKey(null)} />
       <ApiKeyDrawer apiKey={current} onClose={() => setCurrent(null)} onEdit={onEdit} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((k) => k.id === id)?.name} />

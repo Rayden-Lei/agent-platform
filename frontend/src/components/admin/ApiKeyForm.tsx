@@ -1,24 +1,33 @@
 import { useEffect, useState } from 'react'
-import { Form, Input, InputNumber, Modal, message } from 'antd'
+import { Divider, Form, Input, InputNumber, Modal, message } from 'antd'
 import { createApiKey, updateApiKey, type ApiKeyInput, type ApiKeyRow } from '../../api'
+import type { ScopeOptions } from '../../hooks/useApiKeyScopeOptions'
+import ApiKeyScopeFields from './ApiKeyScopeFields'
 import { errorText } from '../../utils/errors'
 
-// API Key 生成 / 编辑弹窗：白名单用多行文本承载（一行一条），提交前拆成数组；CIDR 与范围合法性由服务端 422 兜底。
-interface Props { open: boolean; editing: ApiKeyRow | null; onClose: () => void; onSaved: () => void; onCreated: (key: string) => void }
-interface FormValues { name: string; quota: number; allowed_ips_text?: string; rate_limit_per_minute: number }
+// API Key 生成 / 编辑弹窗：授权范围（至少一项，docs/15 3.7.1）+ 配额、来源白名单、限速。
+// 白名单用多行文本承载（一行一条），提交前拆成数组；CIDR、范围与作用域的合法性由服务端兜底（422 / 400）。作用域下拉由页面取好传入。
+interface Props { open: boolean; editing: ApiKeyRow | null; scopeOptions: ScopeOptions; onClose: () => void; onSaved: () => void; onCreated: (key: string) => void }
+interface FormValues { name: string; quota: number; allowed_ips_text?: string; rate_limit_per_minute: number; agent_ids?: number[]; workflow_ids?: number[]; kb_ids?: number[] }
 const splitIps = (text?: string): string[] => (text ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 
-export default function ApiKeyForm({ open, editing, onClose, onSaved, onCreated }: Props) {
+export default function ApiKeyForm({ open, editing, scopeOptions, onClose, onSaved, onCreated }: Props) {
   const [form] = Form.useForm<FormValues>()
   const [submitting, setSubmitting] = useState(false)
   useEffect(() => {
     if (!open) return
     form.resetFields()
-    if (editing) form.setFieldsValue({ name: editing.name, quota: editing.quota, allowed_ips_text: editing.allowed_ips.join('\n'), rate_limit_per_minute: editing.rate_limit_per_minute })
+    if (editing) form.setFieldsValue({
+      name: editing.name, quota: editing.quota, allowed_ips_text: editing.allowed_ips.join('\n'), rate_limit_per_minute: editing.rate_limit_per_minute,
+      agent_ids: editing.agent_ids, workflow_ids: editing.workflow_ids, kb_ids: editing.kb_ids,
+    })
   }, [open, editing, form])
 
   const onSubmit = async (values: FormValues) => {
-    const payload: ApiKeyInput = { name: values.name, quota: values.quota ?? 1000, allowed_ips: splitIps(values.allowed_ips_text), rate_limit_per_minute: values.rate_limit_per_minute ?? 0 }
+    const payload: ApiKeyInput = {
+      name: values.name, quota: values.quota ?? 1000, allowed_ips: splitIps(values.allowed_ips_text), rate_limit_per_minute: values.rate_limit_per_minute ?? 0,
+      agent_ids: values.agent_ids ?? [], workflow_ids: values.workflow_ids ?? [], kb_ids: values.kb_ids ?? [],
+    }
     setSubmitting(true)
     try {
       if (editing) { await updateApiKey(editing.id, payload); message.success('已保存') } else { const res = await createApiKey(payload); onCreated(res.key) }
@@ -28,9 +37,13 @@ export default function ApiKeyForm({ open, editing, onClose, onSaved, onCreated 
   }
 
   return (
-    <Modal title={editing ? `编辑 API Key：${editing.name}` : '生成 API Key'} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={submitting} destroyOnHidden>
+    <Modal title={editing ? `编辑 API Key：${editing.name}` : '生成 API Key'} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={submitting} destroyOnHidden
+      width={600} styles={{ body: { maxHeight: '65vh', overflow: 'auto' } }}>
       <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ quota: 1000, rate_limit_per_minute: 0 }}>
         <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 64 }]}><Input placeholder="如：生产环境调用" /></Form.Item>
+        <Divider orientation="left" plain style={{ margin: '4px 0 12px' }}>授权范围（只能调用这里的资源）</Divider>
+        <ApiKeyScopeFields form={form} options={scopeOptions} editing={editing} />
+        <Divider orientation="left" plain style={{ margin: '4px 0 12px' }}>配额与来源</Divider>
         <Form.Item name="quota" label="配额（调用次数）" rules={[{ required: true }]} extra="每次成功进入业务接口的请求消耗 1 次；用完后 403，编辑配额可续">
           <InputNumber min={0} style={{ width: '100%' }} />
         </Form.Item>

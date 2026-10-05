@@ -1,18 +1,34 @@
-import { Button, Descriptions, Drawer, Space, Tag, Typography } from 'antd'
+import { Alert, Button, Descriptions, Drawer, Space, Tag, Typography } from 'antd'
 import { Link } from 'react-router-dom'
-import type { ApiKeyRow } from '../../api'
+import type { ApiKeyRow, ApiKeyScopeItem } from '../../api'
+import type { ResourceType } from '../../constants/resources'
+import ResourceLink from '../common/ResourceLink'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import { QuotaCell } from './apiKeyColumns'
 
-// API Key 详情抽屉：配额与用量、来源白名单全文、限速、归属与时间；密钥本身不可再查看。
+// API Key 详情抽屉：授权范围、配额与用量、来源白名单全文、限速、归属与时间；密钥本身不可再查看。
 interface Props { apiKey: ApiKeyRow | null; onClose: () => void; onEdit: (k: ApiKeyRow) => void }
+
+// 授权的资源逐个给跳转链接；已删除的资源没有详情可跳，标"已删除"
+function ScopeList({ type, items }: { type: ResourceType; items: ApiKeyScopeItem[] }) {
+  if (!items.length) return <Typography.Text type="secondary">无</Typography.Text>
+  return <Space size={[8, 4]} wrap>{items.map((x) => (x.name === null ? <Tag key={x.id}>已删除 #{x.id}</Tag> : <ResourceLink key={x.id} type={type} id={x.id} name={x.name} showIcon />))}</Space>
+}
 
 export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit }: Props) {
   return (
     <Drawer title={k ? `API Key：${k.name}` : ''} open={!!k} onClose={onClose} width={640} destroyOnHidden extra={k && <Button type="primary" onClick={() => onEdit(k)}>编辑</Button>}>
       {k && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {!k.agent_ids.length && !k.workflow_ids.length && !k.kb_ids.length && (
+            <Alert type="warning" showIcon message="这个 Key 没有授权任何资源，调用一律被拒" description="它是作用域上线（2026-10-05）之前建的；点右上角“编辑”授权要调用的智能体或工作流后即可使用。" />
+          )}
+          <Descriptions size="small" bordered column={1} title="授权范围" items={[
+            { key: 'agents', label: '可调用的智能体', children: <ScopeList type="agent" items={k.scope.agents} /> },
+            { key: 'workflows', label: '可运行的工作流', children: <ScopeList type="workflow" items={k.scope.workflows} /> },
+            { key: 'kbs', label: '检索放行的知识库', children: <ScopeList type="kb" items={k.scope.knowledge_bases} /> },
+          ]} />
           <Descriptions size="small" bordered column={2} items={[
             { key: 'prefix', label: 'Key 前缀', children: <span style={{ fontFamily: 'monospace' }}>{k.key_prefix}…</span> },
             { key: 'status', label: '状态', children: <StatusTag domain="enabled" value={k.is_enabled} /> },
