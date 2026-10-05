@@ -139,14 +139,18 @@ def _get_owned(db: Session, key_id: int, user: User) -> ApiKey:
 
 
 def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is_enabled: bool = None,
-                  owner_id: int = None, sort: SortParams = None) -> dict:
+                  owner_id: int = None, sort: SortParams = None, agent_id: int = None, workflow_id: int = None, kb_id: int = None) -> dict:
     """分页列出 Key 元信息：admin 看全部（可按创建人过滤），developer 只看本人创建的；名称模糊、启用状态过滤，白名单排序。
+    agent_id / workflow_id / kb_id 只取作用域含该资源的 Key（智能体"发布渠道"的密钥区用，docs/15 3.7.2）。
     创建人用户名一次 IN 查询装配。"""
     query = db.query(ApiKey)
     if user.role != "admin":
         query = query.filter(ApiKey.user_id == user.id)
     elif owner_id:
         query = query.filter(ApiKey.user_id == owner_id)
+    for column, resource_id in ((ApiKey.agent_ids, agent_id), (ApiKey.workflow_ids, workflow_id), (ApiKey.kb_ids, kb_id)):
+        if resource_id is not None:
+            query = query.filter(column.contains([resource_id]))
     if q:
         query = query.filter(ApiKey.name.ilike(f"%{q}%"))
     if is_enabled is not None:

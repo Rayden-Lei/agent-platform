@@ -2,8 +2,14 @@ import { useState } from 'react'
 import { Button, Popconfirm, Space, Tag, message } from 'antd'
 import { DeleteOutlined, EditOutlined, MessageOutlined, RocketOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
-import { deleteAgent, getAgent, offlineAgent, publishAgent } from '../api'
+import { deleteAgent, getAgent, listApiKeys, offlineAgent, publishAgent } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
+import { usePublicBaseUrl } from '../hooks/usePublicBaseUrl'
+import { useApiKeyScopeOptions } from '../hooks/useApiKeyScopeOptions'
+import ApiAccessPanel from '../components/publish/ApiAccessPanel'
+import AgentKeysCard from '../components/publish/AgentKeysCard'
+import ApiKeyForm from '../components/admin/ApiKeyForm'
+import CreatedKeyModal from '../components/admin/CreatedKeyModal'
 import DetailPage from '../components/layout/DetailPage'
 import StatusTag from '../components/common/StatusTag'
 import ResourceLink from '../components/common/ResourceLink'
@@ -16,13 +22,19 @@ import RunsTable from '../components/runs/RunsTable'
 import { errorText } from '../utils/errors'
 import { formatDateTime } from '../utils/time'
 
-// 智能体详情页：概览（关联可跳转）/ 运行统计 / 运行记录 / 会话 / 版本历史；头部可对话、编辑（进装配页）、发布（弹窗）、下线、删除。
+// 智能体详情页：概览（关联可跳转）/ 发布渠道（API 调用与密钥）/ 运行统计 / 运行记录 / 会话 / 版本历史；
+// 头部可对话、编辑（进装配页）、发布（弹窗）、下线、删除。发布渠道的取数（对外地址、作用域含本智能体的 Key）在本页面。
 export default function AgentDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const agentId = Number(id)
   const { data: agent, loading, error, reload } = useAsyncData(() => getAgent(agentId), [agentId], { errorText: '加载智能体失败' })
   const [publishOpen, setPublishOpen] = useState(false)
+  const { baseUrl, configured: baseUrlConfigured } = usePublicBaseUrl()
+  const keys = useAsyncData(() => listApiKeys({ agent_id: agentId, page: 1, page_size: 50 }), [agentId], { errorText: '加载密钥失败' })
+  const [keyFormOpen, setKeyFormOpen] = useState(false)
+  const [createdKey, setCreatedKey] = useState<string | null>(null)
+  const scopeOptions = useApiKeyScopeOptions(keyFormOpen)
 
   const publish = async (note?: string) => {
     try {
@@ -73,6 +85,14 @@ export default function AgentDetail() {
         )}
         tabs={agent ? [
           { key: 'overview', label: '概览', children: <AgentOverview agent={agent} /> },
+          {
+            key: 'channels', label: '发布渠道', children: (
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <ApiAccessPanel agent={agent} baseUrl={baseUrl} baseUrlConfigured={baseUrlConfigured} />
+                <AgentKeysCard keys={keys.data?.items ?? null} total={keys.data?.total} error={keys.error} onRetry={() => keys.reload()} onCreate={() => setKeyFormOpen(true)} />
+              </Space>
+            ),
+          },
           { key: 'stats', label: '运行统计', children: <AgentStatsTab agentId={agent.id} /> },
           { key: 'runs', label: '运行记录', children: <RunsTable filters={{ agent_id: agent.id }} /> },
           { key: 'conversations', label: '我的会话', children: <AgentConversationsTab agentId={agent.id} /> },
@@ -80,6 +100,9 @@ export default function AgentDetail() {
         ] : []}
       />
       <PublishModal agent={publishOpen ? agent : null} onClose={() => setPublishOpen(false)} onPublish={publish} />
+      <ApiKeyForm open={keyFormOpen} editing={null} scopeOptions={scopeOptions} initialScope={{ agent_ids: [agentId] }}
+        onClose={() => setKeyFormOpen(false)} onSaved={() => keys.reload(true)} onCreated={setCreatedKey} />
+      <CreatedKeyModal value={createdKey} onClose={() => setCreatedKey(null)} />
     </>
   )
 }

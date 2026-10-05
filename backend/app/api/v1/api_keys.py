@@ -108,11 +108,15 @@ def list_api_keys(
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
     is_enabled: bool | None = Query(None),
     user_id: int | None = Query(None, description="按创建人过滤，仅 admin 生效"),
+    agent_id: int | None = Query(None, description="只取作用域含该智能体的"),
+    workflow_id: int | None = Query(None, description="只取作用域含该工作流的"),
+    kb_id: int | None = Query(None, description="只取作用域含该知识库的"),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
 ):
-    """API Key 列表（分页），可按名称、启用状态、创建人过滤；sort 可选 id / name / used / last_used_at / created_at。developer 只看到本人创建的。"""
-    return api_key_service.list_api_keys(db, params, user, q, is_enabled, user_id, sort)
+    """API Key 列表（分页），可按名称、启用状态、创建人、作用域里的资源过滤；sort 可选 id / name / used / last_used_at / created_at。
+    developer 只看到本人创建的。"""
+    return api_key_service.list_api_keys(db, params, user, q, is_enabled, user_id, sort, agent_id, workflow_id, kb_id)
 
 
 @router.post("")

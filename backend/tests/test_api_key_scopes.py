@@ -158,6 +158,18 @@ def test_updating_scope_to_empty_is_rejected_and_keeps_old_scope(client, auth_he
     assert row["scope"]["workflows"][0]["id"] == key_scope["workflow_ids"][0] and row["scope"]["workflows"][0]["name"]
 
 
+def test_key_list_can_filter_by_resource_in_scope(client, auth_headers, made, key_scope):
+    """智能体"发布渠道"的密钥区只列作用域含本智能体的 Key（docs/15 3.7.2，AC-027 ④）。"""
+    model_id = _model(client, auth_headers, made)
+    agent = _published_agent(client, auth_headers, made, model_id)
+    with_agent = _key(client, auth_headers, made, agent_ids=[agent], **key_scope)
+    without = _key(client, auth_headers, made, **key_scope)
+    by_agent = {k["id"] for k in client.get(KEYS, headers=auth_headers, params={"agent_id": agent, "page_size": 100}).json()["items"]}
+    assert with_agent["id"] in by_agent and without["id"] not in by_agent
+    by_wf = {k["id"] for k in client.get(KEYS, headers=auth_headers, params={"workflow_id": key_scope["workflow_ids"][0], "page_size": 100}).json()["items"]}
+    assert {with_agent["id"], without["id"]} <= by_wf
+
+
 # ---------- 智能体作用域（AC-028 ①） ----------
 
 def test_key_can_only_chat_with_agents_in_scope(client, auth_headers, made, stub_llm_and_retrieval):

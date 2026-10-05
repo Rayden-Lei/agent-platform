@@ -7,20 +7,27 @@ import { errorText } from '../../utils/errors'
 
 // API Key 生成 / 编辑弹窗：授权范围（至少一项，docs/15 3.7.1）+ 配额、来源白名单、限速。
 // 白名单用多行文本承载（一行一条），提交前拆成数组；CIDR、范围与作用域的合法性由服务端兜底（422 / 400）。作用域下拉由页面取好传入。
-interface Props { open: boolean; editing: ApiKeyRow | null; scopeOptions: ScopeOptions; onClose: () => void; onSaved: () => void; onCreated: (key: string) => void }
+// initialScope：新建时预填的作用域（智能体"发布渠道"里生成仅限此智能体的 Key）
+interface Props {
+  open: boolean; editing: ApiKeyRow | null; scopeOptions: ScopeOptions; initialScope?: Pick<ApiKeyInput, 'agent_ids'> | Pick<ApiKeyInput, 'workflow_ids'>
+  onClose: () => void; onSaved: () => void; onCreated: (key: string) => void
+}
 interface FormValues { name: string; quota: number; allowed_ips_text?: string; rate_limit_per_minute: number; agent_ids?: number[]; workflow_ids?: number[]; kb_ids?: number[] }
 const splitIps = (text?: string): string[] => (text ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 
-export default function ApiKeyForm({ open, editing, scopeOptions, onClose, onSaved, onCreated }: Props) {
+export default function ApiKeyForm({ open, editing, scopeOptions, initialScope, onClose, onSaved, onCreated }: Props) {
   const [form] = Form.useForm<FormValues>()
   const [submitting, setSubmitting] = useState(false)
   useEffect(() => {
     if (!open) return
     form.resetFields()
+    if (!editing && initialScope) form.setFieldsValue(initialScope)
     if (editing) form.setFieldsValue({
       name: editing.name, quota: editing.quota, allowed_ips_text: editing.allowed_ips.join('\n'), rate_limit_per_minute: editing.rate_limit_per_minute,
       agent_ids: editing.agent_ids, workflow_ids: editing.workflow_ids, kb_ids: editing.kb_ids,
     })
+    // initialScope 只在打开时读一次：父组件每次渲染都传一个新对象，放进依赖会把正在填的表单反复重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing, form])
 
   const onSubmit = async (values: FormValues) => {
