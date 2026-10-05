@@ -53,6 +53,9 @@ def get_current_user(
         # 只记异常类型与原因，绝不记 token 本身
         logger.info("JWT 校验失败：%s: %s", type(e).__name__, e)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
+    if payload.get("typ"):
+        # 带 typ 的是别的用途的令牌（分享访客令牌 typ=share_guest，docs/15 3.6）：与平台 JWT 共用 SECRET_KEY，不拦就能混用
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         # 401 而不是 403（docs/15 OP-02，2026-10-05）：凭证已经不能用了，前端只在 401 时清登录态回登录页；

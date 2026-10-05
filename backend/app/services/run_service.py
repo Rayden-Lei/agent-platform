@@ -12,7 +12,7 @@ FINAL_STATUSES = ("success", "failed", "cancelled")
 RUN_STATUSES = ("running", "success", "failed", "cancelled", "awaiting_review")
 # 触发来源（runs.source 列，2026-09-25 前只写在 input.source）：登录对话 / 界面运行工作流 / API Key（对话或工作流）/
 # 定时任务 / 装配页调试。运营指标默认排除 debug（docs/15 D-05）
-RUN_SOURCES = ("chat", "ui", "api_key", "schedule", "debug")
+RUN_SOURCES = ("chat", "ui", "api_key", "schedule", "debug", "share")  # share：分享链接的访客对话（docs/15 3.6，带 share_id）
 
 # 列表排序白名单（字段名不能拼进 SQL）
 SORTABLE = {"id": Run.id, "started_at": Run.started_at, "finished_at": Run.finished_at, "latency_ms": Run.latency_ms, "cost": Run.cost}
@@ -32,7 +32,8 @@ def operational_only():
 
 def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, workflow_id: int = None,
                input_data: dict = None, model_id: int = None, conversation_id: int = None, *,
-               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None, commit: bool = True) -> Run:
+               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None, share_id: int = None,
+               commit: bool = True) -> Run:
     """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务/调试）都必须走这里，
     否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version 是统计与追溯用的快照。
 
@@ -45,7 +46,7 @@ def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, w
     run = Run(
         run_type=run_type, agent_id=agent_id, workflow_id=workflow_id, user_id=user_id,
         model_id=model_id, conversation_id=conversation_id, source=source, agent_version=agent_version,
-        api_key_id=api_key_id, schedule_id=schedule_id,
+        api_key_id=api_key_id, schedule_id=schedule_id, share_id=share_id,
         status="running", input=input_data or {}, started_at=_now(),
     )
     db.add(run)
@@ -125,7 +126,7 @@ def _run_dict(r: Run) -> dict:
     return {
         "id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id, "user_id": r.user_id,
         "model_id": r.model_id, "conversation_id": r.conversation_id,
-        "source": r.source, "schedule_id": r.schedule_id, "api_key_id": r.api_key_id, "agent_version": r.agent_version,
+        "source": r.source, "schedule_id": r.schedule_id, "api_key_id": r.api_key_id, "share_id": r.share_id, "agent_version": r.agent_version,
         "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
         "token_usage": r.token_usage, "cost": r.cost,
         "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),

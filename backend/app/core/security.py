@@ -31,6 +31,15 @@ def create_access_token(user_id: int, role: str, token_version: int) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+GUEST_TOKEN_TYPE = "share_guest"
+
+
+def create_guest_token(claims: dict, expires_at: datetime) -> str:
+    """签发分享访客令牌（docs/15 3.6）：typ=share_guest 加调用方给的 sid / vid / ver（"仅登录"模式另有 uid / uver）。
+    与平台 JWT 共用 SECRET_KEY，靠 typ 区分：get_current_user 拒收带 typ 的令牌，访客接口只收 typ=share_guest 的。"""
+    return jwt.encode({**claims, "typ": GUEST_TOKEN_TYPE, "exp": expires_at}, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     """解析并校验 JWT 签名与过期时间；签名无效/已过期抛 JWTError，由调用方转 401。"""
     return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])

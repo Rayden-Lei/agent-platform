@@ -12,7 +12,7 @@ from app.core.security import encrypt_secret
 from app.db.session import SessionLocal
 from app.model_gateway import gateway
 from app.model_gateway.gateway import build_llm, reset_llm_cache
-from app.services import chat_service
+from app.services import chat_service, conversation_service
 
 
 class _RecordingChatOpenAI:
@@ -106,9 +106,9 @@ def test_chat_and_workflow_agent_node_use_agent_params(client, auth_headers, mod
         admin_id = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
         db = SessionLocal()
         try:
-            conv_id = chat_service.prepare_chat(db, admin_id, agent["id"], "你好").conversation_id
+            conv_id = chat_service.prepare_chat(db, conversation_service.Caller("ui", admin_id), agent["id"], "你好").conversation_id
             assert chat_service.build_chat_context(db, agent["id"], "你好", conv_id, role="admin").llm.kwargs["temperature"] == 0.9
-            conv_other = chat_service.prepare_chat(db, admin_id, other["id"], "你好").conversation_id
+            conv_other = chat_service.prepare_chat(db, conversation_service.Caller("ui", admin_id), other["id"], "你好").conversation_id
             assert chat_service.build_chat_context(db, other["id"], "你好", conv_other, role="admin").llm.kwargs["temperature"] == 0.2
         finally:
             db.close()

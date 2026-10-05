@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_API_KEY_PER_MINUTE: int = 60
     RATE_LIMIT_USER_PER_MINUTE: int = 300
     RATE_LIMIT_IP_PER_MINUTE: int = 20
+    # 分享链接每位访客每分钟的对话次数（docs/15 3.6）；整条链接每分钟与每天的上限在每条分享上单独配
+    SHARE_VISITOR_PER_MINUTE: int = 10
 
     @field_validator("CORS_ORIGINS")
     @classmethod

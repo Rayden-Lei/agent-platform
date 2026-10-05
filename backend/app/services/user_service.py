@@ -7,7 +7,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import hash_password
-from app.db.models import Agent, KnowledgeBase, ModelConfig, User, Workflow
+from app.db.models import Agent, AgentShare, KnowledgeBase, ModelConfig, User, Workflow
 from app.schemas import UserCreate, UserUpdate
 
 SORTABLE = {"id": User.id, "username": User.username, "created_at": User.created_at}
@@ -101,6 +101,9 @@ def delete_user(db: Session, user_id: int, operator: User = None) -> None:
         refs.append("知识库")
     if db.query(Workflow).filter(Workflow.created_by == user_id).first():
         refs.append("工作流")
+    # 公开访客的会话与运行记在分享创建者名下（docs/15 3.6），删了创建者访客数据就没有归属
+    if db.query(AgentShare).filter(AgentShare.created_by == user_id).first():
+        refs.append("分享链接")
     if refs:
         raise BizError(409, "该用户仍关联配置资源（" + "、".join(refs) + "），无法删除")
     db.delete(u)

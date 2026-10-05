@@ -10,7 +10,7 @@ import pytest
 
 from app.db.models import AgentVersion, AuditLog, Run, User
 from app.db.session import SessionLocal
-from app.services import agent_service, chat_service
+from app.services import agent_service, chat_service, conversation_service
 from tests.fakes import AnswerModel, use_llm
 
 
@@ -304,7 +304,7 @@ def test_prepare_chat_records_live_version_and_model(client, auth_headers, make_
     admin_id = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
     db = SessionLocal()
     try:
-        prepared = chat_service.prepare_chat(db, admin_id, agent["id"], "你好")
+        prepared = chat_service.prepare_chat(db, conversation_service.Caller("ui", admin_id), agent["id"], "你好")
         run = db.get(Run, prepared.run_id)
         assert (run.agent_version, run.model_id, run.source) == (1, agent["model_id"], "chat")
     finally:

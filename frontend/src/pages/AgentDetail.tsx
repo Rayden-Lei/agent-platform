@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Button, Popconfirm, Space, Tag, message } from 'antd'
-import { DeleteOutlined, EditOutlined, MessageOutlined, RocketOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, MessageOutlined, RocketOutlined, ShareAltOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { deleteAgent, getAgent, listApiKeys, offlineAgent, publishAgent } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
 import { usePublicBaseUrl } from '../hooks/usePublicBaseUrl'
 import { useApiKeyScopeOptions } from '../hooks/useApiKeyScopeOptions'
+import { useAgentShare } from '../hooks/useAgentShare'
+import ShareLinkCard from '../components/publish/ShareLinkCard'
 import ApiAccessPanel from '../components/publish/ApiAccessPanel'
 import AgentKeysCard from '../components/publish/AgentKeysCard'
 import ApiKeyForm from '../components/admin/ApiKeyForm'
@@ -22,8 +24,8 @@ import RunsTable from '../components/runs/RunsTable'
 import { errorText } from '../utils/errors'
 import { formatDateTime } from '../utils/time'
 
-// 智能体详情页：概览（关联可跳转）/ 发布渠道（API 调用与密钥）/ 运行统计 / 运行记录 / 会话 / 版本历史；
-// 头部可对话、编辑（进装配页）、发布（弹窗）、下线、删除。发布渠道的取数（对外地址、作用域含本智能体的 Key）在本页面。
+// 智能体详情页：概览（关联可跳转）/ 发布渠道（分享链接、API 调用与密钥）/ 运行统计 / 运行记录 / 会话 / 版本历史；
+// 头部可对话、分享（跳发布渠道）、编辑（进装配页）、发布（弹窗）、下线、删除。发布渠道的取数（分享配置、对外地址、作用域含本智能体的 Key）在本页面与 hooks。
 export default function AgentDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -35,6 +37,7 @@ export default function AgentDetail() {
   const [keyFormOpen, setKeyFormOpen] = useState(false)
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const scopeOptions = useApiKeyScopeOptions(keyFormOpen)
+  const share = useAgentShare(agentId)
 
   const publish = async (note?: string) => {
     try {
@@ -42,10 +45,11 @@ export default function AgentDetail() {
       message.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
       setPublishOpen(false)
       reload(true)
+      share.reload(true) // 分享的"已发布"与预检随线上版本变
     } catch (e) { message.error(errorText(e, '发布失败')); throw e }
   }
   const takeOffline = async () => {
-    try { await offlineAgent(agentId); message.success('已下线：对话、API Key 与工作流都不能再调用它'); reload(true) } catch (e) { message.error(errorText(e, '下线失败')) }
+    try { await offlineAgent(agentId); message.success('已下线：对话、分享链接、API Key 与工作流都不能再调用它'); reload(true); share.reload(true) } catch (e) { message.error(errorText(e, '下线失败')) }
   }
   const remove = async () => {
     try { await deleteAgent(agentId); message.success('已删除'); navigate('/agents') } catch (e) { message.error(errorText(e, '删除失败')) }
@@ -77,6 +81,7 @@ export default function AgentDetail() {
         extra={agent && (
           <Space>
             <Button type="primary" icon={<MessageOutlined />} disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?agent=${agent.id}`)}>对话</Button>
+            <Button icon={<ShareAltOutlined />} onClick={() => navigate('?tab=channels')}>分享</Button>
             {(agent.status !== 'published' || agent.has_unpublished_changes) && <Button icon={<RocketOutlined />} onClick={() => setPublishOpen(true)}>{agent.status === 'offline' && !agent.has_unpublished_changes ? '重新上线' : '发布'}</Button>}
             {agent.status === 'published' && <Popconfirm title="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" onConfirm={takeOffline}><Button>下线</Button></Popconfirm>}
             <Button icon={<EditOutlined />} onClick={() => navigate(`/agents/${agent.id}/edit`)}>编辑</Button>
@@ -88,6 +93,7 @@ export default function AgentDetail() {
           {
             key: 'channels', label: '发布渠道', children: (
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <ShareLinkCard share={share.share} error={share.error} saving={share.saving} onRetry={() => share.reload()} onSave={share.save} onReset={share.reset} />
                 <ApiAccessPanel agent={agent} baseUrl={baseUrl} baseUrlConfigured={baseUrlConfigured} />
                 <AgentKeysCard keys={keys.data?.items ?? null} total={keys.data?.total} error={keys.error} onRetry={() => keys.reload()} onCreate={() => setKeyFormOpen(true)} />
               </Space>

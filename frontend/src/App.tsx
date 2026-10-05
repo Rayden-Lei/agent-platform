@@ -1,4 +1,4 @@
-import { lazy } from 'react'
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './store/auth'
 import { loginPathFor } from './utils/redirect'
@@ -27,6 +27,7 @@ const ApiKeys = lazy(() => import('./pages/ApiKeys'))
 const Schedules = lazy(() => import('./pages/Schedules'))
 const PromptTemplates = lazy(() => import('./pages/PromptTemplates'))
 const SystemSettings = lazy(() => import('./pages/SystemSettings'))
+const SharePage = lazy(() => import('./pages/SharePage'))
 
 // 路由守卫：未登录（无 token）时重定向到 /login 并带上当前页（登录后回来，docs/15 OP-02），已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -36,11 +37,13 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children
 }
 
-// 应用路由表：/login 为公开页，其余业务页面挂在带鉴权的 AppLayout 壳布局下；未匹配路径兜底重定向到首页
+// 应用路由表：/login 与分享访客页 /s/:code 为公开页（不进 AppLayout），其余业务页面挂在带鉴权的 AppLayout 壳布局下；
+// 未匹配路径兜底重定向到首页。访客页懒加载，没有 AppLayout 的 Suspense，这里自己包一层
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/s/:code" element={<Suspense fallback={null}><SharePage /></Suspense>} />
       <Route path="/" element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="agents" element={<Agents />} />

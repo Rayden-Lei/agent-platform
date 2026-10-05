@@ -84,8 +84,17 @@ export interface ChatPayload { message: string; conversation_id: number | null }
 // 发送函数：对话组件与 useChatStream 不绑定具体接口，由页面注入（登录对话、装配页调试、分享访客各一个）
 export type ChatTransport = (payload: ChatPayload, handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<number | null>
 
+// fetch 请求（SSE 与分享访客接口）的非 2xx：带上 HTTP 状态码，调用方据此分支（访客页按 404 / 403 / 401 显示不同状态页）
+export class RequestError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 // 非 2xx 的错误文案：422 是 FastAPI 的逐字段数组，取首条 msg（此前直接显示成 [object Object]）；5xx 拼上追踪 ID
-async function streamErrorText(res: Response): Promise<string> {
+export async function responseErrorText(res: Response): Promise<string> {
   const body = await res.json().catch(() => ({})) as { detail?: unknown; trace_id?: string }
   const detail = body.detail
   let text = ''
@@ -98,21 +107,30 @@ async function streamErrorText(res: Response): Promise<string> {
 
 // 通用 SSE 流：POST JSON，逐个事件回调，返回流结束时最新的 conversation_id（首条消息时新会话的 id 在 done 事件里首次出现）。
 // 登录对话、装配页调试、分享访客都是它的薄封装，新增事件类型在下面的 switch 里加分支。
-// 401 与 axios 拦截器同样处理：清登录态回登录页（此前这里只弹一句提示，停在原页面）
-export async function streamSse(url: string, body: ChatPayload | DebugChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal): Promise<number | null> {
-  const token = localStorage.getItem('token')
+// 令牌来源与 401 处理默认是平台登录态（与 axios 拦截器一样清登录态回登录页）；分享访客页注入访客令牌、自己的 401 处理
+// 与响应头读取（访客令牌换发在 X-Share-Token，docs/15 3.6）
+export interface SseAuth {
+  token: () => string | null
+  onUnauthorized: (detail?: string) => void
+  onResponse?: (res: Response) => void
+}
+const PLATFORM_AUTH: SseAuth = { token: () => localStorage.getItem('token'), onUnauthorized: clearLoginAndRedirect }
+
+export async function streamSse(url: string, body: ChatPayload | DebugChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal, auth: SseAuth = PLATFORM_AUTH): Promise<number | null> {
+  const token = auth.token()
   const res = await fetch('/api/v1' + url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     body: JSON.stringify(body),
     signal, // 传入 AbortSignal 即可由调用方（"停止"按钮）中断整个流
   })
+  auth.onResponse?.(res)
   if (res.status === 401) {
     const detail = await res.json().then((b) => (typeof b?.detail === 'string' ? b.detail : undefined), () => undefined) // 响应体不是 JSON 时没有原因可带
-    clearLoginAndRedirect(detail)
-    throw new Error(detail || '登录已失效，请重新登录')
+    auth.onUnauthorized(detail)
+    throw new RequestError(detail || '登录已失效，请重新登录', 401)
   }
-  if (!res.ok) throw new Error(await streamErrorText(res))
+  if (!res.ok) throw new RequestError(await responseErrorText(res), res.status)
   if (!res.body) throw new Error('响应无内容')
 
   // SSE 解析：按 \n\n 切分事件块；buffer 保留未成块的残片，

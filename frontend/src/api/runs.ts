@@ -2,7 +2,7 @@ import { get, type Page, type PageQuery } from './core'
 
 // ===== 运行记录（docs/04 4.10）=====
 export type RunStatus = 'running' | 'success' | 'failed' | 'cancelled' | 'awaiting_review'
-export type RunSource = 'chat' | 'ui' | 'api_key' | 'schedule' | 'debug'
+export type RunSource = 'chat' | 'ui' | 'api_key' | 'schedule' | 'debug' | 'share'
 export interface RunTokenUsage { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
 export interface RunRow {
   id: number
@@ -19,6 +19,7 @@ export interface RunRow {
   source: RunSource // runs.source 列，2026-09-25 起必有值（此前从 input 推算、可能为空）
   schedule_id: number | null
   api_key_id: number | null // 经 API Key 触发时的 Key
+  share_id: number | null // 分享访客的运行（source=share）所属的分享链接
   agent_version: number | null // 回答用的智能体线上版本；调试运行为空
   status: RunStatus | string
   error: string | null

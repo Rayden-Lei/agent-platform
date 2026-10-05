@@ -21,6 +21,7 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     api_key: { label: 'API Key', color: 'purple' },
     schedule: { label: '定时任务', color: 'cyan' },
     debug: { label: '调试', color: 'orange' }, // 装配页当场调试，运营指标默认不计
+    share: { label: '分享访客', color: 'magenta' }, // 分享链接的访客对话（docs/15 3.6）
   },
   agent: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' }, offline: { label: '已下线', color: 'default' } },
   workflow: { draft: { label: '草稿', color: 'warning' }, published: { label: '已发布', color: 'success' } },
@@ -54,6 +55,10 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     change_password: { label: '修改密码', color: 'volcano' },
     rag_retrieve: { label: '知识检索', color: 'cyan' },
     api_key_ip_rejected: { label: 'Key 来源被拒', color: 'red' },
+    share_enable: { label: '开启分享', color: 'magenta' },
+    share_update: { label: '修改分享', color: 'orange' },
+    share_disable: { label: '关闭分享', color: 'default' },
+    share_reset: { label: '重置分享链接', color: 'volcano' },
   },
   auditResource: {
     auth: { label: '登录', color: 'default' },
@@ -67,6 +72,7 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     workflow: { label: '工作流', color: 'default' },
     tool: { label: '工具', color: 'default' },
     system_setting: { label: '系统参数', color: 'default' },
+    agent_share: { label: '分享链接', color: 'default' },
   },
   breaker: { open: { label: '熔断中', color: 'error' }, half_open: { label: '熔断探测中', color: 'warning' }, closed: { label: '正常', color: 'success' } },
   nodeStatus: {

@@ -1,5 +1,6 @@
-import { Alert, Button, Card, Collapse, Descriptions, Space, Table, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Card, Collapse, Descriptions, Space, Table, Tabs, Typography } from 'antd'
 import { CopyOutlined } from '@ant-design/icons'
+import { copyText } from '../../utils/clipboard'
 import { BODY_ROWS, ERROR_ROWS, EVENT_ROWS, KEY_PLACEHOLDER, curlSnippet, endpointRows, jsSnippet, markdownDoc, pythonSnippet, type DocRow } from './apiSnippets'
 
 // 智能体"发布渠道 → API 调用"（docs/15 3.7.2，PB-02）：Base URL、智能体 ID、鉴权方式、端点与请求体、SSE 事件、错误码、
@@ -8,12 +9,6 @@ interface Props {
   agent: { id: number; name: string; status: string }
   baseUrl: string            // 对外地址（PUBLIC_BASE_URL，未配置时是当前访问地址）
   baseUrlConfigured: boolean
-}
-
-async function copy(text: string, what: string) {
-  try { await navigator.clipboard.writeText(text); message.success(`已复制${what}`) } catch {
-    message.warning('浏览器不允许自动复制（http 下剪贴板不可用），请手动选中复制')
-  }
 }
 
 const docColumns = (first: string) => [
@@ -27,7 +22,7 @@ const DocTable = ({ rows, first }: { rows: DocRow[]; first: string }) => (
 function Snippet({ code, label }: { code: string; label: string }) {
   return (
     <div style={{ position: 'relative' }}>
-      <Button size="small" icon={<CopyOutlined />} style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => copy(code, label)}>复制</Button>
+      <Button size="small" icon={<CopyOutlined />} style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => copyText(code, label)}>复制</Button>
       <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '12px 14px', borderRadius: 8, fontSize: 12, lineHeight: 1.6, overflow: 'auto', maxHeight: 360, margin: 0 }}>{code}</pre>
     </div>
   )
@@ -37,7 +32,7 @@ export default function ApiAccessPanel({ agent, baseUrl, baseUrlConfigured }: Pr
   const api = `${baseUrl}/api/v1`
   const published = agent.status === 'published'
   return (
-    <Card size="small" title="API 调用" extra={<Button icon={<CopyOutlined />} onClick={() => copy(markdownDoc(api, agent), '对接说明（Markdown）')}>复制对接说明</Button>}>
+    <Card size="small" title="API 调用" extra={<Button icon={<CopyOutlined />} onClick={() => copyText(markdownDoc(api, agent), '对接说明（Markdown）')}>复制对接说明</Button>}>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         {!published && <Alert type="warning" showIcon message={agent.status === 'offline' ? '已下线：按示例调用会返回 403「智能体已下线」，重新发布后恢复' : '发布后才能调用：现在按示例调用会返回 403「智能体未发布」'} />}
         <Alert type="info" showIcon message="API Key 只在服务端调用，不要放进浏览器、小程序或 App；Key 只能调用授权给它的智能体（下方密钥区）" />

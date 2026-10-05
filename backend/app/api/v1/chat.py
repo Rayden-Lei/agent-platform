@@ -20,7 +20,7 @@ from app.core.deps import current_api_key, get_current_user, require_roles
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas import CALLER_ID_PATTERN, AgentIn
-from app.services import chat_runner, chat_service
+from app.services import chat_runner, chat_service, conversation_service
 
 router = APIRouter(tags=["chat"])
 
@@ -72,9 +72,9 @@ def _sse(data: dict) -> str:
     return "data: " + json.dumps(data, ensure_ascii=False) + "\n\n"
 
 
-async def _sse_stream(events):
+async def sse_stream(events):
     """执行器事件 → SSE 帧。客户端断开时显式关闭执行器，让它的 finally 立刻收尾（部分回答落库、运行记录置 cancelled），
-    而不是等垃圾回收时才关。"""
+    而不是等垃圾回收时才关。分享访客路由（public_shares）也用它。"""
     async with aclosing(events) as it:
         async for event in it:
             yield _sse(event)
@@ -90,15 +90,16 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     api_key = current_api_key(request)
     # Key 对话的检索范围（docs/15 3.7.1）；在 prepare_chat 提交之前取，提交后 ORM 对象过期、再读会多一次查询
     kb_scope = list(api_key.kb_ids or []) if api_key else None
+    caller = conversation_service.caller_for(user, api_key, data.end_user)  # 登录请求带 end_user 在这里 400
     # 同步的库操作放线程池，不阻塞事件循环
-    prepared = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id, api_key,
-                                       data.end_user, data.client_message_id)
+    prepared = await run_in_threadpool(chat_service.prepare_chat, db, caller, agent_id, data.message, data.conversation_id,
+                                       data.client_message_id, api_key)
     if isinstance(prepared, chat_service.ReplayChat):  # 重复的 client_message_id：回放首次的结果
-        return StreamingResponse(_sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
+        return StreamingResponse(sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
                                 kb_scope=kb_scope)
-    return StreamingResponse(_sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
+    return StreamingResponse(sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
 
 
 @router.post("/agents/{agent_id}/debug-chat")
@@ -111,4 +112,4 @@ async def debug_chat(agent_id: int, data: DebugChatIn, db: Session = Depends(get
     """
     turn = await run_in_threadpool(chat_service.prepare_debug, db, user, agent_id, data.message,
                                    [h.model_dump() for h in data.history], data.config_source, data.config)
-    return StreamingResponse(_sse_stream(chat_runner.stream_debug(turn)), media_type="text/event-stream")
+    return StreamingResponse(sse_stream(chat_runner.stream_debug(turn)), media_type="text/event-stream")

@@ -21,7 +21,7 @@ _time_range = time_range
 # 运行状态枚举：running 运行中 / success 成功 / failed 失败 / cancelled 取消 / awaiting_review 等待人工审核
 RunStatus = Literal["running", "success", "failed", "cancelled", "awaiting_review"]
 # 触发来源（runs.source 列）：与 run_service.RUN_SOURCES 一致；debug 是装配页调试
-RunSource = Literal["chat", "ui", "api_key", "schedule", "debug"]
+RunSource = Literal["chat", "ui", "api_key", "schedule", "debug", "share"]
 
 
 @router.get("")

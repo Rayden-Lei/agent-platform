@@ -1,7 +1,7 @@
 """对话执行器：一轮对话的流式执行，逐个产出统一的事件字典（citations / delta / tool_call / tool_result / done / error）。
 
-路由只负责把事件转成 SSE 帧（docs/04 第 5 节）。登录对话与 API Key 对话走 stream_chat，装配页调试走 stream_debug
-（docs/15 3.4，多出 prompt 与 trace 事件），分享访客也将走这里（1C）；两者共用 _agent_events 这一个模型与工具循环，
+路由只负责把事件转成 SSE 帧（docs/04 第 5 节）。登录对话、API Key 对话与分享访客走 stream_chat（访客的事件再经
+share_service.guest_events 裁剪，docs/15 3.6），装配页调试走 stream_debug（docs/15 3.4，多出 prompt 与 trace 事件）；两者共用 _agent_events 这一个模型与工具循环，
 所以执行逻辑不写在路由里（06 第 1 节：路由不写业务）。
 调用前由 chat_service.prepare_chat / prepare_debug 建好运行记录：入参与归属类错误要在建流之前以 HTTP 状态码返回，不进事件流。
 """
@@ -39,12 +39,13 @@ class ChatTurn:
 
     agent_id: int
     user_id: int
-    role: str
+    role: str | None  # 检索鉴权用的角色；分享的匿名访客为 None，只放行公开库（docs/15 3.6）
     message: str
     conversation_id: int
     run_id: int
     agent_version: int
     kb_scope: list | None = None  # API Key 对话时为 Key 的 kb_ids，检索按 Key 的范围放行（docs/15 3.7.1）；登录对话为 None
+    allow_http_tools: bool = True  # 分享访客按分享配置（默认不装配 HTTP 工具，docs/15 3.6）
 
 
 class ToolRoundsExceeded(Exception):
@@ -236,7 +237,8 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
         try:
             # 检索、历史装配要几百毫秒到几秒，放线程池，不拖住事件循环上的其他请求
             ctx = await run_in_threadpool(chat_service.build_chat_context, db, turn.agent_id, turn.message, turn.conversation_id,
-                                          role=turn.role, agent_version=turn.agent_version, kb_scope=turn.kb_scope)
+                                          role=turn.role, agent_version=turn.agent_version, kb_scope=turn.kb_scope,
+                                          allow_http_tools=turn.allow_http_tools)
         except Exception as e:
             if not isinstance(e, BizError):
                 logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", turn.run_id, turn.agent_id)

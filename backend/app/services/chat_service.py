@@ -278,30 +278,29 @@ def _replay_of(db: Session, conversation_id: int, client_message_id: str) -> Rep
     return ReplayChat(conversation_id, run.id, run.status, error=f"{error}；如需重新生成请换一个 client_message_id")
 
 
-def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None,
-                 api_key: ApiKey | None = None, end_user: str | None = None, client_message_id: str | None = None) -> PreparedChat | ReplayChat:
+def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int, message: str, conversation_id: int | None = None,
+                 client_message_id: str | None = None, api_key: ApiKey | None = None) -> PreparedChat | ReplayChat:
     """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。
 
-    所有拒绝都发生在写库之前：消息全是空白 400、登录请求带 end_user 400、API Key 的作用域里没有该智能体 403、
-    智能体不存在 404 / 未发布或已下线 403、会话不属于本次调用方或不属于该智能体 404。长度与字符集由路由的 ChatIn 管（422）。
-    api_key 不为空表示 Key 发起的对话：运行记录 source=api_key 并记 api_key_id（2026-09-25 前也记成 chat，按 Key 筛不到）；
-    作用域判定在服务层（docs/15 3.7.1，2026-10-05 前 Key 能调归属人能调的任意已发布智能体）。
-    会话通道（docs/15 3.7.1）：Key 建的会话 channel=api、记 api_key_id 与 end_user，只有同一个 Key 与 end_user 能续聊；
-    界面会话 channel=ui。归属判定只在 conversation_service.owns 一处。
+    所有拒绝都发生在写库之前：消息全是空白 400、API Key 的作用域里没有该智能体 403、
+    智能体不存在 404 / 未发布或已下线 403、会话不属于该调用方或不属于该智能体 404。长度与字符集由路由的 ChatIn 管（422）；
+    登录请求带 end_user 的 400 在构造 caller 时（conversation_service.caller_for）。
+    caller 决定会话通道与归属（docs/15 3.7.1 / 3.6）：新会话按它的五项写入，续聊须五项一致；运行记录的来源按通道
+    （ui → chat、api → api_key 并记 api_key_id、share → share 并记 share_id），user_id 同会话。
+    api_key 只用于作用域判定（docs/15 3.7.1，2026-10-05 前 Key 能调归属人能调的任意已发布智能体）。
     幂等：续聊时带了会话里已出现过的 client_message_id，返回 ReplayChat（不落消息、不调模型）；
     首轮（不带 conversation_id）不在幂等范围内。并发的同一条撞上部分唯一索引时按"首次仍在生成"409。
     配置读线上版本（草稿与线上分离，FR-039）：运行记录的 model_id 与 agent_version 都取线上快照，不取草稿行。
     """
     if not message.strip():
         raise BizError(400, "消息不能为空")
-    conversation_service.check_end_user(api_key, end_user)
     api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
     conversation = None
     if conversation_id:
         conversation = db.get(Conversation, conversation_id)
         # 还要属于该智能体：否则智能体 A 能接着写 B 的会话（深链只带 conversation 时对话页会落到第一个智能体）
-        if conversation is None or not conversation_service.owns(conversation, user_id, api_key, end_user) or conversation.agent_id != agent_id:
+        if conversation is None or not conversation_service.owns(conversation, caller) or conversation.agent_id != agent_id:
             raise BizError(404, "会话不存在或不属于该智能体")
         if client_message_id:
             replay = _replay_of(db, conversation.id, client_message_id)
@@ -309,9 +308,8 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
                 return replay
     if conversation is None:
         title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 标题取首条消息开头（模型生成标题已于 2026-08-29 移除）
-        conversation = Conversation(agent_id=agent_id, user_id=user_id, title=title,
-                                    channel=conversation_service.CHANNEL_API if api_key else conversation_service.CHANNEL_UI,
-                                    api_key_id=api_key.id if api_key else None, end_user=end_user)
+        conversation = Conversation(agent_id=agent_id, user_id=caller.user_id, title=title, channel=caller.channel,
+                                    api_key_id=caller.api_key_id, end_user=caller.end_user, share_id=caller.share_id)
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
@@ -329,9 +327,9 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
     # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属。
     # 用户消息与运行记录同一次提交：并发的重复请求不会读到"有消息、还没挂上运行记录"的中间状态
     run = run_service.create_run(
-        db, "chat", user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
-        input_data={"message": message}, source="api_key" if api_key else "chat", api_key_id=api_key.id if api_key else None,
-        agent_version=live.version, commit=False,
+        db, "chat", caller.user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
+        input_data={"message": message}, source=conversation_service.RUN_SOURCE_OF[caller.channel], api_key_id=caller.api_key_id,
+        share_id=caller.share_id, agent_version=live.version, commit=False,
     )
     user_message.run_id = run.id
     db.commit()
@@ -339,13 +337,14 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
 
 
 def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
-                         kb_scope: list | None = None) -> ChatContext:
+                         kb_scope: list | None = None, allow_http_tools: bool = True) -> ChatContext:
     """按一份智能体配置装配 LLM、工具与检索（含 RAG 引用，带权限过滤 + 证据绑定），历史消息由调用方补。
     线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。
-    kb_scope：API Key 对话时传 Key 的 kb_ids，检索只放行公开库与范围内且归属人可见的库（docs/15 3.7.1）。"""
+    kb_scope：API Key 对话时传 Key 的 kb_ids，检索只放行公开库与范围内且归属人可见的库（docs/15 3.7.1）。
+    allow_http_tools=False 时不装配绑定的 HTTP 工具（分享访客默认如此，docs/15 3.6），内置工具照常可用。"""
     model = usable_model(db, cfg.model_id)
     llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）
-    tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids else []
+    tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids and allow_http_tools else []
     tools = build_tools(tool_dbs)
 
     kb_context = ""
@@ -374,11 +373,11 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
 
 
 def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
-                       agent_version: int | None = None, kb_scope: list | None = None) -> ChatContext:
+                       agent_version: int | None = None, kb_scope: list | None = None, allow_http_tools: bool = True) -> ChatContext:
     """构建线上对话的上下文：配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本），
-    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。kb_scope 见 _context_from_config。"""
+    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。kb_scope、allow_http_tools 见 _context_from_config。"""
     cfg = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
-    ctx = _context_from_config(db, cfg, message_text, role, kb_scope=kb_scope)
+    ctx = _context_from_config(db, cfg, message_text, role, kb_scope=kb_scope, allow_http_tools=allow_http_tools)
 
     conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()

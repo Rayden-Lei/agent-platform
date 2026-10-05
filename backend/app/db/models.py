@@ -200,15 +200,18 @@ class Conversation(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_conversations_user_channel_updated", "user_id", "channel", "updated_at"),
         Index("ix_conversations_api_key_end_user_updated", "api_key_id", "end_user", "updated_at"),
+        Index("ix_conversations_share_end_user_updated", "share_id", "end_user", "updated_at"),
     )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
     workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    # 会话通道：ui = 登录界面里的会话；api = API Key 发起的会话，只对该 Key（与同一个 end_user）可见，界面里看不到
+    # 会话通道：ui = 登录界面里的会话；api = API Key 发起的会话，只对该 Key（与同一个 end_user）可见，界面里看不到；
+    # share = 分享链接的访客会话（docs/15 3.6）。归属判定见 conversation_service.owns
     channel = Column(String(16), nullable=False, default="ui", server_default="ui")
     api_key_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
-    end_user = Column(String(64), nullable=True)  # Key 背后的终端用户标识，由调用方传；不传为空
+    end_user = Column(String(64), nullable=True)  # Key 背后的终端用户标识（调用方传），或分享公开模式的访客 id；不传为空
+    share_id = Column(BigInteger, ForeignKey("agent_shares.id", ondelete="CASCADE"), nullable=True)  # channel=share 时的分享链接
     title = Column(String(255), nullable=True)
     # 对话摘要持久化（FR-031）：summary 覆盖 id ≤ summary_upto_message_id 的更早消息，按批增量折叠，不再每轮重算
     summary = Column(Text, nullable=True)
@@ -242,6 +245,7 @@ class Run(Base):
     __table_args__ = (
         Index("ix_runs_source_started_at", "source", "started_at"),
         Index("ix_runs_api_key_started_at", "api_key_id", "started_at"),
+        Index("ix_runs_share_started_at", "share_id", "started_at"),  # 分享链接的每日总量按它计数（docs/15 3.6）
     )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     run_type = Column(String(16), nullable=False, index=True)
@@ -267,6 +271,7 @@ class Run(Base):
     agent_version = Column(Integer, nullable=True)  # 本次回答用的线上版本号；调试运行为空
     api_key_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     schedule_id = Column(BigInteger, ForeignKey("scheduled_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
+    share_id = Column(BigInteger, ForeignKey("agent_shares.id", ondelete="SET NULL"), nullable=True)  # source=share 时的分享链接
 
 
 class ScheduledJob(Base):
@@ -280,6 +285,31 @@ class ScheduledJob(Base):
     is_enabled = Column(Boolean, nullable=False, default=True)
     last_run_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AgentShare(Base):
+    """智能体的分享体验链接（docs/15 3.6，PB-01）：一个智能体一条；访客打开 /s/{code} 免登录（public）或用平台账号（login）对话。
+    限额一律显式范围，不用"0 表示不限"（避免 API Key 配额 0 的歧义）。"""
+
+    __tablename__ = "agent_shares"
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, unique=True)
+    code = Column(String(32), nullable=False, unique=True)  # secrets.token_urlsafe 生成；重置链接时换新
+    is_enabled = Column(Boolean, nullable=False, default=False)
+    access_mode = Column(String(16), nullable=False, default="public")  # public 免登录 / login 须平台账号（D-06）
+    password_hash = Column(String(128), nullable=True)  # 访问密码（bcrypt），可空
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    token_version = Column(Integer, nullable=False, default=0)  # 改密码、改访问方式、重置链接时 +1，旧访客令牌失效
+    rate_limit_per_minute = Column(Integer, nullable=False, default=20)  # 整条链接每分钟（1～600）
+    daily_message_limit = Column(Integer, nullable=False, default=1000)  # 整条链接每天（1～100000），成本的硬上限
+    visitor_daily_limit = Column(Integer, nullable=False, default=50)  # 每位访客每天（1～1000）
+    allow_http_tools = Column(Boolean, nullable=False, default=False)  # 访客对话是否装配 HTTP 工具
+    show_citations = Column(Boolean, nullable=False, default=True)  # 访客是否看得到引用（只给文档名与内容）
+    # 公开访客的会话与运行记在创建者名下：创建者不能在分享还在时被删掉（RESTRICT）
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    updated_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class ApiKey(Base):
