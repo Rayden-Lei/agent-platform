@@ -5,10 +5,20 @@ import { useAsyncData } from '../../hooks/useAsyncData'
 import ErrorState from '../common/ErrorState'
 import ResourceLink from '../common/ResourceLink'
 import StatusTag from '../common/StatusTag'
+import TimeCell from '../common/TimeCell'
 import { TYPE_OPTIONS } from './ToolParamsEditor'
 
-// 工具详情抽屉：请求配置（请求头只显示键名，值不回显）、参数声明表、绑定它的智能体；测试 / 编辑在头部。
+// 工具详情抽屉：请求配置、鉴权（只显示方式与是否已配置，凭据不回显）、参数声明表、绑定它的智能体；测试 / 编辑在头部。
+// 请求头里已不允许放凭据（保存时 422），所以直接显示值
 interface Props { tool: ToolRow | null; canManage: boolean; onClose: () => void; onTest: (tool: ToolRow) => void; onEdit: (tool: ToolRow) => void }
+
+const AUTH_LABEL: Record<string, string> = { bearer: 'Bearer Token', api_key: 'API Key', basic: 'Basic' }
+function authText(tool: ToolRow) {
+  const auth = tool.auth
+  if (!auth || auth.type === 'none') return <Typography.Text type="secondary">不需要</Typography.Text>
+  const where = auth.type === 'api_key' ? `（${auth.location === 'query' ? '查询参数' : '请求头'} ${auth.name}）` : ''
+  return <Space size={6}>{AUTH_LABEL[auth.type] ?? auth.type}{where}{auth.has_secret ? <Tag color="success">凭据已配置</Tag> : <Tag color="error">缺少凭据</Tag>}</Space>
+}
 
 export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }: Props) {
   const id = tool?.id ?? 0
@@ -27,10 +37,13 @@ export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }:
             { key: 'desc', label: '描述', span: 2, children: tool.description },
             ...(tool.type === 'http' ? [
               { key: 'req', label: '请求', span: 2, children: <Space size={4}><Tag>{(tool.config?.method || 'POST').toUpperCase()}</Tag><Typography.Text copyable>{tool.config?.url || '-'}</Typography.Text></Space> },
-              { key: 'headers', label: '请求头', span: 2, children: headerNames.length ? <Space size={4} wrap>{headerNames.map((h) => <Tag key={h}>{h}: ••••</Tag>)}</Space> : <Typography.Text type="secondary">无</Typography.Text> },
+              { key: 'headers', label: '请求头', span: 2, children: headerNames.length ? <Space size={4} wrap>{headerNames.map((h) => <Tag key={h}>{h}: {tool.config?.headers?.[h]}</Tag>)}</Space> : <Typography.Text type="secondary">无</Typography.Text> },
+              { key: 'auth', label: '鉴权', span: 2, children: authText(tool) },
             ] : []),
             { key: 'timeout', label: '超时', children: `${tool.timeout} 秒` },
             { key: 'agents', label: '绑定智能体', children: tool.agents_count },
+            { key: 'creator', label: '创建人', children: tool.created_by_username || '-' },
+            { key: 'updated', label: '更新时间', children: <TimeCell value={tool.updated_at} /> },
           ]} />
           {tool.type === 'http' && (
             <div>

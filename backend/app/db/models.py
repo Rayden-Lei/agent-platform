@@ -18,6 +18,15 @@ class User(Base, TimestampMixin):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(16), nullable=False, default="caller")
     is_active = Column(Boolean, nullable=False, default=True)
+    # 令牌版本（M0，docs/15 OP-04）：JWT 里带 ver，重置密码 / 停用 / 改密 / 退出其他设备时 +1，旧令牌即失效
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+    # 为真时除 /auth/me 与改密外全部 403「请先修改初始密码」（服务端强制）
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
+    display_name = Column(String(64))
+    email = Column(String(128))
+    phone = Column(String(32))
+    password_changed_at = Column(TIMESTAMP(timezone=True))
+    last_login_at = Column(TIMESTAMP(timezone=True))
 
 
 class ModelConfig(Base, TimestampMixin):
@@ -109,7 +118,12 @@ class Tool(Base):
     config = Column(JSONB, nullable=False, default=dict)
     timeout = Column(Integer, nullable=False, default=30)
     is_enabled = Column(Boolean, nullable=False, default=True)
+    # 鉴权（M0，docs/15 RS-06）：auth 只放方式与位置 {type, location, name}，凭据加密后放 secret_enc，任何接口不回传
+    auth = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    secret_enc = Column(Text)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class KnowledgeBase(Base, TimestampMixin):

@@ -91,9 +91,12 @@ def get_model_detail(db: Session, model_id: int) -> dict:
     return {**_to_dict(m, len(agents), creators.get(m.created_by)), "agents": agents}
 
 
-def update_model(db: Session, model_id: int, data: ModelIn) -> dict:
-    """覆盖式更新模型配置；api_key 为空表示沿用已有密钥，仅当提交了新的非空 Key 时才重新加密覆盖。"""
+def update_model(db: Session, model_id: int, data: ModelIn, user: User) -> dict:
+    """覆盖式更新模型配置；api_key 为空表示沿用已有密钥，仅当提交了新的非空 Key 时才重新加密覆盖。
+    写审计 update（2026-09-29 起，docs/15 RS-06；此前改地址、换密钥都不留痕）：detail 只记改了哪些字段，密钥只记"已更换"。"""
     m = get_model(db, model_id)
+    fields = ("name", "provider", "api_base", "model_name", "default_params", "price_input", "price_output")
+    before = {f: getattr(m, f) for f in fields}
     m.name = data.name
     m.provider = data.provider
     m.api_base = data.api_base
@@ -103,8 +106,11 @@ def update_model(db: Session, model_id: int, data: ModelIn) -> dict:
     m.default_params = data.default_params.to_dict()
     m.price_input = data.price_input
     m.price_output = data.price_output
+    changed = [f for f in fields if before[f] != getattr(m, f)]
     db.commit()
     db.refresh(m)
+    if changed or data.api_key:
+        record_audit(db, user, "update", "model", m.id, detail={"name": m.name, "changed": changed, **({"api_key": "已更换"} if data.api_key else {})})
     counts, creators = _related(db, [m])
     return _to_dict(m, int(counts.get(m.id, 0)), creators.get(m.created_by))
 

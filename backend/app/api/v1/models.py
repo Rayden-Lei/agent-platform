@@ -59,7 +59,7 @@ def get_model(model_id: int, db: Session = Depends(get_db), user: User = Depends
 @router.put("/{model_id}", response_model=ModelOut)
 def update_model(model_id: int, data: ModelIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     """按 ID 更新模型配置。仅 admin。"""
-    return model_service.update_model(db, model_id, data)
+    return model_service.update_model(db, model_id, data, user)
 
 
 @router.post("/{model_id}/toggle")

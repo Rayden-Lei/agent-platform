@@ -1,11 +1,15 @@
 import ast
+import base64
 import json
 import logging
 import operator
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 
+from app.core.exceptions import BizError
+from app.core.security import decrypt_secret
 from app.db.models import Tool
 
 logger = logging.getLogger(__name__)
@@ -98,16 +102,21 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")
-    headers = cfg.get("headers") or {}
     timeout = tool.timeout or 30
     if not url:
         return {"error": "工具未配置 URL"}
     try:
+        auth_headers, auth_params, secret = _auth_parts(tool)
+    except BizError:
+        logger.warning("HTTP 工具凭据无法解密 tool=%s auth=%s", tool.name, (tool.auth or {}).get("type"))
+        return {"error": "工具凭据无法解密（加密密钥可能已更换），请在工具页重新填写凭据"}
+    headers = {**(cfg.get("headers") or {}), **auth_headers}
+    try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             if method == "GET":
-                resp = await client.get(url, params=args, headers=headers)
+                resp = await client.get(url, params={**args, **auth_params}, headers=headers)
             else:
-                resp = await client.request(method, url, json=args, headers=headers)
+                resp = await client.request(method, url, params=auth_params or None, json=args, headers=headers)
             resp.raise_for_status()
             try:
                 return resp.json()
@@ -115,8 +124,38 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
                 # 对方返回的不是 JSON（纯文本/HTML），按文本返回是预期行为
                 return {"result": resp.text}
     except httpx.HTTPError as e:
-        logger.warning("HTTP 工具调用失败 tool=%s method=%s url=%s error=%s", tool.name, method, url, e)
-        return {"error": str(e)}
+        # httpx 的错误文案带完整地址，查询参数里的凭据会跟着进日志与工具结果（结果会回给模型、显示在对话里），先打码
+        message = _scrub(str(e), secret)
+        logger.warning("HTTP 工具调用失败 tool=%s method=%s url=%s error=%s", tool.name, method, url, message)
+        return {"error": message}
     except Exception as e:
-        logger.exception("HTTP 工具执行异常 tool=%s method=%s url=%s", tool.name, method, url)
-        return {"error": str(e)}
+        message = _scrub(str(e), secret)
+        if secret:  # 带凭据时不打堆栈：异常链里可能有含凭据的地址，只记打码后的文案
+            logger.error("HTTP 工具执行异常 tool=%s method=%s url=%s error=%s: %s", tool.name, method, url, type(e).__name__, message)
+        else:
+            logger.exception("HTTP 工具执行异常 tool=%s method=%s url=%s", tool.name, method, url)
+        return {"error": message}
+
+
+def _auth_parts(tool: Tool) -> tuple[dict, dict, str | None]:
+    """按工具的鉴权配置解密凭据，组装要加的请求头与查询参数（docs/15 RS-06）。返回 (请求头, 查询参数, 凭据明文)。
+    凭据解密失败抛 BizError（AES_KEY 换过），由调用方转成工具错误。"""
+    auth = tool.auth or {}
+    kind = auth.get("type") or "none"
+    if kind == "none" or not tool.secret_enc:
+        return {}, {}, None
+    secret = decrypt_secret(tool.secret_enc)
+    if kind == "bearer":
+        return {"Authorization": f"Bearer {secret}"}, {}, secret
+    if kind == "basic":
+        return {"Authorization": "Basic " + base64.b64encode(secret.encode("utf-8")).decode("ascii")}, {}, secret
+    if auth.get("location") == "query":
+        return {}, {auth.get("name") or "api_key": secret}, secret
+    return {auth.get("name") or "X-API-Key": secret}, {}, secret
+
+
+def _scrub(text: str, secret: str | None) -> str:
+    """把文本里的凭据换成 ***（原样与 URL 编码后的两种写法都换）。"""
+    if not secret:
+        return text
+    return text.replace(secret, "***").replace(quote(secret, safe=""), "***")

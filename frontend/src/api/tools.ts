@@ -6,6 +6,9 @@ export interface ToolProperty { type: ToolPropertyType; description?: string; en
 // HTTP 工具参数声明（docs/03-数据库设计.md 4.2 的 JSON Schema 子集）；后端保存时校验并规范化
 export interface ToolParameters { type: 'object'; properties: Record<string, ToolProperty>; required: string[] }
 export interface ToolConfig { url?: string; method?: string; headers?: Record<string, string>; parameters?: ToolParameters }
+// 鉴权（docs/04 4.7，2026-09-29 起）：凭据加密托管、任何接口不回传，只告诉你配没配（has_secret）
+export type ToolAuthType = 'none' | 'api_key' | 'bearer' | 'basic'
+export interface ToolAuth { type: ToolAuthType; location?: 'header' | 'query' | null; name?: string | null }
 export interface ToolRow {
   id: number
   name: string
@@ -15,8 +18,13 @@ export interface ToolRow {
   timeout: number
   is_enabled: boolean
   agents_count: number
+  auth: ToolAuth & { has_secret: boolean }
+  created_by: number | null
+  created_by_username: string | null
+  updated_at: string | null
 }
-export type ToolInput = Pick<ToolRow, 'name' | 'description' | 'type' | 'config' | 'timeout'>
+// secret 不传 = 沿用已有凭据；clear_secret 为真清除
+export type ToolInput = Pick<ToolRow, 'name' | 'description' | 'type' | 'config' | 'timeout'> & { auth: ToolAuth; secret?: string; clear_secret?: boolean }
 export interface ToolDetail extends ToolRow { agents: { id: number; name: string; status: string }[] }
 
 export const listTools = (params?: PageQuery) => get<Page<ToolRow>>('/tools', params)
