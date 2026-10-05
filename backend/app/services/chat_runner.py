@@ -44,6 +44,7 @@ class ChatTurn:
     conversation_id: int
     run_id: int
     agent_version: int
+    kb_scope: list | None = None  # API Key 对话时为 Key 的 kb_ids，检索按 Key 的范围放行（docs/15 3.7.1）；登录对话为 None
 
 
 class ToolRoundsExceeded(Exception):
@@ -235,7 +236,7 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
         try:
             # 检索、历史装配要几百毫秒到几秒，放线程池，不拖住事件循环上的其他请求
             ctx = await run_in_threadpool(chat_service.build_chat_context, db, turn.agent_id, turn.message, turn.conversation_id,
-                                          role=turn.role, agent_version=turn.agent_version)
+                                          role=turn.role, agent_version=turn.agent_version, kb_scope=turn.kb_scope)
         except Exception as e:
             if not isinstance(e, BizError):
                 logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", turn.run_id, turn.agent_id)

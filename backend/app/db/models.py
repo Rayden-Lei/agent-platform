@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from pgvector.sqlalchemy import Vector
 
@@ -196,10 +196,19 @@ class WorkflowNode(Base):
 
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"
+    # 两个通道各自的会话列表（docs/15 3.7.1，M2a）：界面按 (本人, ui)，API Key 按 (Key, 终端用户)
+    __table_args__ = (
+        Index("ix_conversations_user_channel_updated", "user_id", "channel", "updated_at"),
+        Index("ix_conversations_api_key_end_user_updated", "api_key_id", "end_user", "updated_at"),
+    )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     agent_id = Column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
     workflow_id = Column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 会话通道：ui = 登录界面里的会话；api = API Key 发起的会话，只对该 Key（与同一个 end_user）可见，界面里看不到
+    channel = Column(String(16), nullable=False, default="ui", server_default="ui")
+    api_key_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
+    end_user = Column(String(64), nullable=True)  # Key 背后的终端用户标识，由调用方传；不传为空
     title = Column(String(255), nullable=True)
     # 对话摘要持久化（FR-031）：summary 覆盖 id ≤ summary_upto_message_id 的更早消息，按批增量折叠，不再每轮重算
     summary = Column(Text, nullable=True)
@@ -209,10 +218,16 @@ class Conversation(Base, TimestampMixin):
 
 class Message(Base):
     __tablename__ = "messages"
+    # 调用方的幂等键在会话内唯一（只约束非空的）：超时重试同一条消息不会重复落库、重复调模型（docs/15 3.7.1，M2a）
+    __table_args__ = (
+        Index("uq_messages_conversation_client_message", "conversation_id", "client_message_id", unique=True,
+              postgresql_where=text("client_message_id IS NOT NULL")),
+    )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     conversation_id = Column(BigInteger, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False)
+    client_message_id = Column(String(64), nullable=True)
     tool_calls = Column(JSONB, nullable=False, default=list)
     citations = Column(JSONB, nullable=False, default=list)
     token_usage = Column(JSONB, nullable=False, default=dict)
@@ -278,6 +293,11 @@ class ApiKey(Base):
     # 入口治理（FR-025 / FR-026）：来源 IP 白名单（IP 或 CIDR 列表，空 = 不限制）；每分钟限速（0 = 用全局默认）
     allowed_ips = Column(JSONB, nullable=False, default=list)
     rate_limit_per_minute = Column(Integer, nullable=False, default=0)
+    # 资源作用域（docs/15 3.7.1，D-09）：只能调这些智能体与工作流；检索时除公开库外只放行 kb_ids 内、且归属人可见的库。
+    # 三者至少一个非空；没有"空 = 全部放行"的兜底
+    agent_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
+    workflow_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
+    kb_ids = Column(JSONB, nullable=False, default=list, server_default="[]")
     last_used_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 

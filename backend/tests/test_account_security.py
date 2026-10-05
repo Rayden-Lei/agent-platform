@@ -94,8 +94,8 @@ def test_must_change_password_is_enforced_until_changed(client, auth_headers, ac
     assert client.get("/api/v1/agents", headers=fresh).status_code == 200
 
 
-def test_api_key_cannot_change_password(client, auth_headers):
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-acct-key", "quota": 10}).json()
+def test_api_key_cannot_change_password(client, auth_headers, key_scope):
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-acct-key", "quota": 10, **key_scope}).json()
     try:
         r = client.put("/api/v1/auth/me/password", headers={"Authorization": "Bearer " + key["key"]}, json={"old_password": "x", "new_password": "whatever-1"})
         assert r.status_code == 403

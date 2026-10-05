@@ -15,8 +15,9 @@ START_END_GRAPH = {
 }
 
 
-def _create_key(client, auth_headers, quota=1000, name="pytest-api-key"):
-    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": name, "quota": quota})
+def _create_key(client, auth_headers, scope: dict, quota=1000, name="pytest-api-key"):
+    """scope 是作用域（至少一项非空）；不关心作用域的用例传 conftest 的 key_scope。"""
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": name, "quota": quota, **scope})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -29,8 +30,8 @@ def _key_row(client, auth_headers, key_id: int) -> dict:
     return next(k for k in client.get("/api/v1/api-keys", headers=auth_headers).json()["items"] if k["id"] == key_id)
 
 
-def test_api_key_acts_as_owner_and_counts_usage(client, auth_headers):
-    k = _create_key(client, auth_headers)
+def test_api_key_acts_as_owner_and_counts_usage(client, auth_headers, key_scope):
+    k = _create_key(client, auth_headers, key_scope)
     try:
         owner = client.get("/api/v1/auth/me", headers=auth_headers).json()
 
@@ -49,8 +50,8 @@ def test_api_key_acts_as_owner_and_counts_usage(client, auth_headers):
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
 
-def test_api_key_rejected_on_management_endpoints(client, auth_headers):
-    k = _create_key(client, auth_headers)
+def test_api_key_rejected_on_management_endpoints(client, auth_headers, key_scope):
+    k = _create_key(client, auth_headers, key_scope)
     try:
         for path in ("/api/v1/agents", "/api/v1/models", "/api/v1/users", "/api/v1/api-keys", "/api/v1/workflows"):
             r = client.get(path, headers=_bearer(k["key"]))
@@ -64,7 +65,7 @@ def test_api_key_can_run_workflow(client, auth_headers):
     w = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-apikey-wf", "description": "", "graph": START_END_GRAPH})
     assert w.status_code == 200, w.text
     wid = w.json()["id"]
-    k = _create_key(client, auth_headers)
+    k = _create_key(client, auth_headers, {"workflow_ids": [wid]})
     try:
         r = client.post(f"/api/v1/workflows/{wid}/run", headers=_bearer(k["key"]), json={"input": "hello"})
         assert r.status_code == 200, r.text
@@ -74,13 +75,13 @@ def test_api_key_can_run_workflow(client, auth_headers):
         client.delete(f"/api/v1/workflows/{wid}", headers=auth_headers)
 
 
-def test_api_key_invalid_disabled_deleted_are_rejected(client, auth_headers):
+def test_api_key_invalid_disabled_deleted_are_rejected(client, auth_headers, key_scope):
     bogus = "ak_" + "0" * 32
     r = client.get("/api/v1/auth/me", headers=_bearer(bogus))
     assert r.status_code == 401
     assert "API Key" in r.json()["detail"]
 
-    k = _create_key(client, auth_headers)
+    k = _create_key(client, auth_headers, key_scope)
     try:
         t = client.post(f"/api/v1/api-keys/{k['id']}/toggle", headers=auth_headers)
         assert t.status_code == 200 and t.json()["is_enabled"] is False
@@ -94,8 +95,8 @@ def test_api_key_invalid_disabled_deleted_are_rejected(client, auth_headers):
     assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 401
 
 
-def test_api_key_quota_exhausted_returns_429(client, auth_headers):
-    k = _create_key(client, auth_headers, quota=2)
+def test_api_key_quota_exhausted_returns_429(client, auth_headers, key_scope):
+    k = _create_key(client, auth_headers, key_scope, quota=2)
     try:
         assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
         assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
@@ -122,8 +123,8 @@ def _latest_audit(action: str, resource_id: int):
         db.close()
 
 
-def test_allowlist_rejects_other_ip_without_consuming_quota(client, auth_headers, client_from):
-    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-allowlist", "allowed_ips": ["10.0.0.0/8"]})
+def test_allowlist_rejects_other_ip_without_consuming_quota(client, auth_headers, client_from, key_scope):
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-allowlist", "allowed_ips": ["10.0.0.0/8"], **key_scope})
     assert r.status_code == 200, r.text
     k = r.json()
     try:
@@ -143,8 +144,8 @@ def test_allowlist_rejects_other_ip_without_consuming_quota(client, auth_headers
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
 
-def test_empty_allowlist_accepts_any_ip(client, auth_headers, client_from):
-    k = _create_key(client, auth_headers)
+def test_empty_allowlist_accepts_any_ip(client, auth_headers, client_from, key_scope):
+    k = _create_key(client, auth_headers, key_scope)
     try:
         assert client_from("8.8.8.8").get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
     finally:
@@ -166,9 +167,9 @@ def _enable_rate_limit(monkeypatch, api_key_default: int = 60):
     monkeypatch.setattr(rate_limiter, "_clock", lambda: 1_800_000_000.0)
 
 
-def test_per_key_rate_limit_returns_429_without_consuming_quota(client, auth_headers, monkeypatch):
+def test_per_key_rate_limit_returns_429_without_consuming_quota(client, auth_headers, monkeypatch, key_scope):
     _enable_rate_limit(monkeypatch)
-    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-ratelimit", "rate_limit_per_minute": 2})
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-ratelimit", "rate_limit_per_minute": 2, **key_scope})
     assert r.status_code == 200, r.text
     k = r.json()
     try:
@@ -182,9 +183,9 @@ def test_per_key_rate_limit_returns_429_without_consuming_quota(client, auth_hea
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
 
-def test_rate_limit_zero_uses_global_default(client, auth_headers, monkeypatch):
+def test_rate_limit_zero_uses_global_default(client, auth_headers, monkeypatch, key_scope):
     _enable_rate_limit(monkeypatch, api_key_default=1)
-    k = _create_key(client, auth_headers, name="pytest-ratelimit-default")
+    k = _create_key(client, auth_headers, key_scope, name="pytest-ratelimit-default")
     assert k["rate_limit_per_minute"] == 0
     try:
         assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
@@ -193,7 +194,7 @@ def test_rate_limit_zero_uses_global_default(client, auth_headers, monkeypatch):
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
 
-def test_rate_limit_allows_when_redis_down(client, auth_headers, monkeypatch):
+def test_rate_limit_allows_when_redis_down(client, auth_headers, monkeypatch, key_scope):
     """Redis 故障时放行（可用性优先），并把故障原因记下来供状态接口暴露。"""
     _enable_rate_limit(monkeypatch, api_key_default=1)
 
@@ -203,7 +204,7 @@ def test_rate_limit_allows_when_redis_down(client, auth_headers, monkeypatch):
 
     monkeypatch.setattr(redis_client, "get_redis", lambda: _DownRedis())
     monkeypatch.setattr(redis_client, "_last_error", None)
-    k = _create_key(client, auth_headers, name="pytest-ratelimit-redis-down")
+    k = _create_key(client, auth_headers, key_scope, name="pytest-ratelimit-redis-down")
     try:
         for _ in range(3):
             assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
@@ -213,9 +214,9 @@ def test_rate_limit_allows_when_redis_down(client, auth_headers, monkeypatch):
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
 
-def test_rate_limit_disabled_by_config_never_limits(client, auth_headers, monkeypatch):
+def test_rate_limit_disabled_by_config_never_limits(client, auth_headers, monkeypatch, key_scope):
     monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", False)
-    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-ratelimit-off", "rate_limit_per_minute": 1})
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-ratelimit-off", "rate_limit_per_minute": 1, **key_scope})
     k = r.json()
     try:
         for _ in range(3):
@@ -235,11 +236,11 @@ def _developer(client, auth_headers) -> tuple[int, dict]:
     return u.json()["id"], {"Authorization": "Bearer " + token}
 
 
-def test_developer_sees_only_own_keys(client, auth_headers):
+def test_developer_sees_only_own_keys(client, auth_headers, key_scope):
     dev_id, dev_headers = _developer(client, auth_headers)
-    admin_key = _create_key(client, auth_headers, name="pytest-admin-owned")
+    admin_key = _create_key(client, auth_headers, key_scope, name="pytest-admin-owned")
     try:
-        dev_key = _create_key(client, dev_headers, name="pytest-dev-owned")
+        dev_key = _create_key(client, dev_headers, key_scope, name="pytest-dev-owned")
         dev_ids = {k["id"] for k in client.get("/api/v1/api-keys", headers=dev_headers).json()["items"]}
         assert dev_key["id"] in dev_ids
         assert admin_key["id"] not in dev_ids
@@ -250,24 +251,24 @@ def test_developer_sees_only_own_keys(client, auth_headers):
         client.delete(f"/api/v1/users/{dev_id}", headers=auth_headers)
 
 
-def test_developer_cannot_modify_toggle_or_delete_others_key(client, auth_headers):
+def test_developer_cannot_modify_toggle_or_delete_others_key(client, auth_headers, key_scope):
     dev_id, dev_headers = _developer(client, auth_headers)
-    admin_key = _create_key(client, auth_headers, name="pytest-admin-owned-2")
+    admin_key = _create_key(client, auth_headers, key_scope, name="pytest-admin-owned-2")
     try:
         assert client.put(f"/api/v1/api-keys/{admin_key['id']}", headers=dev_headers, json={"name": "x"}).status_code == 404
         assert client.post(f"/api/v1/api-keys/{admin_key['id']}/toggle", headers=dev_headers).status_code == 404
         assert client.delete(f"/api/v1/api-keys/{admin_key['id']}", headers=dev_headers).status_code == 404
         assert _key_row(client, auth_headers, admin_key["id"])["is_enabled"] is True  # 没被 developer 动过
 
-        dev_key = _create_key(client, dev_headers, name="pytest-dev-owned-2")
+        dev_key = _create_key(client, dev_headers, key_scope, name="pytest-dev-owned-2")
         assert client.post(f"/api/v1/api-keys/{dev_key['id']}/toggle", headers=auth_headers).status_code == 200  # admin 不受限
     finally:
         client.delete(f"/api/v1/api-keys/{admin_key['id']}", headers=auth_headers)
         client.delete(f"/api/v1/users/{dev_id}", headers=auth_headers)
 
 
-def test_update_api_key_fields(client, auth_headers):
-    k = _create_key(client, auth_headers, name="pytest-update")
+def test_update_api_key_fields(client, auth_headers, key_scope):
+    k = _create_key(client, auth_headers, key_scope, name="pytest-update")
     try:
         r = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={
             "name": "pytest-updated", "quota": 5, "allowed_ips": ["10.0.0.0/8", " 192.168.1.1 "], "rate_limit_per_minute": 120,

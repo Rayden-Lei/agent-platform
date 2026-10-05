@@ -43,6 +43,7 @@ def get_current_user(
         user, api_key, rate_limit = api_key_service.authenticate(db, token)
         request.state.auth_via = "api_key"
         request.state.api_key_id = api_key.id
+        request.state.api_key = api_key  # 作用域判定要读 agent_ids / workflow_ids / kb_ids（docs/15 3.7.1），见 current_api_key
         request.state.rate_limit = rate_limit
         return user
     try:
@@ -81,6 +82,11 @@ def anonymous_rate_limit(request: Request) -> None:
 def is_api_key_request(request: Request) -> bool:
     """本次请求是否通过 API Key 鉴权（由 get_current_user 写入 request.state.auth_via）。"""
     return getattr(request.state, "auth_via", None) == "api_key"
+
+
+def current_api_key(request: Request):
+    """本次请求所用的 API Key 行（JWT 请求为 None）。路由把它交给服务层做作用域与会话通道判定，服务层不读 HTTP 上下文。"""
+    return getattr(request.state, "api_key", None) if is_api_key_request(request) else None
 
 
 def require_roles(*roles: str, allow_api_key: bool = False):

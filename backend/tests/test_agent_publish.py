@@ -87,7 +87,7 @@ def test_saving_draft_does_not_change_live_until_published(client, auth_headers,
     saved = _save(client, auth_headers, agent, system_prompt="标记B")
     assert saved.status_code == 200, saved.text
     assert saved.json()["has_unpublished_changes"] is True and saved.json()["status"] == "published"
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-pub-key", "quota": 10}).json()
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-pub-key", "quota": 10, "agent_ids": [agent["id"]]}).json()
     try:
         for headers in (auth_headers, {"Authorization": "Bearer " + key["key"]}):  # JWT 与 API Key 都按线上版本回答
             prompt, version = _live_prompt(client, headers, agent["id"], monkeypatch)

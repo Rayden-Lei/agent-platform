@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
-from app.core.deps import is_api_key_request, require_roles
+from app.core.deps import current_api_key, require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params, time_range
 from app.db.models import User
 from app.db.session import get_db
@@ -111,16 +111,14 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
 
 @router.post("/{workflow_id}/run")
 async def run_workflow(workflow_id: int, data: RunIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
-    """运行指定工作流。允许 API Key 调用，供外部系统触发执行；运行记录记下触发来源（ui / api_key）。"""
-    via_api_key = is_api_key_request(request)
-    return await workflow_service.run_workflow(db, workflow_id, data.input, user, source="api_key" if via_api_key else "ui",
-                                               api_key_id=getattr(request.state, "api_key_id", None) if via_api_key else None)
+    """运行指定工作流。允许 API Key 调用，供外部系统触发执行（工作流须在 Key 的作用域内）；运行记录记下触发来源（ui / api_key）。"""
+    return await workflow_service.run_workflow(db, workflow_id, data.input, user, api_key=current_api_key(request))
 
 
 @router.post("/{workflow_id}/runs/{run_id}/resume")
-async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
-    """人工审核通过 / 驳回后续跑。允许 API Key 调用。"""
-    return await workflow_service.resume_workflow(db, workflow_id, run_id, data.decision)
+async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
+    """人工审核通过 / 驳回后续跑。允许 API Key 调用：工作流须在作用域内，且只能续跑本 Key 发起的运行。"""
+    return await workflow_service.resume_workflow(db, workflow_id, run_id, data.decision, api_key=current_api_key(request))
 
 
 @router.get("/{workflow_id}/runs")

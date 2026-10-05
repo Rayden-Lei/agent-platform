@@ -176,8 +176,8 @@ def test_audit_logs_filters_and_time_range_validation(client, auth_headers):
 
 # ---------- API Key：创建人与筛选 ----------
 
-def test_api_keys_list_has_username_and_filters(client, auth_headers):
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-depth-key-" + uuid.uuid4().hex[:4], "quota": 5}).json()
+def test_api_keys_list_has_username_and_filters(client, auth_headers, key_scope):
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-depth-key-" + uuid.uuid4().hex[:4], "quota": 5, **key_scope}).json()
     try:
         listed = client.get("/api/v1/api-keys", headers=auth_headers, params={"q": key["name"]}).json()["items"][0]
         assert listed["username"] == "admin" and listed["user_id"] == key["user_id"]

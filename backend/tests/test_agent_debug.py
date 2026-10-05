@@ -140,7 +140,7 @@ def test_debug_retrieve_step_lists_hits_without_content(client, auth_headers, ag
     canned = {"items": [{"content": "片段正文", "score": 0.9, "chunk_id": 9, "doc_id": 3, "doc_name": "说明书.pdf", "meta": {"type": "pdf", "page": 3, "kb_id": 1},
                          "rerank_score": 0.8, "vector_score": 0.7, "keyword_score": 0.5}],
               "stats": {"candidate_count": 5, "returned": 1, "acl_rejected": 0, "kb_denied": False, "rerank_mode": "lexical", "timings": {"embed_ms": 1}}}
-    monkeypatch.setattr(chat_service, "retrieve_with_stats", lambda kb_id, query, top_k=None, mode="hybrid", role=None: canned)
+    monkeypatch.setattr(chat_service, "retrieve_with_stats", lambda kb_id, query, top_k=None, mode="hybrid", role=None, kb_scope=None: canned)
     _stub(monkeypatch, lambda: AnswerModel(messages=iter(["依据片段回答"])))
     try:
         events = _events(_debug(client, auth_headers, agent["id"], config=_inline(agent, kb_ids=[kb["id"]])))
@@ -189,7 +189,8 @@ def test_malformed_debug_request_is_422(client, auth_headers, agent, body):
 
 def test_debug_is_for_admin_and_developer_jwt_only(client, auth_headers, caller_headers, agent):
     assert _debug(client, caller_headers, agent["id"], config=_inline(agent)).status_code == 403
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-debug-key", "quota": 10}).json()
+    # 作用域里就有这个智能体：调试照样 403，拒绝的是 API Key 这个通道，不是作用域
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-debug-key", "quota": 10, "agent_ids": [agent["id"]]}).json()
     try:
         assert _debug(client, {"Authorization": "Bearer " + key["key"]}, agent["id"], config=_inline(agent)).status_code == 403
     finally:

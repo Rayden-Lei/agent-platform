@@ -222,7 +222,8 @@ def test_caller_still_forbidden_on_agent_management_endpoints(client, auth_heade
 
 def test_api_key_lists_available_agents(client, auth_headers, model_id, agents_cleanup):
     prefix = _published_and_draft(client, auth_headers, agents_cleanup, model_id)
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-avail-key", "quota": 5}).json()
+    # 作用域含已发布与草稿两个：Key 只看得到作用域内且已发布的
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-avail-key", "quota": 5, "agent_ids": agents_cleanup[:2]}).json()
     try:
         r = client.get("/api/v1/agents/available", headers={"Authorization": "Bearer " + key["key"]}, params={"q": prefix})
         assert r.status_code == 200, r.text

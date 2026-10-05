@@ -1,7 +1,8 @@
 """API Key 管理路由。
 
-API Key 供外部系统调用执行类接口（如工作流运行）时使用，与 JWT 共用 Authorization: Bearer 头。
-本模块仅允许 admin / developer 角色访问；developer 只能看到、操作本人创建的 Key（服务层按归属过滤）。
+API Key 供外部系统调用执行类接口（对话、工作流运行）时使用，与 JWT 共用 Authorization: Bearer 头；
+只能调用作用域内的智能体与工作流（docs/15 3.7.1）。本模块仅允许 admin / developer 角色访问；
+developer 只能看到、操作本人创建的 Key（服务层按归属过滤）。
 """
 
 import ipaddress
@@ -22,6 +23,15 @@ router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
 MAX_ALLOWED_IPS = 50
 MAX_RATE_LIMIT_PER_MINUTE = 10000
+MAX_SCOPE_IDS = 100  # 每类作用域的上限；ID 的存在性与知识库可见性在服务层校验（400）
+
+
+def _dedupe(ids: list[int] | None) -> list[int] | None:
+    """作用域去重保序：重复的 ID 不报错，只存一份。"""
+    if ids is None:
+        return None
+    seen: set[int] = set()
+    return [i for i in ids if not (i in seen or seen.add(i))]
 
 
 def _validate_cidrs(items: list[str]) -> list[str]:
@@ -42,31 +52,49 @@ class ApiKeyIn(BaseModel):
 
     quota：调用额度上限（默认 1000 次）；allowed_ips：来源白名单（空 = 不限制）；
     rate_limit_per_minute：每分钟限速（0 = 用全局 RATE_LIMIT_API_KEY_PER_MINUTE）。
+    agent_ids / workflow_ids / kb_ids：资源作用域（docs/15 3.7.1）——只能调这些智能体与工作流，检索时除公开库外只放行
+    kb_ids 内的库；三者至少一个非空（400，2026-10-05 起，此前 Key 能调归属人能调的一切）。
     """
 
     name: str = Field(min_length=1, max_length=64)
     quota: int = Field(default=1000, ge=0)
     allowed_ips: list[str] = Field(default_factory=list, max_length=MAX_ALLOWED_IPS)
     rate_limit_per_minute: int = Field(default=0, ge=0, le=MAX_RATE_LIMIT_PER_MINUTE)
+    agent_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
+    workflow_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
+    kb_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
 
     @field_validator("allowed_ips")
     @classmethod
     def _check_allowed_ips(cls, value: list[str]) -> list[str]:
         return _validate_cidrs(value)
 
+    @field_validator("agent_ids", "workflow_ids", "kb_ids")
+    @classmethod
+    def _unique(cls, value: list[int]) -> list[int]:
+        return _dedupe(value)
+
 
 class ApiKeyUpdate(BaseModel):
-    """编辑请求体：全部可选，只更新传了的字段；明文与哈希不可改。"""
+    """编辑请求体：全部可选，只更新传了的字段；明文与哈希不可改。改作用域时按改后的三类整体校验（至少一个非空）。"""
 
     name: str | None = Field(default=None, min_length=1, max_length=64)
     quota: int | None = Field(default=None, ge=0)
     allowed_ips: list[str] | None = Field(default=None, max_length=MAX_ALLOWED_IPS)
     rate_limit_per_minute: int | None = Field(default=None, ge=0, le=MAX_RATE_LIMIT_PER_MINUTE)
+    agent_ids: list[int] | None = Field(default=None, max_length=MAX_SCOPE_IDS)
+    workflow_ids: list[int] | None = Field(default=None, max_length=MAX_SCOPE_IDS)
+    kb_ids: list[int] | None = Field(default=None, max_length=MAX_SCOPE_IDS)
 
     @field_validator("allowed_ips")
     @classmethod
     def _check_allowed_ips(cls, value: list[str] | None) -> list[str] | None:
         return None if value is None else _validate_cidrs(value)
+
+    @field_validator("agent_ids", "workflow_ids", "kb_ids")
+    @classmethod
+    def _unique(cls, value: list[int] | None) -> list[int] | None:
+        return _dedupe(value)
 
 
 class ApiKeyBatchIn(BatchIn):

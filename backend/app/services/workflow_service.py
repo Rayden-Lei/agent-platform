@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
-from app.db.models import Agent, Run, ScheduledJob, User, Workflow
-from app.services import run_service
+from app.db.models import Agent, ApiKey, Run, ScheduledJob, User, Workflow
+from app.services import api_key_service, run_service
 from app.workflow.engine import build_workflow
 from app.workflow.validation import validate_graph
 
@@ -197,21 +197,26 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
     return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": steps}
 
 
-async def run_workflow(db: Session, workflow_id: int, input_text: str, user, source: str = "ui", api_key_id: int | None = None) -> dict:
+async def run_workflow(db: Session, workflow_id: int, input_text: str, user, api_key: ApiKey | None = None) -> dict:
     """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构不合法 400 且不建运行记录。
-    source 记录触发来源（ui / api_key，经 API Key 时同时记 api_key_id），与定时任务的 schedule 一起供运行记录页追溯。"""
+    api_key 不为空表示 Key 调用：工作流须在 Key 的作用域内（否则 403 且不建运行记录，docs/15 3.7.1——2026-10-05 前
+    Key 能调归属人能调的任意工作流），运行记录 source=api_key 并记 api_key_id，与定时任务的 schedule 一起供运行记录页追溯。"""
+    api_key_service.check_workflow_scope(api_key, workflow_id)
     w = get_workflow(db, workflow_id)
     _check_graph(w.graph)
     run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text},
-                                 source=source, api_key_id=api_key_id)
+                                 source="api_key" if api_key else "ui", api_key_id=api_key.id if api_key else None)
     return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
 
 
-async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict) -> dict:
-    """人工审核通过/驳回后续跑：仅允许 awaiting_review 状态的运行记录被 resume。"""
+async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict, api_key: ApiKey | None = None) -> dict:
+    """人工审核通过/驳回后续跑：仅允许 awaiting_review 状态的运行记录被 resume。
+    Key 调用时工作流须在作用域内（403），且只能续跑这个 Key 自己发起的运行——别的 Key 或界面发起的一律 404「运行记录不存在」，
+    不暴露存在性（docs/15 3.7.1；此前只校验运行属于该工作流，拿到 run_id 的任何 Key 都能替人审批）。JWT 请求的口径不变。"""
+    api_key_service.check_workflow_scope(api_key, workflow_id)
     w = get_workflow(db, workflow_id)
     run = db.get(Run, run_id)
-    if run is None or run.workflow_id != workflow_id:
+    if run is None or run.workflow_id != workflow_id or (api_key is not None and run.api_key_id != api_key.id):
         raise BizError(404, "运行记录不存在")
     if run.status != "awaiting_review":
         raise BizError(400, "该运行不在待审核状态")

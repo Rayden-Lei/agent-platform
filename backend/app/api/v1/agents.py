@@ -8,11 +8,11 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
-from app.core.deps import get_current_user, require_roles
+from app.core.deps import current_api_key, get_current_user, require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
@@ -59,21 +59,22 @@ def batch_agents(data: AgentBatchIn, db: Session = Depends(get_db), user: User =
 
 @router.get("/available", response_model=Page[AgentBriefOut])
 def list_available_agents(
+    request: Request,
     params: PageParams = Depends(page_params),
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """可对话的智能体（本模块唯一不限角色的接口）：任何登录身份都可调，含 caller 与 API Key。
+    """可对话的智能体（本模块唯一不限角色的接口）：任何登录身份都可调，含 caller 与 API Key（只列 Key 作用域内的）。
     只返回已发布的，且只带 id / 名称 / 描述 / 发布时间，名称与描述取线上快照。对话页下拉用它，外部系统也用它发现可调的智能体。"""
-    return agent_service.list_available_agents(db, params, q)
+    return agent_service.list_available_agents(db, params, q, api_key=current_api_key(request))
 
 
 @router.get("/available/{agent_id}", response_model=AgentBriefOut)
-def get_available_agent(agent_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """单个可对话智能体的对外资料（任何登录身份含 API Key）：不存在 404、未发布或已下线 403。
+def get_available_agent(agent_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """单个可对话智能体的对外资料（任何登录身份含 API Key）：不存在 404、未发布或已下线 403、不在 Key 作用域内 403。
     深链进对话页、可对话智能体超过一页时用它定位当前智能体（docs/15 AG-05）。"""
-    return agent_service.get_available_agent(db, agent_id)
+    return agent_service.get_available_agent(db, agent_id, api_key=current_api_key(request))
 
 
 @router.get("/{agent_id}", response_model=AgentDetailOut)

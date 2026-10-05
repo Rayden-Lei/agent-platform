@@ -12,14 +12,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.config import settings
 from app.core.exceptions import BizError
-from app.db.models import Agent, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool
+from app.db.models import Agent, ApiKey, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool
 from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.runtime.agent_config import AgentRunConfig, load_version_config, resolve_live_config, run_config_from_snapshot, snapshot_of, usable_model
 from app.schemas import AgentIn
-from app.services import agent_service, chat_trace, run_service, settings_service
+from app.services import agent_service, api_key_service, chat_trace, run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -204,15 +204,16 @@ class Retrieval(NamedTuple):
     steps: list  # 每个 (知识库, 查询) 一条调用链步骤（chat_trace.retrieve_step），调试下发，线上暂不用
 
 
-def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict | None = None) -> Retrieval:
-    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。"""
+def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict | None = None, kb_scope: list | None = None) -> Retrieval:
+    """对每个 (知识库, 查询) 并行检索（各自开会话），按 (kb_id, chunk_id) 合并取最高分。
+    kb_scope 是 API Key 的 kb_ids（Key 发起的对话才传，检索按 Key 的范围放行，见 retriever.kb_allows）。"""
     pairs = [(kb_id, q) for kb_id in kb_ids for q in queries]
     top_k = settings_service.runtime_value("rag_top_k")  # 每库召回条数是运行时参数（页面可改），一次请求内取一次保持一致
     kb_names = kb_names or {}
 
     def _one(pair):
         clock = chat_trace.Clock()
-        result = retrieve_with_stats(pair[0], pair[1], top_k, role=role)
+        result = retrieve_with_stats(pair[0], pair[1], top_k, role=role, kb_scope=kb_scope)
         return pair[0], result, chat_trace.retrieve_step(kb_names.get(pair[0], f"知识库 #{pair[0]}"), pair[1], result, clock)
 
     if len(pairs) == 1:
@@ -243,16 +244,18 @@ class PreparedChat(NamedTuple):
 
 
 def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, conversation_id: int | None = None,
-                 source: str = "chat", api_key_id: int | None = None) -> PreparedChat:
+                 api_key: ApiKey | None = None) -> PreparedChat:
     """校验消息、智能体与会话，获取/新建会话，落用户消息与运行记录。
 
-    所有拒绝都发生在写库之前：消息全是空白 400、智能体不存在 404 / 未发布或已下线 403、会话不属于本人或不属于该智能体 404。
-    长度上限由路由的 ChatIn 管（422）。source 区分登录对话（chat）与 API Key 调用（api_key，同时记 api_key_id），
-    2026-09-25 前 API Key 发起的对话也记成 chat，运行记录按 Key 筛不到。
+    所有拒绝都发生在写库之前：消息全是空白 400、API Key 的作用域里没有该智能体 403、智能体不存在 404 / 未发布或已下线 403、
+    会话不属于本人或不属于该智能体 404。长度上限由路由的 ChatIn 管（422）。
+    api_key 不为空表示 Key 发起的对话：运行记录 source=api_key 并记 api_key_id（2026-09-25 前也记成 chat，按 Key 筛不到）；
+    作用域判定在服务层（docs/15 3.7.1，2026-10-05 前 Key 能调归属人能调的任意已发布智能体）。
     配置读线上版本（草稿与线上分离，FR-039）：运行记录的 model_id 与 agent_version 都取线上快照，不取草稿行。
     """
     if not message.strip():
         raise BizError(400, "消息不能为空")
+    api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
     conversation = None
     if conversation_id:
@@ -271,14 +274,17 @@ def prepare_chat(db: Session, user_id: int, agent_id: int, message: str, convers
     # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属
     run = run_service.create_run(
         db, "chat", user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
-        input_data={"message": message}, source=source, api_key_id=api_key_id, agent_version=live.version,
+        input_data={"message": message}, source="api_key" if api_key else "chat", api_key_id=api_key.id if api_key else None,
+        agent_version=live.version,
     )
     return PreparedChat(conversation.id, run.id, live.version)
 
 
-def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False) -> ChatContext:
+def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
+                         kb_scope: list | None = None) -> ChatContext:
     """按一份智能体配置装配 LLM、工具与检索（含 RAG 引用，带权限过滤 + 证据绑定），历史消息由调用方补。
-    线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。"""
+    线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。
+    kb_scope：API Key 对话时传 Key 的 kb_ids，检索只放行公开库与范围内且归属人可见的库（docs/15 3.7.1）。"""
     model = usable_model(db, cfg.model_id)
     llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）
     tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids else []
@@ -294,7 +300,7 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
         if trace and settings.RAG_QUERY_REWRITE_ENABLED:
             steps.append(chat_trace.make_step("rewrite", "查询改写", clock, input={"message": message_text}, output=queries))
         kb_names = dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all()) if trace else None
-        retrieval = _retrieve_all(cfg.kb_ids, queries, role, kb_names)
+        retrieval = _retrieve_all(cfg.kb_ids, queries, role, kb_names, kb_scope)
         steps.extend(retrieval.steps)
         if retrieval.citations:
             kb_context = (
@@ -310,11 +316,11 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
 
 
 def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
-                       agent_version: int | None = None) -> ChatContext:
+                       agent_version: int | None = None, kb_scope: list | None = None) -> ChatContext:
     """构建线上对话的上下文：配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本），
-    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。"""
+    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。kb_scope 见 _context_from_config。"""
     cfg = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
-    ctx = _context_from_config(db, cfg, message_text, role)
+    ctx = _context_from_config(db, cfg, message_text, role, kb_scope=kb_scope)
 
     conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()

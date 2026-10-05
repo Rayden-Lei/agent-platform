@@ -89,9 +89,9 @@ def test_anonymous_login_rate_limited_by_ip(client, auth_headers, monkeypatch, c
     assert client_from("10.78.0.1").post("/api/v1/auth/login", json=admin_login).status_code == 200
 
 
-def test_api_key_429_carries_retry_after(client, auth_headers, monkeypatch):
+def test_api_key_429_carries_retry_after(client, auth_headers, monkeypatch, key_scope):
     _enable(monkeypatch, api_key_limit=1)
-    k = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-rl-header"}).json()
+    k = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-rl-header", **key_scope}).json()
     try:
         bearer = {"Authorization": "Bearer " + k["key"]}
         ok = client.get("/api/v1/auth/me", headers=bearer)

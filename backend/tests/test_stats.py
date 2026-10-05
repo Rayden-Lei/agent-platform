@@ -52,10 +52,10 @@ def test_stats_daily_clamps_days_and_rejects_invalid_values(client, auth_headers
     assert client.get("/api/v1/stats/runs/daily", headers=auth_headers, params={"run_type": "batch"}).status_code == 422
 
 
-def test_stats_endpoints_forbid_caller_and_api_key(client, auth_headers):
+def test_stats_endpoints_forbid_caller_and_api_key(client, auth_headers, key_scope):
     username = "pytest-stats-caller-" + uuid.uuid4().hex[:6]
     created = client.post("/api/v1/users", headers=auth_headers, json={"username": username, "password": "caller123", "role": "caller"}).json()
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-stats-key", "quota": 5}).json()
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-stats-key", "quota": 5, **key_scope}).json()
     try:
         token = client.post("/api/v1/auth/login", json={"username": username, "password": "caller123"}).json()["token"]
         for path in ("/api/v1/stats/overview", "/api/v1/stats/runs/daily", "/api/v1/stats/models", "/api/v1/stats/agents", "/api/v1/stats/workflows"):

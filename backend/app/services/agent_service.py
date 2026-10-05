@@ -7,10 +7,10 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
-from app.db.models import Agent, AgentVersion, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
+from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
-from app.services import kb_service, run_service
+from app.services import api_key_service, kb_service, run_service
 
 SORTABLE = {"id": Agent.id, "name": Agent.name, "status": Agent.status, "version": Agent.version, "updated_at": Agent.updated_at}
 
@@ -136,14 +136,17 @@ def agent_ids_using_models(db: Session, model_ids: set) -> dict[int, set]:
     return refs
 
 
-def list_available_agents(db: Session, params: PageParams, q: str = None) -> dict:
+def list_available_agents(db: Session, params: PageParams, q: str = None, api_key: ApiKey | None = None) -> dict:
     """可对话的智能体：只列已发布且有线上版本的，名称与描述取线上快照（草稿改名不影响对外展示），
-    q 按线上名称模糊，按 id 升序（与对话页原来的默认选中口径一致）。字段白名单由路由的 AgentBriefOut 保证。"""
+    q 按线上名称模糊，按 id 升序（与对话页原来的默认选中口径一致）。字段白名单由路由的 AgentBriefOut 保证。
+    API Key 请求只列作用域内的（docs/15 3.7.1）。"""
     query = (
         db.query(Agent.id, Agent.published_at, AgentVersion.snapshot)
         .join(AgentVersion, (AgentVersion.agent_id == Agent.id) & (AgentVersion.version == Agent.published_version))
         .filter(Agent.status == "published")
     )
+    if api_key is not None:
+        query = query.filter(Agent.id.in_(api_key.agent_ids or []))
     if q:
         query = query.filter(AgentVersion.snapshot["name"].astext.ilike(f"%{q}%"))
     return paginate(query.order_by(Agent.id.asc()), params, lambda r: {
@@ -151,8 +154,10 @@ def list_available_agents(db: Session, params: PageParams, q: str = None) -> dic
     })
 
 
-def get_available_agent(db: Session, agent_id: int) -> dict:
-    """单个可对话智能体（与列表同一口径）：名称与描述取线上快照；不存在 404、未发布 403「智能体未发布」、已下线 403「智能体已下线」。"""
+def get_available_agent(db: Session, agent_id: int, api_key: ApiKey | None = None) -> dict:
+    """单个可对话智能体（与列表同一口径）：名称与描述取线上快照；不存在 404、未发布 403「智能体未发布」、已下线 403「智能体已下线」；
+    API Key 请求另须在作用域内（403，与对话同一句）。"""
+    api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
     return {"id": agent_id, "name": live.name, "description": live.description, "published_at": db.get(Agent, agent_id).published_at}
 

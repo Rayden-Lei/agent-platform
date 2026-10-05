@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
-from app.core.deps import get_current_user, is_api_key_request, require_roles
+from app.core.deps import current_api_key, get_current_user, require_roles
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas import AgentIn
@@ -82,14 +82,14 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     返回 SSE 事件流，事件类型包括 citations / delta / tool_call / tool_result / done / error（docs/04 第 5 节）。
     空消息、智能体不存在或未发布、会话不属于本人或不属于该智能体，都在建流之前以 HTTP 状态码拒绝，不写任何数据。
     """
-    via_api_key = is_api_key_request(request)
+    api_key = current_api_key(request)
+    # Key 对话的检索范围（docs/15 3.7.1）；在 prepare_chat 提交之前取，提交后 ORM 对象过期、再读会多一次查询
+    kb_scope = list(api_key.kb_ids or []) if api_key else None
     # 同步的库操作放线程池，不阻塞事件循环
-    prepared = await run_in_threadpool(
-        chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id,
-        "api_key" if via_api_key else "chat", getattr(request.state, "api_key_id", None) if via_api_key else None,
-    )
+    prepared = await run_in_threadpool(chat_service.prepare_chat, db, user.id, agent_id, data.message, data.conversation_id, api_key)
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
-                                conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version)
+                                conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
+                                kb_scope=kb_scope)
     return StreamingResponse(_sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
 
 

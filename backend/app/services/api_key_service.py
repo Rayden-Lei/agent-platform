@@ -12,7 +12,8 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.rate_limiter import RateLimitResult
 from app.core.request_context import get_client_ip
-from app.db.models import ApiKey, User
+from app.db.models import Agent, ApiKey, KnowledgeBase, User, Workflow
+from app.services import kb_service
 
 
 def hash_key(key: str) -> str:
@@ -71,13 +72,58 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey, RateLimitResu
 
 
 SORTABLE = {"id": ApiKey.id, "name": ApiKey.name, "used": ApiKey.used, "last_used_at": ApiKey.last_used_at, "created_at": ApiKey.created_at}
+SCOPE_FIELDS = ("agent_ids", "workflow_ids", "kb_ids")
 
 
-def _to_dict(k: ApiKey, username: str | None = None) -> dict:
-    """Key 元信息（只含前缀，永不返回明文与哈希）；username 是创建人，admin 视角区分归属。"""
+# ---------- 资源作用域（docs/15 3.7.1，D-09）：Key 只能调授权范围内的资源，没有"空 = 全部放行"的兜底 ----------
+
+def check_agent_scope(api_key: ApiKey | None, agent_id: int) -> None:
+    """Key 请求只能调作用域内的智能体（403）；JWT 请求（api_key 为 None）不受限。"""
+    if api_key is not None and agent_id not in (api_key.agent_ids or []):
+        raise BizError(403, "该 API Key 无权调用此智能体")
+
+
+def check_workflow_scope(api_key: ApiKey | None, workflow_id: int) -> None:
+    """Key 请求只能运行、续跑作用域内的工作流（403）；JWT 请求不受限。"""
+    if api_key is not None and workflow_id not in (api_key.workflow_ids or []):
+        raise BizError(403, "该 API Key 无权调用此工作流")
+
+
+def _check_scope(db: Session, agent_ids: list, workflow_ids: list, kb_ids: list, owner: User) -> None:
+    """保存前校验作用域：三类至少一个非空（400）；引用的智能体、工作流须存在，知识库须存在且对归属人可见（KB-01），
+    缺的一次列全（400）。不可见与不存在同一句提示，不暴露受限库是否存在。"""
+    if not (agent_ids or workflow_ids or kb_ids):
+        raise BizError(400, "至少授权一个智能体、工作流或知识库：API Key 只能调用授权范围内的资源")
+    for model, ids, label, extra in ((Agent, agent_ids, "智能体", None), (Workflow, workflow_ids, "工作流", None),
+                                     (KnowledgeBase, kb_ids, "知识库", kb_service.visible_kb_filter(owner.role))):
+        if not ids:
+            continue
+        query = db.query(model.id).filter(model.id.in_(ids))
+        found = {i for (i,) in (query.filter(extra) if extra is not None else query)}
+        missing = [i for i in ids if i not in found]
+        if missing:
+            raise BizError(400, f"{label}不存在：{', '.join(str(i) for i in missing)}")
+
+
+def _scope_names(db: Session, keys: list[ApiKey]) -> dict[str, dict[int, str]]:
+    """一页 Key 的作用域里各资源的名称：三类各一次 IN 查询。查不到的（已删除）不在结果里，序列化时名称记 None。"""
+    names: dict[str, dict[int, str]] = {}
+    for field, model in (("agent_ids", Agent), ("workflow_ids", Workflow), ("kb_ids", KnowledgeBase)):
+        ids = {i for k in keys for i in (getattr(k, field) or [])}
+        names[field] = dict(db.query(model.id, model.name).filter(model.id.in_(ids)).all()) if ids else {}
+    return names
+
+
+def _to_dict(k: ApiKey, username: str | None = None, names: dict | None = None) -> dict:
+    """Key 元信息（只含前缀，永不返回明文与哈希）；username 是创建人，admin 视角区分归属。
+    作用域给原始 ID（编辑表单回填）与带名称的清单 scope（列表与抽屉展示；资源已删除时 name 为 None）。"""
+    names = names or {}
+    scope = {field: [{"id": i, "name": names.get(field, {}).get(i)} for i in (getattr(k, field) or [])] for field in SCOPE_FIELDS}
     return {
         "id": k.id, "name": k.name, "key_prefix": k.key_prefix, "quota": k.quota, "used": k.used,
         "is_enabled": k.is_enabled, "allowed_ips": k.allowed_ips or [], "rate_limit_per_minute": k.rate_limit_per_minute,
+        "agent_ids": list(k.agent_ids or []), "workflow_ids": list(k.workflow_ids or []), "kb_ids": list(k.kb_ids or []),
+        "scope": {"agents": scope["agent_ids"], "workflows": scope["workflow_ids"], "knowledge_bases": scope["kb_ids"]},
         "user_id": k.user_id, "username": username,
         "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
         "created_at": k.created_at.isoformat() if k.created_at else None,
@@ -108,7 +154,8 @@ def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is
     page = paginate(apply_sort(query, sort, SORTABLE, [ApiKey.id.desc()]), params)
     user_ids = {k.user_id for k in page["items"]}
     names = dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
-    page["items"] = [_to_dict(k, names.get(k.user_id)) for k in page["items"]]
+    scope_names = _scope_names(db, page["items"])
+    page["items"] = [_to_dict(k, names.get(k.user_id), scope_names) for k in page["items"]]
     return page
 
 
@@ -129,7 +176,8 @@ def apply_batch_action(db: Session, key_id: int, action: str, user: User) -> Non
 
 
 def create_api_key(db: Session, data, user: User) -> dict:
-    """生成新 Key：明文只在此次响应返回一次，之后无法找回（落库仅存哈希与前缀）。"""
+    """生成新 Key：明文只在此次响应返回一次，之后无法找回（落库仅存哈希与前缀）。作用域校验见 _check_scope（归属人即当前用户）。"""
+    _check_scope(db, data.agent_ids, data.workflow_ids, data.kb_ids, user)
     raw = "ak_" + secrets.token_hex(16)
     ak = ApiKey(
         user_id=user.id,
@@ -139,23 +187,31 @@ def create_api_key(db: Session, data, user: User) -> dict:
         quota=data.quota,
         allowed_ips=data.allowed_ips,
         rate_limit_per_minute=data.rate_limit_per_minute,
+        agent_ids=data.agent_ids,
+        workflow_ids=data.workflow_ids,
+        kb_ids=data.kb_ids,
     )
     db.add(ak)
     db.commit()
     db.refresh(ak)
-    return {**_to_dict(ak), "key": raw}
+    return {**_to_dict(ak, user.username, _scope_names(db, [ak])), "key": raw}
 
 
 def update_api_key(db: Session, key_id: int, data, user: User) -> dict:
-    """只更新请求里传了的字段（None 表示未提供）；归属校验见 _get_owned。"""
+    """只更新请求里传了的字段（None 表示未提供）；归属校验见 _get_owned。
+    改了任一作用域时，按改后的三类整体再校验一次（至少一个非空；知识库按归属人的角色判可见，admin 代改他人 Key 时也一样）。"""
     k = _get_owned(db, key_id, user)
-    for field in ("name", "quota", "allowed_ips", "rate_limit_per_minute"):
+    if any(getattr(data, f) is not None for f in SCOPE_FIELDS):
+        merged = {f: getattr(data, f) if getattr(data, f) is not None else list(getattr(k, f) or []) for f in SCOPE_FIELDS}
+        owner = user if k.user_id == user.id else db.get(User, k.user_id)
+        _check_scope(db, merged["agent_ids"], merged["workflow_ids"], merged["kb_ids"], owner)
+    for field in ("name", "quota", "allowed_ips", "rate_limit_per_minute", *SCOPE_FIELDS):
         value = getattr(data, field)
         if value is not None:
             setattr(k, field, value)
     db.commit()
     db.refresh(k)
-    return _to_dict(k)
+    return _to_dict(k, None, _scope_names(db, [k]))
 
 
 def toggle_api_key(db: Session, key_id: int, user: User) -> dict:

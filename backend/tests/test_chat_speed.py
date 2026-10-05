@@ -68,7 +68,7 @@ def test_model_api_rejects_invalid_thinking(client, auth_headers):
 def test_retrieve_all_runs_every_pair_and_merges_by_best_score(monkeypatch):
     calls: list = []
 
-    def _fake(kb_id, query, top_k, role=None):
+    def _fake(kb_id, query, top_k, role=None, kb_scope=None):
         calls.append((kb_id, query))
         score = 0.9 if query == "q1" else 0.5
         return {"items": [{"chunk_id": 1, "doc_name": "d", "content": "c", "score": score}, {"chunk_id": 10 + kb_id, "doc_name": "d", "content": "c2", "score": 0.3}], "stats": {"acl_rejected": 1}}

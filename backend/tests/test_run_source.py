@@ -41,7 +41,7 @@ def test_create_run_rejects_unknown_source(client, auth_headers):
 
 def test_workflow_run_records_ui_and_api_key_sources(client, auth_headers):
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-source-wf", "description": "", "graph": START_END}).json()
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-source-key", "quota": 5}).json()
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-source-key", "quota": 5, "workflow_ids": [wf["id"]]}).json()
     try:
         by_ui = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "x"}).json()
         by_key = client.post(f"/api/v1/workflows/{wf['id']}/run", headers={"Authorization": "Bearer " + key["key"]}, json={"input": "x"}).json()

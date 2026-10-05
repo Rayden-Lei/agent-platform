@@ -141,8 +141,8 @@ def test_caller_role_is_forbidden(client, auth_headers, template):
         client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
 
 
-def test_api_key_is_forbidden(client, auth_headers, template):
-    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-tpl-key", "quota": 10}).json()
+def test_api_key_is_forbidden(client, auth_headers, template, key_scope):
+    key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-tpl-key", "quota": 10, **key_scope}).json()
     try:
         r = client.get("/api/v1/prompt-templates", headers={"Authorization": "Bearer " + key["key"]})
         assert r.status_code == 403 and "API Key" in r.json()["detail"]

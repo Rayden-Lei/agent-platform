@@ -55,6 +55,17 @@ def caller_headers(client, auth_headers):
     client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
 
 
+@pytest.fixture(scope="session")
+def key_scope(client, auth_headers) -> dict:
+    """建 API Key 必须带至少一项作用域（docs/15 3.7.1，2026-10-05 起）。不关心作用域的用例（鉴权、配额、限流、管理接口拒绝）
+    共用这个只授权了一个空流程工作流的作用域；真要调智能体或工作流的用例按实际调用的资源授权。"""
+    graph = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
+    w = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-key-scope-" + uuid.uuid4().hex[:6], "description": "", "graph": graph})
+    assert w.status_code == 200, w.text
+    yield {"workflow_ids": [w.json()["id"]]}
+    client.delete(f"/api/v1/workflows/{w.json()['id']}", headers=auth_headers)
+
+
 @pytest.fixture
 def client_from(client):
     """以指定对端地址建 TestClient，模拟不同来源 IP。依赖 client 是为了保证 lifespan 已经跑过（建表、管理员）。"""

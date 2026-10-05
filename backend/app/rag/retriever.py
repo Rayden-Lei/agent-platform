@@ -13,26 +13,32 @@ from app.services.settings_service import runtime_value
 RRF_K = 60  # RRF 倒排融合常数
 
 
-def kb_allows(role: str, kb: KnowledgeBase | None) -> bool:
+def kb_allows(role: str, kb: KnowledgeBase | None, kb_scope: list | None = None) -> bool:
     """知识库级鉴权（第一道闸门，召回之前）：admin 可见全部；其他角色只能检索公开库，或 visible_roles 含该角色的库。
 
     读的是 knowledge_bases 行的当前值。切片 meta 里的 is_public / visible_roles 是入库时的快照，改权限后不回写，
     拿它鉴权会让改权限对存量切片不生效（2026-09-25 之前就是这样），现在只留作审计。库不存在视为无权。
     管理面的 kb_service.visible_kb_filter 是同一规则的 SQL 写法；知识库详情的"各身份能否检索"直接调本函数（docs/15 KB-01）。
+
+    kb_scope 不为 None 表示 API Key 发起的检索（docs/15 3.7.1，D-07 / D-09）：只放行公开库，以及在 Key 的 kb_ids 内、
+    且归属人当前角色可见的库。不因归属人是 admin 就放行受限库——否则 admin 给智能体建一个 Key，智能体绑定的
+    "仅管理员可见"库就对 Key 背后的所有终端用户开放了。
     """
     if kb is None:
         return False
+    if kb_scope is not None:
+        return bool(kb.is_public) or (kb.id in kb_scope and kb_allows(role, kb))
     if role == "admin":
         return True
     return bool(kb.is_public) or (bool(role) and role in (kb.visible_roles or []))
 
 
-def _authorize(role: str, kb: KnowledgeBase, chunk) -> bool:
-    """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色可见。
+def _authorize(role: str, kb: KnowledgeBase, chunk, kb_scope: list | None = None) -> bool:
+    """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色（与 Key 的范围）可见。
 
     与 kb_allows 同一口径（06 第 8 节：两道闸门语义一致）；召回层万一混进别的库的切片，在这里拦下。
     """
-    return chunk.kb_id == kb.id and kb_allows(role, kb)
+    return chunk.kb_id == kb.id and kb_allows(role, kb, kb_scope)
 
 
 def _rrf_fuse(candidates: dict) -> None:
@@ -177,7 +183,7 @@ def _dedupe(ranked: list) -> list:
     return kept
 
 
-def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list = None) -> tuple[list, int]:
+def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list = None, kb_scope: list | None = None) -> tuple[list, int]:
     """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
 
     模型重排的分数分布与词法完全不同（相关 ≈ 0.99、无关 ≈ 0），淘汰阈值按重排模式分别取配置。
@@ -190,35 +196,35 @@ def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBa
     ranked = _dedupe(ranked)
     kept, rejected = [], 0
     for c in ranked:
-        if _authorize(role, kb, c.get("chunk")):
+        if _authorize(role, kb, c.get("chunk"), kb_scope):
             kept.append(c)
         else:
             rejected += 1
     return kept, rejected
 
 
-def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> list:
-    """RRF 融合召回 + 重排淘汰 + 权限过滤，返回完整文本块（content/score/doc_id/doc_name/meta）。"""
+def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None, kb_scope: list | None = None) -> list:
+    """RRF 融合召回 + 重排淘汰 + 权限过滤，返回完整文本块（content/score/doc_id/doc_name/meta）。kb_scope 见 kb_allows。"""
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
         kb = db.get(KnowledgeBase, kb_id)
-        if not kb_allows(role, kb):
+        if not kb_allows(role, kb, kb_scope):
             return []
         candidates = _collect_candidates(db, kb_id, query, top_k, mode)
-        ranked, _ = _rank_and_authorize(query, candidates, role, kb)
+        ranked, _ = _rank_and_authorize(query, candidates, role, kb, kb_scope=kb_scope)
         return _format_items(db, ranked, top_k, enriched=False)
     finally:
         db.close()
 
 
-def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None) -> dict:
-    """检索 + 召回质量统计（含 RRF、淘汰、鉴权剔除数），供评测/调试接口使用。"""
+def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None, kb_scope: list | None = None) -> dict:
+    """检索 + 召回质量统计（含 RRF、淘汰、鉴权剔除数），供评测 / 调试 / 对话使用。kb_scope 见 kb_allows（API Key 对话才传）。"""
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
     try:
         kb = db.get(KnowledgeBase, kb_id)
-        if not kb_allows(role, kb):
+        if not kb_allows(role, kb, kb_scope):
             # 无权检索这个库：不召回、不做查询向量化；kb_denied 让评测页与调用方能区分"没命中"和"没权限"
             return {"items": [], "stats": {
                 "query": query, "keywords": [], "candidate_count": 0, "acl_rejected": 0, "returned": 0,
@@ -228,7 +234,7 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "
         candidates = _collect_candidates(db, kb_id, query, top_k, mode, timings=timings)
         keywords = extract_keywords(query)
         started = time.perf_counter()
-        ranked, rejected = _rank_and_authorize(query, candidates, role, kb, keywords=keywords)
+        ranked, rejected = _rank_and_authorize(query, candidates, role, kb, keywords=keywords, kb_scope=kb_scope)
         timings["rerank_ms"] = int((time.perf_counter() - started) * 1000)
         items = _format_items(db, ranked, top_k, enriched=True)
         scores = [c["score"] for c in ranked[:top_k]]
