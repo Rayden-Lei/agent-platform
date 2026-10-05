@@ -64,3 +64,15 @@ def test_bad_public_base_url_fails_at_startup(raw):
     """配错启动即报错：不留到外部用户打不开分享链接才发现。"""
     with pytest.raises(ValidationError):
         Settings(PUBLIC_BASE_URL=raw)
+
+
+def test_db_connections_use_tcp_keepalive():
+    """连接池的连接带 TCP keepalive（2026-10-05 起）：经 NAT 连共享库时，闲置几分钟的连接会被中间设备悄悄回收，
+    重连后旧连接留在库里成孤儿（库按 7200 秒的 keepalive 才回收），两小时攒了 70 多个、逼近 max_connections。
+    当天的对照实验：闲置 6 分钟后，带 keepalive 的连接原样复用，不带的要 19 秒才发现已断并重连，旧连接留在库里。"""
+    from app.db.session import engine
+
+    with engine.connect() as conn:
+        params = conn.connection.dbapi_connection.get_dsn_parameters()
+    assert params.get("keepalives") == "1"
+    assert int(params["keepalives_idle"]) <= 60  # 要比常见 NAT 的空闲回收时间短
