@@ -163,6 +163,28 @@ def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is
     return page
 
 
+def list_my_api_keys(db: Session, user: User, params: PageParams) -> dict:
+    """归属本人的 Key（个人中心"我的 API 密钥"，docs/15 OP-03）：任何角色都能看，结构同管理列表，按 id 倒序分页。
+    调用者看到的是管理员代发给自己的（D-15），只读——启停与删除仍只对 admin / developer 开放。"""
+    page = paginate(db.query(ApiKey).filter(ApiKey.user_id == user.id).order_by(ApiKey.id.desc()), params)
+    scope_names = _scope_names(db, page["items"])
+    page["items"] = [_to_dict(k, user.username, scope_names) for k in page["items"]]
+    return page
+
+
+def _owner_for(db: Session, owner_user_id: int | None, user: User) -> User:
+    """新 Key 的归属人：默认是创建人；admin 可以代发给别人（docs/15 D-15，调用者拿到的 Key 由管理员发放），
+    其他角色指定别人 403；被代发的用户须存在且启用（400）。"""
+    if owner_user_id is None or owner_user_id == user.id:
+        return user
+    if user.role != "admin":
+        raise BizError(403, "只有管理员能替其他用户生成 API Key")
+    owner = db.get(User, owner_user_id)
+    if owner is None or not owner.is_active:
+        raise BizError(400, "归属用户不存在或已停用")
+    return owner
+
+
 def set_api_key_enabled(db: Session, key_id: int, enabled: bool, user: User) -> dict:
     """设置启用状态（批量启停用；toggle 也走这里），幂等。"""
     k = _get_owned(db, key_id, user)
@@ -180,11 +202,14 @@ def apply_batch_action(db: Session, key_id: int, action: str, user: User) -> Non
 
 
 def create_api_key(db: Session, data, user: User) -> dict:
-    """生成新 Key：明文只在此次响应返回一次，之后无法找回（落库仅存哈希与前缀）。作用域校验见 _check_scope（归属人即当前用户）。"""
-    _check_scope(db, data.agent_ids, data.workflow_ids, data.kb_ids, user)
+    """生成新 Key：明文只在此次响应返回一次，之后无法找回（落库仅存哈希与前缀）。
+    归属人默认是当前用户，admin 可用 owner_user_id 代发（_owner_for）；作用域按归属人校验（_check_scope，知识库按归属人的角色判可见）。
+    写审计 create / api_key（名称、前缀与归属人，2026-10-05 起；代发是替别人造凭据，要能追溯）。"""
+    owner = _owner_for(db, data.owner_user_id, user)
+    _check_scope(db, data.agent_ids, data.workflow_ids, data.kb_ids, owner)
     raw = "ak_" + secrets.token_hex(16)
     ak = ApiKey(
-        user_id=user.id,
+        user_id=owner.id,
         name=data.name,
         key_prefix=raw[:12] + "...",
         key_hash=hash_key(raw),
@@ -198,7 +223,8 @@ def create_api_key(db: Session, data, user: User) -> dict:
     db.add(ak)
     db.commit()
     db.refresh(ak)
-    return {**_to_dict(ak, user.username, _scope_names(db, [ak])), "key": raw}
+    record_audit(db, user, "create", "api_key", ak.id, detail={"name": ak.name, "key_prefix": ak.key_prefix, "owner_user_id": owner.id})
+    return {**_to_dict(ak, owner.username, _scope_names(db, [ak])), "key": raw}
 
 
 def update_api_key(db: Session, key_id: int, data, user: User) -> dict:

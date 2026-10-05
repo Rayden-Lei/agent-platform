@@ -53,6 +53,7 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     disable: { label: '停用', color: 'default' },
     reset_password: { label: '重置密码', color: 'volcano' },
     change_password: { label: '修改密码', color: 'volcano' },
+    logout_others: { label: '退出其他设备', color: 'volcano' },
     rag_retrieve: { label: '知识检索', color: 'cyan' },
     api_key_ip_rejected: { label: 'Key 来源被拒', color: 'red' },
     share_enable: { label: '开启分享', color: 'magenta' },

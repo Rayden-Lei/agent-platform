@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Layout, Button, Space, Typography, Drawer, Grid, Avatar, Skeleton, message } from 'antd'
-import { LogoutOutlined, MenuOutlined } from '@ant-design/icons'
+import { Layout, Button, Space, Typography, Drawer, Dropdown, Grid, Avatar, Skeleton, message } from 'antd'
+import { DownOutlined, LogoutOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../store/auth'
 import { useUnsaved } from '../store/unsaved'
@@ -55,22 +55,28 @@ export default function AppLayout() {
         </Sider>
       )}
       <Layout style={{ height: '100%', overflow: 'hidden', minWidth: 0 }}>
-        {/* 顶部栏：左侧为移动端菜单按钮/页面标题，右侧为当前用户信息与退出登录 */}
+        {/* 顶部栏：左侧为移动端菜单按钮/页面标题，右侧为当前用户（下拉：个人中心、退出登录） */}
         <Header style={{ height: 56, flexShrink: 0, background: '#fff', padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', zIndex: 10 }}>
           {isMobile ? (
             <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} />
           ) : (
             <Typography.Text strong style={{ fontSize: 15 }}>{navTitle(location.pathname)}</Typography.Text>
           )}
-          <Space size="middle">
-            {/* 用户信息：头像取用户名首字母，另展示用户名与角色中文名 */}
-            <Space size={8}>
-              <Avatar size="small" style={{ background: '#1e40af' }}>{user?.username?.[0]?.toUpperCase()}</Avatar>
-              <Typography.Text style={{ fontSize: 13 }}>{user?.username}</Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>{roleLabel[user?.role] || user?.role}</Typography.Text>
-            </Space>
-            <Button size="small" icon={<LogoutOutlined />} onClick={() => { logout(); navigate('/login') }} />
-          </Space>
+          {/* 用户信息：头像取用户名首字母，另展示用户名与角色中文名；点开是个人中心与退出登录（docs/15 OP-03） */}
+          <Dropdown trigger={['click']} menu={{ items: [
+            { key: 'profile', icon: <UserOutlined />, label: '个人中心', onClick: () => navigate('/profile') },
+            { type: 'divider' },
+            { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: () => { logout(); navigate('/login') } },
+          ] }}>
+            <Button type="text" style={{ height: 40 }} aria-label="账号菜单">
+              <Space size={8}>
+                <Avatar size="small" style={{ background: '#1e40af' }}>{user?.username?.[0]?.toUpperCase()}</Avatar>
+                <Typography.Text style={{ fontSize: 13 }}>{user?.username}</Typography.Text>
+                {!isMobile && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{roleLabel[user?.role] || user?.role}</Typography.Text>}
+                <DownOutlined style={{ fontSize: 10, color: '#9ca3af' }} />
+              </Space>
+            </Button>
+          </Dropdown>
         </Header>
         <DegradedBanner />
         {/* 内容区：外层负责占位与内边距（min-height: 0 保证 flex 子项可收缩），页面自身滚动由各页面内部处理 */}

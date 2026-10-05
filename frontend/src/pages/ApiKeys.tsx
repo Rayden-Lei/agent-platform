@@ -63,7 +63,8 @@ export default function ApiKeys() {
       ]} />}
     >
       <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
-      <ApiKeyForm open={formOpen} editing={editing} scopeOptions={scopeOptions} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} onCreated={setCreatedKey} />
+      <ApiKeyForm open={formOpen} editing={editing} scopeOptions={scopeOptions} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} onCreated={setCreatedKey}
+        ownerOptions={isAdmin ? (owners.data?.items ?? []).map((u) => ({ value: u.id, label: u.username })) : undefined} />
       <CreatedKeyModal value={createdKey} onClose={() => setCreatedKey(null)} />
       <ApiKeyDrawer apiKey={current} onClose={() => setCurrent(null)} onEdit={onEdit} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((k) => k.id === id)?.name} />

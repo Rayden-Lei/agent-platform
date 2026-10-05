@@ -63,6 +63,7 @@ export interface ApiKeyInput {
   agent_ids: number[]   // 三类作用域至少一个非空（服务端 400）
   workflow_ids: number[]
   kb_ids: number[]
+  owner_user_id?: number // 代发给哪个用户（仅 admin，docs/15 D-15）；不传归属自己
 }
 export const listApiKeys = (params?: PageQuery) => get<Page<ApiKeyRow>>('/api-keys', params)
 // API Key 创建时服务端会返回一次明文 key，之后不再可查（见 ApiKeys 页）

@@ -63,6 +63,7 @@ class ApiKeyIn(BaseModel):
     agent_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
     workflow_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
     kb_ids: list[int] = Field(default_factory=list, max_length=MAX_SCOPE_IDS)
+    owner_user_id: int | None = None  # 代发给哪个用户（仅 admin，docs/15 D-15）；不传归属当前用户
 
     @field_validator("allowed_ips")
     @classmethod

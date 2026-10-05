@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Divider, Form, Input, InputNumber, Modal, message } from 'antd'
+import { Divider, Form, Input, InputNumber, Modal, Select, message } from 'antd'
 import { createApiKey, updateApiKey, type ApiKeyInput, type ApiKeyRow } from '../../api'
 import type { ScopeOptions } from '../../hooks/useApiKeyScopeOptions'
 import ApiKeyScopeFields from './ApiKeyScopeFields'
@@ -8,14 +8,16 @@ import { errorText } from '../../utils/errors'
 // API Key 生成 / 编辑弹窗：授权范围（至少一项，docs/15 3.7.1）+ 配额、来源白名单、限速。
 // 白名单用多行文本承载（一行一条），提交前拆成数组；CIDR、范围与作用域的合法性由服务端兜底（422 / 400）。作用域下拉由页面取好传入。
 // initialScope：新建时预填的作用域（智能体"发布渠道"里生成仅限此智能体的 Key）
+// ownerOptions：只有 admin 的 API Key 页传，新建时可以代发给某个用户（docs/15 D-15，Key 归属该用户，对方在个人中心只读查看）
 interface Props {
   open: boolean; editing: ApiKeyRow | null; scopeOptions: ScopeOptions; initialScope?: Pick<ApiKeyInput, 'agent_ids'> | Pick<ApiKeyInput, 'workflow_ids'>
+  ownerOptions?: { value: number; label: string }[]
   onClose: () => void; onSaved: () => void; onCreated: (key: string) => void
 }
-interface FormValues { name: string; quota: number; allowed_ips_text?: string; rate_limit_per_minute: number; agent_ids?: number[]; workflow_ids?: number[]; kb_ids?: number[] }
+interface FormValues { name: string; owner_user_id?: number; quota: number; allowed_ips_text?: string; rate_limit_per_minute: number; agent_ids?: number[]; workflow_ids?: number[]; kb_ids?: number[] }
 const splitIps = (text?: string): string[] => (text ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
 
-export default function ApiKeyForm({ open, editing, scopeOptions, initialScope, onClose, onSaved, onCreated }: Props) {
+export default function ApiKeyForm({ open, editing, scopeOptions, initialScope, ownerOptions, onClose, onSaved, onCreated }: Props) {
   const [form] = Form.useForm<FormValues>()
   const [submitting, setSubmitting] = useState(false)
   useEffect(() => {
@@ -34,6 +36,7 @@ export default function ApiKeyForm({ open, editing, scopeOptions, initialScope, 
     const payload: ApiKeyInput = {
       name: values.name, quota: values.quota ?? 1000, allowed_ips: splitIps(values.allowed_ips_text), rate_limit_per_minute: values.rate_limit_per_minute ?? 0,
       agent_ids: values.agent_ids ?? [], workflow_ids: values.workflow_ids ?? [], kb_ids: values.kb_ids ?? [],
+      ...(!editing && values.owner_user_id ? { owner_user_id: values.owner_user_id } : {}),
     }
     setSubmitting(true)
     try {
@@ -48,6 +51,11 @@ export default function ApiKeyForm({ open, editing, scopeOptions, initialScope, 
       width={600} styles={{ body: { maxHeight: '65vh', overflow: 'auto' } }}>
       <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ quota: 1000, rate_limit_per_minute: 0 }}>
         <Form.Item name="name" label="名称" rules={[{ required: true }, { max: 64 }]}><Input placeholder="如：生产环境调用" /></Form.Item>
+        {!editing && ownerOptions && (
+          <Form.Item name="owner_user_id" label="发放给" extra="不选则归属你自己。代发的 Key 以对方的身份与角色调用，知识库按对方能看到的校验；对方在个人中心只读查看，停用找管理员">
+            <Select allowClear showSearch optionFilterProp="label" placeholder="选择用户（可选）" options={ownerOptions} />
+          </Form.Item>
+        )}
         <Divider orientation="left" plain style={{ margin: '4px 0 12px' }}>授权范围（只能调用这里的资源）</Divider>
         <ApiKeyScopeFields form={form} options={scopeOptions} editing={editing} />
         <Divider orientation="left" plain style={{ margin: '4px 0 12px' }}>配额与来源</Divider>

@@ -28,6 +28,7 @@ const Schedules = lazy(() => import('./pages/Schedules'))
 const PromptTemplates = lazy(() => import('./pages/PromptTemplates'))
 const SystemSettings = lazy(() => import('./pages/SystemSettings'))
 const SharePage = lazy(() => import('./pages/SharePage'))
+const Profile = lazy(() => import('./pages/Profile'))
 
 // 路由守卫：未登录（无 token）时重定向到 /login 并带上当前页（登录后回来，docs/15 OP-02），已登录则渲染受保护的子路由
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -69,6 +70,8 @@ export default function App() {
         <Route path="api-keys" element={<ApiKeys />} />
         <Route path="schedules" element={<Schedules />} />
         <Route path="system-settings" element={<SystemSettings />} />
+        {/* 个人中心不在侧栏菜单里，从顶栏头像进入；所有角色可见（docs/15 OP-03） */}
+        <Route path="profile" element={<Profile />} />
       </Route>
       {/* 兜底：未匹配的路径统一回到首页 */}
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Generic, Literal, Optional, TypeVar
 
@@ -37,8 +38,51 @@ CALLER_ID_PATTERN = r"^[A-Za-z0-9._:@-]{1,64}$"
 
 
 class MeOut(UserOut):
-    """GET /auth/me：当前用户 + 对外地址 public_base_url（docs/15 PB-07：分享链接、API 调用示例用；空串表示前端用当前访问的地址）。"""
+    """GET /auth/me：当前用户 + 对外地址 public_base_url（docs/15 PB-07：分享链接、API 调用示例用；空串表示前端用当前访问的地址）
+    + 个人资料（docs/15 OP-03）：显示名、邮箱、手机号（脱敏，只露前 3 后 4 位）、最近改密与最近登录时间。"""
     public_base_url: str = ""
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    phone_masked: Optional[str] = None
+    password_changed_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+
+
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+PHONE_PATTERN = r"^\+?[0-9][0-9-]{4,19}$"
+
+
+class ProfileUpdateIn(BaseModel):
+    """本人改资料（PUT /auth/me）：不带的字段不改，null 或空串清除。显示名 ≤64；邮箱 ≤128 且形如 a@b.c；
+    手机号 5～20 位数字（可带 + 与 -）。违反 422。用户名与角色不能自己改。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: Optional[str] = Field(None, max_length=64)
+    email: Optional[str] = Field(None, max_length=128)
+    phone: Optional[str] = Field(None, max_length=20)
+
+    @field_validator("display_name", "email", "phone", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not re.match(EMAIL_PATTERN, value):
+            raise ValueError("邮箱格式不正确")
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not re.match(PHONE_PATTERN, value):
+            raise ValueError("手机号只能是 5～20 位数字，可带 + 与 -")
+        return value
 
 
 class TokenOut(BaseModel):

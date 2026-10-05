@@ -1,15 +1,17 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import redis
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core import redis_client
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.security import create_access_token, hash_password, verify_password
-from app.db.models import User
-from app.schemas import TokenOut, UserOut
+from app.db.models import AuditLog, User
+from app.schemas import MeOut, ProfileUpdateIn, TokenOut, UserOut
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,58 @@ def login(db: Session, username: str, password: str) -> TokenOut:
     # 必须改密的账号照样能登录：拿到令牌后只能调改密与 /auth/me（core/deps），前端据 user.must_change_password 弹改密框
     token = create_access_token(user.id, user.role, user.token_version)
     return TokenOut(token=token, user=UserOut.model_validate(user))
+
+
+LOGIN_HISTORY_LIMIT = 20
+LOGIN_HISTORY_DAYS = 90  # 登录记录只看近 90 天：audit_logs 没有按动作的索引，靠 created_at 索引把扫描范围框住
+
+
+def mask_phone(phone: str | None) -> str | None:
+    """手机号脱敏：只露前 3 后 4 位（不足 8 位时全遮），接口与页面都只出现脱敏值（安全规范：不出现完整手机号）。"""
+    if not phone:
+        return None
+    return f"{phone[:3]}****{phone[-4:]}" if len(phone) >= 8 else "****"
+
+
+def profile_of(user: User) -> MeOut:
+    """GET /auth/me 的响应：账号信息 + 对外地址 + 个人资料（手机号脱敏）。"""
+    return MeOut(**UserOut.model_validate(user).model_dump(), public_base_url=settings.PUBLIC_BASE_URL,
+                 display_name=user.display_name, email=user.email, phone_masked=mask_phone(user.phone),
+                 password_changed_at=user.password_changed_at, last_login_at=user.last_login_at)
+
+
+def update_profile(db: Session, user: User, data: ProfileUpdateIn) -> MeOut:
+    """本人改资料（docs/15 OP-03）：只改请求里带了的字段（null 清除），什么都没变不写库。
+    审计 update / user，detail 只记改了哪些字段——邮箱与手机号是个人信息，不进审计。"""
+    changed = [f for f in data.model_fields_set if getattr(user, f) != getattr(data, f)]
+    if changed:
+        for f in changed:
+            setattr(user, f, getattr(data, f))
+        db.commit()
+        db.refresh(user)
+        record_audit(db, user, "update", "user", user.id, detail={"username": user.username, "changed": sorted(changed), "self": True})
+    return profile_of(user)
+
+
+def logout_others(db: Session, user: User) -> TokenOut:
+    """退出其他设备（docs/15 OP-03）：token_version +1，本人此前签发的令牌全部失效；返回新令牌，当前页面换上后继续用。
+    审计 logout_others。"""
+    user.token_version += 1
+    db.commit()
+    db.refresh(user)
+    record_audit(db, user, "logout_others", "user", user.id, detail={"username": user.username})
+    return TokenOut(token=create_access_token(user.id, user.role, user.token_version), user=UserOut.model_validate(user))
+
+
+def login_history(db: Session, user: User) -> list[dict]:
+    """本人最近的登录记录（近 90 天、最多 20 条，新的在前）：成功的按 user_id 认，失败的按审计里记的用户名认
+    （失败时还不知道是谁，login_failed 只记了用户名）。只给时间、来源 IP 与成败。"""
+    since = datetime.now(timezone.utc) - timedelta(days=LOGIN_HISTORY_DAYS)
+    rows = (db.query(AuditLog.created_at, AuditLog.ip, AuditLog.action)
+            .filter(AuditLog.created_at >= since, AuditLog.action.in_(("login", "login_failed")),
+                    or_(AuditLog.user_id == user.id, and_(AuditLog.user_id.is_(None), AuditLog.detail["username"].astext == user.username)))
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(LOGIN_HISTORY_LIMIT).all())
+    return [{"created_at": r.created_at.isoformat(), "ip": r.ip, "success": r.action == "login"} for r in rows]
 
 
 def change_password(db: Session, user: User, old_password: str, new_password: str) -> TokenOut:

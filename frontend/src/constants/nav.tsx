@@ -36,4 +36,7 @@ export function activeNavKey(pathname: string): string {
   return match?.key ?? '/'
 }
 
-export const navTitle = (pathname: string) => NAV_ITEMS.find((i) => i.key === activeNavKey(pathname))?.label ?? '工作台'
+// 不在菜单里的页面（从顶栏进入）单独给标题，否则会落到"工作台"
+const EXTRA_TITLES: Record<string, string> = { '/profile': '个人中心' }
+
+export const navTitle = (pathname: string) => EXTRA_TITLES[pathname] ?? NAV_ITEMS.find((i) => i.key === activeNavKey(pathname))?.label ?? '工作台'
