@@ -5,10 +5,11 @@ import { errorText } from '../../utils/errors'
 
 // 管理员重置用户密码：两次输入一致且至少 6 位；服务端记审计（reset_password），不回显旧密码。
 // 重置后该用户已登录的会话全部失效（token_version +1）；默认要求其下次登录先改密（docs/15 OP-04）
-interface Props { user: UserRow | null; onClose: () => void }
+// onSaved：重置成功后由页面刷新列表，否则"待改密"标签要手动刷新才出现
+interface Props { user: UserRow | null; onClose: () => void; onSaved: () => void }
 interface FormValues { password: string; confirm: string; mustChange: boolean }
 
-export default function ResetPasswordModal({ user, onClose }: Props) {
+export default function ResetPasswordModal({ user, onClose, onSaved }: Props) {
   const [form] = Form.useForm<FormValues>()
   const [submitting, setSubmitting] = useState(false)
   useEffect(() => { if (user) form.resetFields() }, [user, form])
@@ -18,6 +19,7 @@ export default function ResetPasswordModal({ user, onClose }: Props) {
     try {
       await resetUserPassword(user.id, values.password, values.mustChange)
       message.success(values.mustChange ? '密码已重置，该用户已登录的会话已失效，下次登录需先改密' : '密码已重置，该用户已登录的会话已失效')
+      onSaved()
       onClose()
     } catch (e) { message.error(errorText(e, '重置失败')) } finally { setSubmitting(false) }
   }

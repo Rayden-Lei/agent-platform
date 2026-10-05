@@ -61,7 +61,7 @@ export default function Users() {
     >
       <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
       <UserForm open={formOpen} editing={editing} meId={meId} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
-      <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} />
+      <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onSaved={list.reload} />
       <UserDrawer user={current} onClose={() => setCurrent(null)} onEdit={onEdit} onResetPassword={setResetting} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((u) => u.id === id)?.username} />
     </ListPage>
