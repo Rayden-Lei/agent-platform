@@ -64,14 +64,16 @@ def test_source_filter_uses_column(client, auth_headers):
     db = SessionLocal()
     runs = []
     try:
-        for source in ("chat", "debug"):
+        for source in ("chat", "debug", "share"):
             runs.append(run_service.create_run(db, "chat", me, input_data={"message": "pytest-source"}, source=source))
-        chat_id, debug_id = runs[0].id, runs[1].id
+        chat_id, debug_id, share_id = runs[0].id, runs[1].id, runs[2].id
         debug_ids = {r["id"] for r in client.get("/api/v1/runs", headers=auth_headers, params={"source": "debug", "page_size": 100}).json()["items"]}
         chat_ids = {r["id"] for r in client.get("/api/v1/runs", headers=auth_headers, params={"source": "chat", "page_size": 100}).json()["items"]}
+        share_ids = {r["id"] for r in client.get("/api/v1/runs", headers=auth_headers, params={"source": "share", "page_size": 100}).json()["items"]}
         assert debug_id in debug_ids and chat_id not in debug_ids
         assert chat_id in chat_ids
-        assert client.get("/api/v1/runs", headers=auth_headers, params={"source": "share"}).status_code == 422
+        assert share_id in share_ids and chat_id not in share_ids  # share 是分享访客的来源（2026-10-05 PB-01 起合法）
+        assert client.get("/api/v1/runs", headers=auth_headers, params={"source": "guest"}).status_code == 422
     finally:
         for r in runs:
             db.delete(r)
