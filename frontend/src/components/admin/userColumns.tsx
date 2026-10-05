@@ -1,4 +1,4 @@
-import { Button, Popconfirm, Space, Tooltip } from 'antd'
+import { Button, Popconfirm, Space, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UserRow } from '../../api'
 import EnableSwitch from '../common/EnableSwitch'
@@ -19,7 +19,16 @@ interface Options {
 export function buildUserColumns({ sortProps, meId, onOpen, onToggle, onEdit, onResetPassword, onDelete }: Options): ColumnsType<UserRow> {
   return [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60, ...sortProps('id') },
-    { title: '用户名', dataIndex: 'username', key: 'username', ...sortProps('username'), render: (v: string, r) => <a onClick={() => onOpen(r)}>{v}{r.id === meId && <span style={{ color: '#9ca3af', fontSize: 12 }}>（我）</span>}</a> },
+    {
+      title: '用户名', dataIndex: 'username', key: 'username', ...sortProps('username'),
+      render: (v: string, r) => (
+        <Space size={4}>
+          <a onClick={() => onOpen(r)}>{v}{r.id === meId && <span style={{ color: '#9ca3af', fontSize: 12 }}>（我）</span>}</a>
+          {/* 重置密码或首次登录后还没改密：该账号除改密外调任何接口都 403（docs/15 OP-04） */}
+          {r.must_change_password && <Tooltip title="下次登录必须先修改密码"><Tag color="warning">待改密</Tag></Tooltip>}
+        </Space>
+      ),
+    },
     { title: '角色', dataIndex: 'role', key: 'role', width: 100, ...sortProps('role'), render: (v: string) => <StatusTag domain="role" value={v} /> },
     {
       title: '状态', key: 'status', width: 80,

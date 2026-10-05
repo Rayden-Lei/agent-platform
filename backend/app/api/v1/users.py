@@ -19,6 +19,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 class ResetPasswordIn(BaseModel):
     password: str = Field(min_length=6, max_length=128)
+    must_change_password: bool = True  # 默认要求该用户下次登录先改密；管理员可取消（如代用户设好最终密码）
 
 
 class UserBatchIn(BatchIn):
@@ -60,8 +61,8 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), u
 
 @router.post("/{user_id}/reset-password")
 def reset_password(user_id: int, data: ResetPasswordIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    """管理员重置用户密码。"""
-    user_service.reset_password(db, user_id, data.password, user)
+    """管理员重置用户密码：该用户已登录的会话立即失效；默认要求其下次登录先改密。"""
+    user_service.reset_password(db, user_id, data.password, user, data.must_change_password)
     return {"code": 0, "message": "ok"}
 
 

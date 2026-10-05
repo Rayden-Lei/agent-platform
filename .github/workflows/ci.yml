@@ -42,8 +42,10 @@ jobs:
           AES_KEY: ci-test-aes-key
           # 测试默认关闭入口限流（与 tests/conftest.py 一致）；限流用例自行用 monkeypatch 打开
           RATE_LIMIT_ENABLED: "false"
-          # CI 是空库：应用启动时建的 admin 用默认口令（app/main.py）。本地连共享开发库时口令写在 backend/.env
-          TEST_ADMIN_PASSWORD: admin123
+          # CI 是空库：应用启动时按 INITIAL_ADMIN_PASSWORD 建 admin。不能用内置默认口令 ——
+          # 那样 admin 会被置为"必须改密"，除改密外全部 403（docs/15 OP-04）。本地连共享开发库时口令写在 backend/.env
+          INITIAL_ADMIN_PASSWORD: ci-admin-pass-0001
+          TEST_ADMIN_PASSWORD: ci-admin-pass-0001
 
   frontend-build:
     runs-on: ubuntu-latest

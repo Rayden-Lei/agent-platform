@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "Agent Platform"
     API_V1_PREFIX: str = "/api/v1"
+    # 空库首次启动时 admin 的口令（只在库里没有 admin 时用）。不配置则用内置默认口令并要求首次登录改密；口令不进日志
+    INITIAL_ADMIN_PASSWORD: str = ""
     SECRET_KEY: str = "change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     AES_KEY: str = "change-me-32-bytes-key"

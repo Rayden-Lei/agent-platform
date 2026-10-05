@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { Layout, Button, Space, Typography, Drawer, Grid, Avatar, Skeleton } from 'antd'
+import { Layout, Button, Space, Typography, Drawer, Grid, Avatar, Skeleton, message } from 'antd'
 import { LogoutOutlined, MenuOutlined } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../store/auth'
@@ -8,6 +8,8 @@ import { navTitle } from '../constants/nav'
 import { roleLabel } from '../constants/status'
 import SideNav from './layout/SideNav'
 import DegradedBanner from './layout/DegradedBanner'
+import ForcePasswordModal from './layout/ForcePasswordModal'
+import { changeMyPassword } from '../api'
 
 const { Sider, Header, Content } = Layout
 const { useBreakpoint } = Grid
@@ -16,11 +18,19 @@ const { useBreakpoint } = Grid
 export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, logout } = useAuth()
+  const { user, logout, setAuth } = useAuth()
   const dirty = useUnsaved((s) => s.dirty)
   const screens = useBreakpoint() // antd 响应式断点
   const isMobile = !screens.md // md 以下视为移动端：侧边栏改为抽屉
   const [drawerOpen, setDrawerOpen] = useState(false) // 移动端抽屉是否展开
+
+  // 必须改密：改完旧令牌全部失效（token_version +1），先换上新令牌再整页重载，免得页面上还在跑的请求带着旧令牌 401 被踢回登录页
+  const changePassword = async (oldPassword: string, newPassword: string) => {
+    const r = await changeMyPassword({ old_password: oldPassword, new_password: newPassword })
+    setAuth(r.token, r.user)
+    message.success('密码已修改')
+    window.location.reload()
+  }
 
   // 有未保存改动时拦刷新 / 关闭标签页（路由内跳转由 SideNav 拦）
   useEffect(() => {
@@ -70,6 +80,7 @@ export default function AppLayout() {
           </div>
         </Content>
       </Layout>
+      <ForcePasswordModal open={!!user?.must_change_password} username={user?.username} onSubmit={changePassword} onLogout={() => { logout(); navigate('/login') }} />
     </Layout>
   )
 }

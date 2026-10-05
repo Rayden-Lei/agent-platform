@@ -7,6 +7,7 @@ services:
       APP_NAME: Agent Platform
       SECRET_KEY: ${SECRET_KEY}
       AES_KEY: ${AES_KEY}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       DATABASE_URL: postgresql+psycopg2://admin:${POSTGRES_PASSWORD}@postgres:5432/agent_platform
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000

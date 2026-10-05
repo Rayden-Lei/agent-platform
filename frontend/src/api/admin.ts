@@ -6,6 +6,7 @@ export interface UserRow {
   username: string
   role: string
   is_active: boolean
+  must_change_password: boolean // 被重置或初始口令未改：下次登录必须先改密（docs/15 OP-04）
   created_at: string | null
   updated_at: string | null
 }
@@ -13,7 +14,9 @@ export const listUsers = (params?: PageQuery) => get<Page<UserRow>>('/users', pa
 export const createUser = (data: { username: string; password: string; role: string }) => post<UserRow>('/users', data)
 export const updateUser = (id: number, data: { role?: string; is_active?: boolean }) => put<UserRow>(`/users/${id}`, data)
 export const deleteUser = (id: number) => del(`/users/${id}`)
-export const resetUserPassword = (id: number, password: string) => post(`/users/${id}/reset-password`, { password })
+// 重置后该用户的旧令牌全部失效；must_change_password 为真时它下次登录只能先改密（默认真）
+export const resetUserPassword = (id: number, password: string, mustChangePassword = true) =>
+  post(`/users/${id}/reset-password`, { password, must_change_password: mustChangePassword })
 export const batchUsers = (ids: number[], action: 'enable' | 'disable' | 'delete') => batchAction('/users', ids, action)
 
 // ===== 审计日志（docs/04 4.11）=====

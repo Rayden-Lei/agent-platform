@@ -48,6 +48,14 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
         run = run_service.create_run(
             db, "workflow", user.id, workflow_id=wf.id, input_data={"input": input_text}, source="schedule", schedule_id=sj.id,
         )
+        if not user.is_active:
+            # 停用账号的任务不再以其身份执行（API Key 路径同样拒绝停用账号，2026-10-05 前这里只判存在）；
+            # 留一条 failed 运行，任务列表与运行记录里看得到为什么没跑
+            run_service.finalize_run(db, run, "failed", error="创建人已停用，任务未执行")
+            sj.last_run_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning("定时任务 %s 的创建人 %s 已停用，未执行", job_id, user.id)
+            return
         result = workflow_service.execute_workflow(db, wf, run, {"input": input_text, "steps": []}, role=user.role)
         sj.last_run_at = datetime.now(timezone.utc)
         db.commit()

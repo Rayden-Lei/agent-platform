@@ -43,12 +43,13 @@ def _init_db() -> None:
 
     db = SessionLocal()
     try:
-        from app.core.security import hash_password
-        from app.db.models import User
+        from app.services.user_service import ensure_initial_admin
 
-        if not db.query(User).filter(User.username == "admin").first():
-            db.add(User(username="admin", password_hash=hash_password("admin123"), role="admin"))
-            db.commit()
+        source = ensure_initial_admin(db)
+        if source == "default":
+            logger.warning("库里没有 admin，已用内置默认口令创建并要求首次登录改密；生产环境请配置 INITIAL_ADMIN_PASSWORD")
+        elif source == "configured":
+            logger.info("库里没有 admin，已按 INITIAL_ADMIN_PASSWORD 创建")
     finally:
         db.close()
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Generic, Optional, TypeVar
+from typing import Generic, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -26,6 +26,7 @@ class UserOut(BaseModel):
     username: str
     role: str
     is_active: bool
+    must_change_password: bool = False  # 为真时除 /auth/me 与改密外全部 403，前端据此弹改密框（docs/15 OP-04）
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -35,15 +36,37 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+UserRole = Literal["admin", "developer", "caller"]
+PASSWORD_MIN, PASSWORD_MAX = 6, 128
+
+
 class UserCreate(BaseModel):
-    username: str
-    password: str
-    role: str = "caller"
+    """新建用户（2026-10-05 起校验，422；此前空密码、role=superadmin 都能落库，超长用户名走 500）。
+    用户名去掉首尾空白后 2～64 个字符且不含空白；密码 6～128。"""
+
+    username: str = Field(min_length=2, max_length=64)
+    password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+    role: UserRole = "caller"
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _clean_username(cls, value):
+        value = value.strip() if isinstance(value, str) else value
+        if isinstance(value, str) and any(ch.isspace() for ch in value):
+            raise ValueError("用户名不能包含空白字符")
+        return value
 
 
 class UserUpdate(BaseModel):
-    role: Optional[str] = None
+    role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+
+
+class ChangePasswordIn(BaseModel):
+    """本人改密：旧密码错 400、新旧相同 400、新密码不满足长度 422。"""
+
+    old_password: str = Field(min_length=1, max_length=PASSWORD_MAX)
+    new_password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
 
 
 class ModelParams(BaseModel):

@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
@@ -8,6 +11,19 @@ from app.db.models import Agent, KnowledgeBase, ModelConfig, User, Workflow
 from app.schemas import UserCreate, UserUpdate
 
 SORTABLE = {"id": User.id, "username": User.username, "created_at": User.created_at}
+DEFAULT_ADMIN_PASSWORD = "admin123"  # 仓库公开的内置口令：只在没配 INITIAL_ADMIN_PASSWORD 时用，并强制首次登录改密
+
+
+def ensure_initial_admin(db: Session) -> str | None:
+    """库里没有 admin 时建一个（应用启动与 scripts/init_db 共用）。口令取 INITIAL_ADMIN_PASSWORD；没配置时用内置默认口令，
+    并置 must_change_password —— 2026-10-05 前空库直接以公开口令建管理员且不要求改（docs/15 OP-04）。
+    返回建出的口令来源（"configured" / "default"），已存在返回 None；口令本身不进日志与返回值。"""
+    if db.query(User).filter(User.username == "admin").first():
+        return None
+    configured = settings.INITIAL_ADMIN_PASSWORD
+    db.add(User(username="admin", password_hash=hash_password(configured or DEFAULT_ADMIN_PASSWORD), role="admin", must_change_password=not configured))
+    db.commit()
+    return "configured" if configured else "default"
 
 
 def list_users(db: Session, params: PageParams, q: str = None, role: str = None, is_active: bool = None, sort: SortParams = None) -> dict:
@@ -49,18 +65,25 @@ def update_user(db: Session, user_id: int, data: UserUpdate, operator: User = No
     if data.role is not None:
         u.role = data.role
     if data.is_active is not None:
+        if u.is_active and not data.is_active:
+            u.token_version += 1  # 停用即吊销已签发的令牌；重新启用后要重新登录
         u.is_active = data.is_active
     db.commit()
     db.refresh(u)
     return u
 
 
-def reset_password(db: Session, user_id: int, new_password: str, operator: User) -> None:
-    """管理员重置用户密码（只存哈希），写审计但不记录密码。"""
+def reset_password(db: Session, user_id: int, new_password: str, operator: User, must_change: bool = True) -> None:
+    """管理员重置用户密码（只存哈希），写审计但不记录密码。
+    token_version +1：该用户已登录的会话立即失效（2026-10-05 前重置不吊销，泄露的会话在有效期内继续可用）；
+    must_change 默认为真，该用户下次登录只能先改密（docs/15 OP-04）。"""
     u = get_user(db, user_id)
     u.password_hash = hash_password(new_password)
+    u.token_version += 1
+    u.must_change_password = must_change
+    u.password_changed_at = datetime.now(timezone.utc)
     db.commit()
-    record_audit(db, operator, "reset_password", "user", u.id, detail={"username": u.username})
+    record_audit(db, operator, "reset_password", "user", u.id, detail={"username": u.username, "must_change_password": must_change})
 
 
 def delete_user(db: Session, user_id: int, operator: User = None) -> None:

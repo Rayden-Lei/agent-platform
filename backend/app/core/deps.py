@@ -20,6 +20,9 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 # API Key 与 JWT 共用 Authorization: Bearer 头，按明文前缀分流；调用方不需要学第二种请求头
 API_KEY_PREFIX = "ak_"
+# 必须改密的账号只能调这两个接口（docs/15 OP-04，服务端强制，不靠前端弹窗）；文案与前端 api/client.ts 一致
+MUST_CHANGE_PASSWORD_DETAIL = "请先修改初始密码"
+MUST_CHANGE_ALLOWED_PATHS = (f"{settings.API_V1_PREFIX}/auth/me", f"{settings.API_V1_PREFIX}/auth/me/password")
 
 
 def get_current_user(
@@ -52,6 +55,12 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号不可用")
+    # 令牌版本对不上 = 签发之后重置过密码、停用过或改过密：旧会话作废。没有 ver 的令牌是 OP-04 之前签发的，
+    # 那时所有人的版本都是 0，按 0 比对（之后任何一次吊销都会让它失效）
+    if payload.get("ver", 0) != user.token_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效，请重新登录")
+    if user.must_change_password and request.url.path not in MUST_CHANGE_ALLOWED_PATHS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MUST_CHANGE_PASSWORD_DETAIL)
     # 登录用户维度限流：先鉴权再计数，无效 token 不占用户的额度
     rate_limit = rate_limiter.check("user", str(user.id), settings.RATE_LIMIT_USER_PER_MINUTE)
     if not rate_limit.allowed:

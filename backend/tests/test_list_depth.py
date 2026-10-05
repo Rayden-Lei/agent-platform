@@ -159,7 +159,7 @@ def test_users_cannot_disable_self_and_reset_password_works(client, auth_headers
         assert client.post(f"/api/v1/users/{created['id']}/reset-password", headers=auth_headers, json={"password": "new-pass-1"}).status_code == 200
         assert client.post("/api/v1/auth/login", json={"username": username, "password": "new-pass-1"}).status_code == 200
         audit = client.get("/api/v1/audit-logs", headers=auth_headers, params={"action": "reset_password", "resource_id": created["id"]}).json()
-        assert audit["total"] >= 1 and audit["items"][0]["detail"] == {"username": username}
+        assert audit["total"] >= 1 and audit["items"][0]["detail"] == {"username": username, "must_change_password": True}
     finally:
         client.delete(f"/api/v1/users/{created['id']}", headers=auth_headers)
 

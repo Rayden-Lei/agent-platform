@@ -23,10 +23,11 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
-def create_access_token(user_id: int, role: str) -> str:
-    """签发 JWT：payload 含 sub(用户 id)、role、exp(过期时间)，HS256 + SECRET_KEY 签名。"""
+def create_access_token(user_id: int, role: str, token_version: int) -> str:
+    """签发 JWT：payload 含 sub(用户 id)、role、ver(签发时的 users.token_version)、exp(过期时间)，HS256 + SECRET_KEY 签名。
+    ver 与库里不一致的令牌一律 401：重置密码、停用、改密之后旧会话立即失效（docs/15 OP-04；2026-10-05 前要等到过期）。"""
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "role": role, "exp": expire}
+    payload = {"sub": str(user_id), "role": role, "ver": token_version, "exp": expire}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 

@@ -1,4 +1,8 @@
 import axios from 'axios'
+import { useAuth } from '../store/auth'
+
+// 与后端 core/deps.MUST_CHANGE_PASSWORD_DETAIL 一致：必须改密的账号调改密以外的接口时的 403 文案
+export const MUST_CHANGE_PASSWORD_DETAIL = '请先修改初始密码'
 
 // ===== 请求层约定 =====
 // 全局唯一的 axios 实例：baseURL 指向后端 /api/v1，30 秒超时。
@@ -42,6 +46,11 @@ client.interceptors.response.use(
     }
     // 401：凭证失效（统一处理，各页面无需重复写）
     if (err.response?.status === 401) clearLoginAndRedirect()
+    // 403「请先修改初始密码」：登录后被管理员重置、要求改密（docs/15 OP-04）。标到登录态上，布局层据此弹出改密框
+    if (err.response?.status === 403 && err.response?.data?.detail === MUST_CHANGE_PASSWORD_DETAIL) {
+      const { token, user, setAuth } = useAuth.getState()
+      if (token && user && !user.must_change_password) setAuth(token, { ...user, must_change_password: true })
+    }
     return Promise.reject(err)
   },
 )
