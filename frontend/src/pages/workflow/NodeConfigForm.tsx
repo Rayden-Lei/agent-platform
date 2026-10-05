@@ -3,7 +3,7 @@ import type { FormInstance } from 'antd'
 import { REF_CONFIGURABLE } from './palette'
 
 // 节点配置表单：按节点类型渲染控件；config ↔ 表单值的双向转换也放在这里，
-// 编辑器只负责"点击节点回填、应用时收集"。
+// 编辑器只负责"点击节点回填、改动时收集写回"。
 
 // 已存 config 回填到表单（args 等对象字段序列化成 JSON 文本，方便用户直接改）
 export function configToFormValues(config: any) {
@@ -16,13 +16,14 @@ export function configToFormValues(config: any) {
   }
 }
 
-// 按节点类型把表单字段收集成 config（各类型字段不同）；JSON 文本字段先解析校验
-export function collectNodeConfig(nodeType: string, vals: any): { config: any } | { error: string } {
+// 按节点类型把表单字段收集成 config（各类型字段不同）；JSON 文本字段先解析校验，
+// 不过时返回出错字段名，编辑器据此把该字段标红、不写回节点
+export function collectNodeConfig(nodeType: string, vals: any): { config: any } | { error: string; field: string } {
   let config: any = {}
   if (nodeType === 'agent') { config = { agent_id: vals.agent_id }; if (vals.prompt) config.prompt = vals.prompt }
   if (nodeType === 'tool') {
     config = { tool_name: vals.tool_name }
-    if (vals.argsStr) { try { config.args = JSON.parse(vals.argsStr) } catch { return { error: '参数 JSON 格式错误' } } }
+    if (vals.argsStr) { try { config.args = JSON.parse(vals.argsStr) } catch { return { error: '参数 JSON 格式错误', field: 'argsStr' } } }
   }
   if (nodeType === 'condition') config = { expression: vals.expression }
   if (nodeType === 'kb_retrieval') config = { kb_id: vals.kb_id, top_k: vals.top_k || 4 }
@@ -45,11 +46,12 @@ interface Props {
   agents: any[]
   tools: any[]
   kbs: any[]
+  onValuesChange: () => void // 每次改动都写回节点（docs/15 WF-01：此前要点"应用配置"，不点就悄悄丢）
 }
 
-export default function NodeConfigForm({ nodeType, form, agents, tools, kbs }: Props) {
+export default function NodeConfigForm({ nodeType, form, agents, tools, kbs, onValuesChange }: Props) {
   return (
-    <Form form={form} layout="vertical" size="small">
+    <Form form={form} layout="vertical" size="small" onValuesChange={onValuesChange}>
       {nodeType === 'agent' && (<>
         <Form.Item name="agent_id" label="选择智能体"><Select options={agents.map((a: any) => ({ value: a.id, label: a.name }))} placeholder="选择智能体" /></Form.Item>
         <Form.Item name="prompt" label="提示词覆盖(可选)"><Input.TextArea rows={2} placeholder="留空则用默认提示词" /></Form.Item>

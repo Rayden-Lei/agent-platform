@@ -62,13 +62,14 @@ export function toGraph(nodes: any[], edges: any[]) {
   }
 }
 
-// 节点库列表：拖拽建节点，dragstart 时把节点类型写入 dataTransfer
-export function PaletteList({ onDragStart }: { onDragStart: (event: any, type: string) => void }) {
+// 节点库列表：拖拽建节点（dragstart 时把节点类型写入 dataTransfer），也可以点击添加到画布中央 ——
+// 触屏上拖不了，移动端只能靠点击（docs/15 WF-01）
+export function PaletteList({ onDragStart, onAdd }: { onDragStart: (event: any, type: string) => void; onAdd: (type: string) => void }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ fontWeight: 600, fontSize: 13, color: '#1f2937' }}>节点库</div>
       {PALETTE.map((p) => (
-        <div key={p.type} draggable onDragStart={(e) => onDragStart(e, p.type)}
+        <div key={p.type} draggable onDragStart={(e) => onDragStart(e, p.type)} onClick={() => onAdd(p.type)} role="button"
           style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: '1px solid #e5e7eb', cursor: 'grab', background: '#fafafa', transition: 'all 0.15s' }}
           onMouseEnter={(e) => (e.currentTarget.style.borderColor = p.color)} onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#e5e7eb')}>
           <div style={{ width: 26, height: 26, borderRadius: 6, background: p.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>{p.icon}</div>
@@ -78,7 +79,7 @@ export function PaletteList({ onDragStart }: { onDragStart: (event: any, type: s
           </div>
         </div>
       ))}
-      <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>拖入画布编排；点击节点/连线配置。并行节点的出边不需要分支值。</div>
+      <div style={{ color: '#9ca3af', fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>拖入画布或点击添加；点击节点/连线配置，改动自动生效。并行节点的出边不需要分支值。</div>
     </div>
   )
 }
