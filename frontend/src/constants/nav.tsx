@@ -29,14 +29,15 @@ export const NAV_ITEMS: NavItem[] = [
 
 export const visibleNavItems = (role?: string | null) => NAV_ITEMS.filter((item) => !item.roles || (role && item.roles.includes(role)))
 
-// 当前路径对应的菜单 key：最长前缀匹配（/agents/3 → /agents；/ 只匹配自身）
+// 不在菜单里的页面（从顶栏进入）单独给标题，侧栏也不高亮任何一项——否则会落到"工作台"
+const EXTRA_TITLES: Record<string, string> = { '/profile': '个人中心' }
+
+// 当前路径对应的菜单 key：最长前缀匹配（/agents/3 → /agents；/ 只匹配自身）；不在菜单里的页面返回空串
 export function activeNavKey(pathname: string): string {
   if (pathname === '/') return '/'
+  if (EXTRA_TITLES[pathname]) return ''
   const match = NAV_ITEMS.filter((i) => i.key !== '/' && (pathname === i.key || pathname.startsWith(i.key + '/'))).sort((a, b) => b.key.length - a.key.length)[0]
   return match?.key ?? '/'
 }
-
-// 不在菜单里的页面（从顶栏进入）单独给标题，否则会落到"工作台"
-const EXTRA_TITLES: Record<string, string> = { '/profile': '个人中心' }
 
 export const navTitle = (pathname: string) => EXTRA_TITLES[pathname] ?? NAV_ITEMS.find((i) => i.key === activeNavKey(pathname))?.label ?? '工作台'
