@@ -82,3 +82,29 @@ def test_stored_result_kept_out_of_event_view():
     replayed = reduce_events([{"type": "tool_call", "id": "c1", "name": "t", "arguments": {}},
                               {"type": "tool_result", "tool_call_id": "c1", "content": "短", "state": "done"}])
     assert replayed["tool_calls"][0]["result"] == "短"
+
+
+def test_llm_usage_events_rebuild_usage_without_done():
+    """事件流里有了每次调用的用量，没有 done 事件也能算出本轮 token。"""
+    msg = reduce_events([
+        {"type": "llm_usage", "call_id": "c1", "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}},
+        {"type": "llm_usage", "call_id": "c2", "usage": {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22}},
+    ])
+    assert msg["usage"] == {"prompt_tokens": 30, "completion_tokens": 4, "total_tokens": 34}
+
+
+def test_done_usage_wins_over_llm_usage():
+    """done 的汇总优先：它是收尾时算好的那份，避免两份口径打架。"""
+    msg = reduce_events([
+        {"type": "llm_usage", "call_id": "c1", "usage": {"total_tokens": 12}},
+        {"type": "done", "usage": {"total_tokens": 99}, "finished_reason": "completed"},
+    ])
+    assert msg["usage"] == {"total_tokens": 99}
+
+
+def test_delta_call_id_does_not_affect_rebuilt_content():
+    msg = reduce_events([
+        {"type": "delta", "call_id": "c1", "content": "你"},
+        {"type": "delta", "call_id": "c2", "content": "好"},
+    ])
+    assert msg["content"] == "你好"
