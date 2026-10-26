@@ -45,8 +45,9 @@ def check(ctx: ToolCallContext) -> tuple[str, str | None]:
        这个入口本身是 admin / developer 专属，风险由角色兜底，不是靠地址。
     4. share 在地址校验之前拦：分享链接是公网可访问的入口，装配层虽然默认不给访客装 HTTP 工具，
        但那是"装配时"的判断；万一配置被改或以后有别的装配路径，这里必须再挡一层，不能靠上游。
-    5. 最后才看白名单：只看 host、不看路径与查询参数——模型能改的是参数，改不了工具配置里的地址；
-       空名单是过渡期语义（放行 + 每次记日志），不是"全部禁止"，否则存量工具会一夜全挂。
+    5. 最后才看白名单：只看 host、不看路径与查询参数——模型能改的是参数，改不了工具配置里的地址。
+       空名单是拒绝（2026-10-26 起）：没配白名单就无从判断目标是否可信，放过等于闸门不存在；
+       过渡期的"放行 + WARN"只在 2026-10-26 之前存在（详见实现记录）。
     """
     tool = ctx.tool
     if not tool.is_enabled:
@@ -64,8 +65,10 @@ def check(ctx: ToolCallContext) -> tuple[str, str | None]:
     url = cfg.get("url")
     host = (urlparse(url).hostname or "") if url else ""
     if not allowed:
-        # 过渡期：存量工具没有白名单，放行但每次都留日志，便于清点该补哪些；补完再改成"空 = 拒绝"
-        return "allow", f"工具 {tool.name} 未配置 allowed_hosts，放行（过渡期）"
+        # 2026-10-26 收口：过渡期结束，没配白名单的 HTTP 工具一律拒绝。
+        # 之前是"放行 + 每次 WARN"（给存量工具留补配置的窗口），窗口关掉后还放行等于这道闸门不存在；
+        # 只有 admin_test 例外（在上面提前返回），管理员仍能测未配白名单的工具，否则新工具永远配不出来。
+        return "deny", f"工具 {tool.name} 未配置 allowed_hosts，无法判断目标地址是否可信"
     # 后缀匹配而不是精确匹配：api.example.com 要能覆盖 v2.api.example.com，
     # 但必须带点前缀，否则 "notapi.example.com" 会被 "api.example.com" 误放行
     if any(host == item or host.endswith("." + item) for item in allowed):
