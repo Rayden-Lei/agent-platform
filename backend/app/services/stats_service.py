@@ -10,6 +10,7 @@ from sqlalchemy import BigInteger, and_, case, cast, func
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.db.session import rows_to_dict
 from app.db.models import (
     Agent, ApiKey, Conversation, Document, KnowledgeBase, Message, ModelConfig, PromptTemplate, Run, ScheduledJob,
     Tool, User, Workflow,
@@ -124,7 +125,7 @@ def model_usage(db: Session, days: int = 30, model_id: int | None = None) -> dic
     )
     if model_id:
         query = query.filter(ModelConfig.id == model_id)
-    agents_count = dict(db.query(Agent.model_id, func.count(Agent.id)).group_by(Agent.model_id).all())
+    agents_count = rows_to_dict(db.query(Agent.model_id, func.count(Agent.id)).group_by(Agent.model_id).all())
     breakers = {b["model_id"]: b for b in breaker.status()}
     items = []
     for row in query.all():

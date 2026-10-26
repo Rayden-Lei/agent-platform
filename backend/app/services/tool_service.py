@@ -4,6 +4,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import encrypt_secret
+from app.db.session import rows_to_dict
 from app.db.models import Agent, Tool, User
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
@@ -37,7 +38,7 @@ def _to_dict(t: Tool, agents_count: int = 0, creator: str | None = None) -> dict
 
 def _creators(db: Session, tools: list) -> dict:
     ids = {t.created_by for t in tools if t.created_by}
-    return dict(db.query(User.id, User.username).filter(User.id.in_(ids)).all()) if ids else {}
+    return rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(ids)).all()) if ids else {}
 
 
 def _check_auth(data, has_secret_after: bool) -> None:

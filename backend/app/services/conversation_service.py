@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import BizError
 from app.core.limits import TOOL_RESULT_PREVIEW_CHARS, TOOL_RESULT_STORE_CHARS
 from app.core.pagination import PageParams, paginate
+from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, Conversation, Message, User
 
 CHANNEL_UI = "ui"
@@ -93,9 +94,9 @@ def get_conversation(db: Session, conversation_id: int, caller: Caller) -> dict:
 def _serialize(db: Session, rows: list[Conversation]) -> list[dict]:
     """会话行 → 接口结构：消息数用一次分组查询，智能体名用一次 IN 查询，不逐行查库。"""
     ids = [c.id for c in rows]
-    counts = dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
+    counts = rows_to_dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
     agent_ids = {c.agent_id for c in rows if c.agent_id}
-    agent_names = dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
+    agent_names = rows_to_dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
     return [{
         "id": c.id, "agent_id": c.agent_id, "agent_name": agent_names.get(c.agent_id), "title": c.title, "summary": c.summary,
         "message_count": int(counts.get(c.id, 0)),

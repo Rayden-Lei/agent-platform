@@ -18,3 +18,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def rows_to_dict(rows) -> dict:
+    """两列结果集 [(key, value), ...] → {key: value}。
+
+    为什么不直接 dict(rows)：SQLAlchemy 的 Row 是"类元组"对象，Pylance 的 dict() 重载
+    认不出它是 tuple（报 reportArgumentType：List[Row[Tuple[int, str]]] 不可分配给
+    Iterable[list[bytes]]）。全仓有二十多处"两列查询包一层 dict()"的写法，
+    在这里用下标取出后建 dict 收口一次，比每处 cast / type: ignore 干净。
+
+    只给"两列查询"用；三列及以上显式取字段，别拿它当万能的。
+    """
+    return {row[0]: row[1] for row in rows}

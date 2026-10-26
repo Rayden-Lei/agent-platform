@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.scheduler import add_schedule_job, is_valid_cron, next_run_times, remove_schedule_job, trigger_now
+from app.db.session import rows_to_dict
 from app.db.models import Run, ScheduledJob, User, Workflow
 
 SORTABLE = {"id": ScheduledJob.id, "name": ScheduledJob.name, "last_run_at": ScheduledJob.last_run_at, "created_at": ScheduledJob.created_at}
@@ -32,8 +33,8 @@ def _last_runs(db: Session, schedule_ids: set[int]) -> dict[int, dict]:
     """
     if not schedule_ids:
         return {}
-    latest = dict(db.query(Run.schedule_id, func.max(Run.id)).filter(Run.schedule_id.in_(schedule_ids)).group_by(Run.schedule_id).all())
-    statuses = dict(db.query(Run.id, Run.status).filter(Run.id.in_(latest.values())).all()) if latest else {}
+    latest = rows_to_dict(db.query(Run.schedule_id, func.max(Run.id)).filter(Run.schedule_id.in_(schedule_ids)).group_by(Run.schedule_id).all())
+    statuses = rows_to_dict(db.query(Run.id, Run.status).filter(Run.id.in_(latest.values())).all()) if latest else {}
     return {sid: {"id": run_id, "status": statuses.get(run_id)} for sid, run_id in latest.items()}
 
 
@@ -41,8 +42,8 @@ def _serialize_page(db: Session, rows: list) -> list[dict]:
     """一页任务的关联装配：工作流名、创建人、下次触发时间、最近一次运行，各一次查询。"""
     workflow_ids = {s.workflow_id for s in rows}
     user_ids = {s.user_id for s in rows if s.user_id}
-    workflows = dict(db.query(Workflow.id, Workflow.name).filter(Workflow.id.in_(workflow_ids)).all()) if workflow_ids else {}
-    users = dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
+    workflows = rows_to_dict(db.query(Workflow.id, Workflow.name).filter(Workflow.id.in_(workflow_ids)).all()) if workflow_ids else {}
+    users = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
     next_runs = next_run_times([s.id for s in rows]) if rows else {}
     last_runs = _last_runs(db, {s.id for s in rows})
     return [_to_dict(s, workflows.get(s.workflow_id), users.get(s.user_id), next_runs.get(s.id), last_runs.get(s.id)) for s in rows]
