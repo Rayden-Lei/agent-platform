@@ -294,6 +294,11 @@ def _process_document(doc_id: int, resume: bool = False) -> None:
             logger.warning("文档处理跳过：文档 %s 不存在", doc_id)
             return
         kb = db.get(KnowledgeBase, doc.kb_id)
+        if kb is None:
+            # 文档还在但知识库没了：不继续（后面每处都要用 kb.chunk_size）。留在原状态不置 parsing，
+            # 库恢复后重新排队还能接着处理。
+            logger.warning("文档处理跳过：知识库 %s 不存在", doc.kb_id)
+            return
         doc.status = "parsing"
         doc.processing_node = NODE_NAME
         doc.heartbeat_at = datetime.now(timezone.utc)

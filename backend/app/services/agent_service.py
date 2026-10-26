@@ -160,7 +160,10 @@ def get_available_agent(db: Session, agent_id: int, api_key: ApiKey | None = Non
     API Key 请求另须在作用域内（403，与对话同一句）。"""
     api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
-    return {"id": agent_id, "name": live.name, "description": live.description, "published_at": db.get(Agent, agent_id).published_at}
+    agent = db.get(Agent, agent_id)
+    if agent is None:  # resolve_live_config 上面已按 404 拦过，这里重复判断只为让检查器收窄
+        raise BizError(404, "智能体不存在")
+    return {"id": agent_id, "name": live.name, "description": live.description, "published_at": agent.published_at}
 
 
 def _check_ids(db: Session, model_cls, ids: list, label: str) -> None:

@@ -8,7 +8,7 @@ import secrets
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
+from typing import AsyncGenerator, AsyncIterator
 from zoneinfo import ZoneInfo
 
 from jose import JWTError
@@ -58,7 +58,7 @@ def _warnings(db: Session, agent: Agent, access_mode: str, allow_http_tools: boo
     if agent.published_version is None:
         return ["智能体还没有发布：发布后才能开启分享"]
     out = ["智能体已下线：访客打开链接会看到「智能体已下线」"] if agent.status == "offline" else []
-    cfg = load_version_config(db, agent.id, agent.published_version)
+    cfg = load_version_config(db, agent.id, _published_version(agent))
     kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all() if cfg.kb_ids else []
     hidden = [k.name for k in kbs if not kb_allows(None, k)]
     if hidden and access_mode == "public":
@@ -109,7 +109,9 @@ def update_share(db: Session, agent_id: int, data, user: User) -> dict:
     share = db.query(AgentShare).filter(AgentShare.agent_id == agent_id).first()
     is_new = share is None
     was_enabled = bool(share and share.is_enabled)
-    if is_new:
+    # 这里判 share is None 而不是 is_new：is_new 是另一个变量，判它的真假不会让检查器收窄 share，
+    # 后面的 share.xxx 全会被当成"可能是 None"。判 share 本身才收窄得动。
+    if share is None:
         share = AgentShare(agent_id=agent_id, code=_new_code(), created_by=user.id, token_version=0)
         db.add(share)
     changed = [f for f in CONFIG_FIELDS if is_new or getattr(share, f) != getattr(data, f)]
@@ -174,10 +176,17 @@ def _available(db: Session, code: str) -> tuple[AgentShare, Agent, User]:
     return share, agent, creator
 
 
+def _published_version(agent: Agent) -> int:
+    """取已发布版本号。_available 已经拦掉"未发布"，这里再断言一次是因为返回值元组无法携带
+    "published_version 非 None"这个收窄信息，不写的话每个调用点都得自己判空。"""
+    assert agent.published_version is not None
+    return agent.published_version
+
+
 def public_info(db: Session, code: str) -> dict:
     """访客页的资料：只有名称、简介、访问方式与是否要密码（开场白类字段第 2 批起有值）。名称与简介取线上版本。"""
     share, agent, _ = _available(db, code)
-    cfg = load_version_config(db, agent.id, agent.published_version)
+    cfg = load_version_config(db, agent.id, _published_version(agent))
     return {"agent_name": cfg.name, "description": cfg.description, "opening_statement": None, "starter_questions": [],
             "access_mode": share.access_mode, "password_required": bool(share.password_hash), "show_citations": share.show_citations}
 
@@ -196,6 +205,9 @@ def create_session(db: Session, code: str, password: str | None, platform_user: 
         raise BizError(401, "访问密码错误")
     now = datetime.now(timezone.utc)
     if share.access_mode == "login":
+        # 上面已拦掉"仅登录模式没带平台 JWT"，这条分支里 platform_user 必定有值；
+        # 断言是因为"前面某条 if 拦过"不是检查器能做的推理。
+        assert platform_user is not None
         visitor_id = f"u{platform_user.id}"
         expires = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         claims = {"sid": share.id, "vid": visitor_id, "ver": share.token_version, "uid": platform_user.id, "uver": platform_user.token_version}
@@ -293,7 +305,7 @@ def guest_error_text(message: str) -> str:
     return f"服务暂时不可用，请稍后重试（trace: {get_request_id()}）"
 
 
-async def guest_events(events: AsyncIterator[dict], show_citations: bool) -> AsyncIterator[dict]:
+async def guest_events(events: AsyncGenerator[dict, None], show_citations: bool) -> AsyncIterator[dict]:
     """把执行器（或幂等回放）的事件裁成访客口径：引用只给文档名与内容且受 show_citations 控制；工具只给名称；
     done 不带 run_id 与用量；error 按白名单映射。客户端断开时关闭内层执行器，让它照常收尾。"""
     async with aclosing(events) as inner:

@@ -235,6 +235,8 @@ def update_api_key(db: Session, key_id: int, data, user: User) -> dict:
     if any(getattr(data, f) is not None for f in SCOPE_FIELDS):
         merged = {f: getattr(data, f) if getattr(data, f) is not None else list(getattr(k, f) or []) for f in SCOPE_FIELDS}
         owner = user if k.user_id == user.id else db.get(User, k.user_id)
+        if owner is None:  # 归属用户已不存在；下面按它的角色判知识库可见性，没有角色可判
+            raise BizError(400, "Key 的归属用户已不存在")
         _check_scope(db, merged["agent_ids"], merged["workflow_ids"], merged["kb_ids"], owner)
     for field in ("name", "quota", "allowed_ips", "rate_limit_per_minute", *SCOPE_FIELDS):
         value = getattr(data, field)

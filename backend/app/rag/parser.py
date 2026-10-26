@@ -82,6 +82,8 @@ def parse_table(file_path: str, ext: str) -> list:
 
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         ws = wb.active
+        if ws is None:  # 工作簿里一张表都没有（删光了或文件损坏），读下去会在 iter_rows 上抛 AttributeError
+            raise ValueError("Excel 没有可读的工作表")
         rows = [[("" if c.value is None else str(c.value)) for c in row] for row in ws.iter_rows()]
 
     if not rows:
