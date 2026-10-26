@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from langchain_openai import OpenAIEmbeddings
+from pydantic import SecretStr
 
 from app.config import settings
 from app.core.http import async_client, sync_client
@@ -44,7 +45,9 @@ def get_embeddings():
         if _embeddings is None:
             _embeddings = OpenAIEmbeddings(
                 model=settings.EMBEDDING_MODEL,
-                api_key=settings.EMBEDDING_API_KEY or "dummy",
+                # 这个参数要 SecretStr 或返回密钥的可调用对象，直接给 str 检查器不认（运行时会自己包一层）；
+                # 这里显式包成 SecretStr，等价写法，也避免密钥以明文 str 在调用链上多传一手。
+                api_key=SecretStr(settings.EMBEDDING_API_KEY or "dummy"),
                 base_url=settings.EMBEDDING_API_BASE.rstrip("/") if settings.EMBEDDING_API_BASE else None,
                 dimensions=settings.EMBEDDING_DIM,
                 chunk_size=settings.EMBEDDING_REQUEST_SIZE,  # 单次请求条数上限（阿里云百炼 20）；入库时可按页面设置逐次覆盖

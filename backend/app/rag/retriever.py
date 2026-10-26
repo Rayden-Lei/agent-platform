@@ -13,7 +13,7 @@ from app.services.settings_service import runtime_value
 RRF_K = 60  # RRF 倒排融合常数
 
 
-def kb_allows(role: str, kb: KnowledgeBase | None, kb_scope: list | None = None) -> bool:
+def kb_allows(role: str | None, kb: KnowledgeBase | None, kb_scope: list | None = None) -> bool:
     """知识库级鉴权（第一道闸门，召回之前）：admin 可见全部；其他角色只能检索公开库，或 visible_roles 含该角色的库。
 
     读的是 knowledge_bases 行的当前值。切片 meta 里的 is_public / visible_roles 是入库时的快照，改权限后不回写，
@@ -23,6 +23,9 @@ def kb_allows(role: str, kb: KnowledgeBase | None, kb_scope: list | None = None)
     kb_scope 不为 None 表示 API Key 发起的检索（docs/15 3.7.1，D-07 / D-09）：只放行公开库，以及在 Key 的 kb_ids 内、
     且归属人当前角色可见的库。不因归属人是 admin 就放行受限库——否则 admin 给智能体建一个 Key，智能体绑定的
     "仅管理员可见"库就对 Key 背后的所有终端用户开放了。
+
+    role 为 None 表示匿名访客（分享出去的访客会话就是这样调的）：既不是 admin 也没有角色，
+    只能命中公开库；kb 为 None 表示库不存在，按无权处理。
     """
     if kb is None:
         return False
@@ -33,7 +36,7 @@ def kb_allows(role: str, kb: KnowledgeBase | None, kb_scope: list | None = None)
     return bool(kb.is_public) or (bool(role) and role in (kb.visible_roles or []))
 
 
-def _authorize(role: str, kb: KnowledgeBase, chunk, kb_scope: list | None = None) -> bool:
+def _authorize(role: str | None, kb: KnowledgeBase, chunk, kb_scope: list | None = None) -> bool:
     """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色（与 Key 的范围）可见。
 
     与 kb_allows 同一口径（06 第 8 节：两道闸门语义一致）；召回层万一混进别的库的切片，在这里拦下。
@@ -183,7 +186,7 @@ def _dedupe(ranked: list) -> list:
     return kept
 
 
-def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list | None = None, kb_scope: list | None = None) -> tuple[list, int]:
+def _rank_and_authorize(query: str, candidates: list, role: str | None, kb: KnowledgeBase | None, keywords: list | None = None, kb_scope: list | None = None) -> tuple[list, int]:
     """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
 
     模型重排的分数分布与词法完全不同（相关 ≈ 0.99、无关 ≈ 0），淘汰阈值按重排模式分别取配置。
@@ -194,6 +197,9 @@ def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBa
     else:
         ranked = _prune(ranked)
     ranked = _dedupe(ranked)
+    # kb 为 None 时一条都不放行：库不存在，切片也就谈不上属于它。
+    if kb is None:
+        return [], len(ranked)
     kept, rejected = [], 0
     for c in ranked:
         if _authorize(role, kb, c.get("chunk"), kb_scope):

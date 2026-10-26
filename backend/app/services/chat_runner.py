@@ -9,10 +9,11 @@ import json
 import logging
 import time
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import create_react_agent
 from starlette.concurrency import run_in_threadpool
 
@@ -120,7 +121,9 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
     announced: set[str] = set()
     tracer = TraceMiddleware(ctx.model) if trace else None
     # 每轮工具调用走 agent → post_model_hook → tools 三步；上限留足余量，守卫先于它触发，它只兜底其他死循环
-    config = {"recursion_limit": 3 * max_rounds + 10}
+    # 标成 RunnableConfig：字面量 dict 会被推成 dict[str, int]，而 RunnableConfig 是 TypedDict，
+    # dict[str, int] 满足不了它（键名与取值都不是任意字符串/整数）。
+    config: RunnableConfig = {"recursion_limit": 3 * max_rounds + 10}
     # 熔断包装：打开期直接抛 503；首个 chunk 视为成功，建立流之前的异常计入失败
     llm_stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, config=config, stream_mode="messages"))
     async for chunk, _meta in llm_stream:
@@ -203,7 +206,7 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
         yield events.emit("trace", step=step)
 
 
-async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
+async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
     """执行一轮线上对话并逐个产出事件。
 
     客户端中断（停止按钮 / 断网）时生成器被关闭，finally 收尾：已生成的部分回答落库、运行记录置 cancelled，
@@ -268,7 +271,7 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
         db.close()
 
 
-async def replay_chat(replay: chat_service.ReplayChat) -> AsyncIterator[dict]:
+async def replay_chat(replay: chat_service.ReplayChat) -> AsyncGenerator[dict, None]:
     """幂等回放（docs/15 3.7.1）：同一会话里重复的 client_message_id 不落消息、不调模型，按首次的结果下发同样的事件形状——
     首次完成：citations（有的话）+ 一条 delta 带回答全文 + done（首次的 message_id / run_id，replayed=true）；
     首次失败或中断：一条 error 带首次的错误文案。首次仍在生成的在 prepare_chat 就 409 了，到不了这里。"""

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import operator
+from collections.abc import Hashable
 from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, TypedDict
 
@@ -77,7 +78,27 @@ def _eval_condition(expr: str, state: WorkflowState) -> bool:
         return False
 
 
-def _start_node(run_id: int, node_id: str, node_type: str, input_data: Any = None) -> int:
+def _require_int(config: dict, key: str) -> int:
+    """取节点配置里的必填整数。图保存与运行前已校验（validate_graph），这里再确认一次：
+    直接手写 graph_data 的调用（测试）会拿到明确的 400，而不是把 None 传下去在别处炸。"""
+    value = config.get(key)
+    if isinstance(value, bool) or value is None:
+        raise BizError(400, f"节点配置 {key} 必须是整数")
+    try:
+        return int(value)  # 兼容存量图里把 id 存成字符串的情况
+    except (TypeError, ValueError):
+        raise BizError(400, f"节点配置 {key} 必须是整数")
+
+
+def _require_str(config: dict, key: str) -> str:
+    """取节点配置里的必填非空字符串，语义同 _require_int。"""
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        raise BizError(400, f"节点配置 {key} 必须是非空字符串")
+    return value
+
+
+def _start_node(run_id: int | None, node_id: str, node_type: str, input_data: Any = None) -> int:
     """节点开始：写入 running 状态日志，返回 RunNode.id。每个节点都必须调用。"""
     if not run_id:
         return 0
@@ -117,7 +138,7 @@ def _finish_node(rn_id: int, status: str, output: Any = None, error: str | None 
         db.close()
 
 
-def _node_failed(rn_id: int, run_id: int, node_id: str, node_type: str, exc: Exception) -> None:
+def _node_failed(rn_id: int, run_id: int | None, node_id: str, node_type: str, exc: Exception) -> None:
     """节点失败的统一收尾：写 failed 节点日志 + 带堆栈的错误日志。
 
     调用后必须 raise，让 workflow_service 把整条运行记录置为 failed；
@@ -127,8 +148,8 @@ def _node_failed(rn_id: int, run_id: int, node_id: str, node_type: str, exc: Exc
     logger.exception("工作流节点执行失败 run_id=%s node_id=%s type=%s", run_id, node_id, node_type)
 
 
-def _extract_field(value: Any, field: str) -> Any:
-    """按点路径从输出中提取字段，支持 dict/list/JSON 字符串。"""
+def _extract_field(value: Any, field: str | None) -> Any:
+    """按点路径从输出中提取字段，支持 dict/list/JSON 字符串。field 为空（未配置）时原样返回。"""
     if not field:
         return value
     for p in str(field).split("."):
@@ -202,7 +223,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
     2026-09-25 前读的是草稿行、不查模型停用，智能体不存在时还把错误文案当输出继续往下跑。
     default_ref（所有工厂同义）：并行分支内由编译期给出的前驱节点 id，未配 input_ref 时默认取它的输出。
     """
-    agent_id = config.get("agent_id")
+    agent_id = _require_int(config, "agent_id")
     prompt_override = config.get("prompt")
 
     def run(state: WorkflowState) -> dict:
@@ -296,13 +317,13 @@ def _make_condition_node(config: dict, run_id: int, node_id: str, default_ref: s
     return run
 
 
-def _make_kb_node(config: dict, run_id: int, node_id: str, role: str | None = None, default_ref: str | None = None) -> Callable:
+def _make_kb_node(config: dict, run_id: int | None, node_id: str, role: str | None = None, default_ref: str | None = None) -> Callable:
     """知识库检索节点工厂：按 config.kb_id/top_k 调用 retrieve，检索结果作为节点输出。
 
     role 用于检索层的权限过滤（与 retriever 的 ACL 两道闸门一致），
     由 build_workflow 在编译时从运行上下文带入，保证非 admin 触发者只能召回可见 chunk。
     """
-    kb_id = config.get("kb_id")
+    kb_id = _require_int(config, "kb_id")
     top_k = config.get("top_k")
 
     def run(state: WorkflowState) -> dict:
@@ -353,7 +374,7 @@ def _make_http_node(config: dict, run_id: int, node_id: str, default_ref: str | 
     30 秒超时；非 2xx 响应 raise_for_status 抛异常走失败分支；响应按纯文本返回，
     需要结构化取数时配合节点的 output_field 提取。
     """
-    url = config.get("url")
+    url = _require_str(config, "url")
     method = config.get("method", "POST")
 
     def run(state: WorkflowState) -> dict:
@@ -460,7 +481,7 @@ def _make_parallel_node(config: dict, run_id: int, node_id: str, default_ref: st
     return run
 
 
-def _make_join_node(config: dict, run_id: int, node_id: str, predecessors: list[str]) -> Callable:
+def _make_join_node(config: dict, run_id: int | None, node_id: str, predecessors: list[str]) -> Callable:
     """汇聚节点（FR-029）：等全部分支完成后（build_workflow 用列表边连入），
     把各分支末节点的输出收集成 {末节点 id: 输出} 作为本节点输出，并覆盖 state.output，
     之后的节点默认输入即该字典；output_field 仍可用于从中提取字段。
@@ -559,7 +580,9 @@ def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None
 
     for cid, routes in cond_routes.items():
         # 条件边：按 state.condition_result 路由 true/false；映射里指向不存在节点的出口被过滤掉
-        mapping = {k: v for k, v in routes.items() if v in by_id}
+        # 标成 dict[Hashable, str]：add_conditional_edges 的形参就是这个类型，而推导式会推成 dict[str, str]，
+        # dict 的键类型不变（invariant），不能自动兼容。
+        mapping: dict[Hashable, str] = {k: v for k, v in routes.items() if v in by_id}
         g.add_conditional_edges(
             cid,
             # 用默认参数绑定 mapping：lambda 闭包延迟绑定，不绑的话所有条件边会共用最后一份 mapping
@@ -571,7 +594,7 @@ def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None
         config = (by_id[lid].get("config") or {})
         count = int(config.get("count") or 1)
         expr = config.get("expression")
-        mapping = {k: v for k, v in routes.items() if v in by_id}
+        mapping: dict[Hashable, str] = {k: v for k, v in routes.items() if v in by_id}
 
         def _route(state: WorkflowState, _expr=expr, _count=count) -> str:
             # 循环边：配了 expression 按表达式决定回环/退出（表达式异常按 false 走 exit），

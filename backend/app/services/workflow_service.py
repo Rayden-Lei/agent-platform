@@ -221,7 +221,9 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
         raise BizError(404, "运行记录不存在")
     if run.status != "awaiting_review":
         raise BizError(400, "该运行不在待审核状态")
-    role = db.get(User, run.user_id).role if run.user_id else None
+    # 取发起这一轮的用户角色（知识库检索要按它判可见性）；用户可能已被删除，那就按无角色处理
+    executor = db.get(User, run.user_id) if run.user_id else None
+    role = executor.role if executor is not None else None
     return await asyncio.to_thread(execute_workflow, db, w, run, Command(resume=decision), role)
 
 

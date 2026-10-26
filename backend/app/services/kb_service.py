@@ -3,7 +3,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, func, or_, true
+from sqlalchemy import ColumnElement, case, func, or_, true
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -31,7 +31,9 @@ def visible_kb_filter(role: str | None):
     其他角色为公开库，或 visible_roles 含本角色。列表、详情、文档、切片、上传、检索、批量统一套用，不可见一律 404。"""
     if role == "admin":
         return true()
-    conditions = [KnowledgeBase.is_public.is_(True)]
+    # 标成 ColumnElement[bool]：is_() 返回 BinaryExpression、contains() 返回更宽的 ColumnElement，
+    # 不标的话列表会被推成 list[BinaryExpression[bool]]，append 后者就报类型不符。
+    conditions: list[ColumnElement[bool]] = [KnowledgeBase.is_public.is_(True)]
     if role:
         conditions.append(KnowledgeBase.visible_roles.contains([role]))
     return or_(*conditions)

@@ -84,7 +84,7 @@ def _summarize_history(model: ModelConfig, llm: Any, previous_summary: str, pend
     return summary or None
 
 
-def _split_history(conversation: Conversation, rows: list, max_messages: int) -> tuple[list, list, list]:
+def _split_history(conversation: Conversation, rows: list, max_messages: int) -> tuple[list, list, str]:
     """把会话消息切成 (待折叠的更早消息, 最近 max_messages 条, 已折叠摘要文本)。
 
     更早消息里 id 大于 summary_upto_message_id 的是"待折叠"（还没并进摘要）。
@@ -326,14 +326,18 @@ def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int
         return replay
     # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属。
     # 用户消息与运行记录同一次提交：并发的重复请求不会读到"有消息、还没挂上运行记录"的中间状态
+    # 线上对话用的必定是某个发布版本（上面 resolve_live_config 带版本号），为 None 只出现在装配页调试，
+    # 那条路不走本函数；断言是为了让运行记录与 PreparedChat 都用同一个已收窄的值。
+    agent_version = live.version
+    assert agent_version is not None
     run = run_service.create_run(
         db, "chat", caller.user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
         input_data={"message": message}, source=conversation_service.RUN_SOURCE_OF[caller.channel], api_key_id=caller.api_key_id,
-        share_id=caller.share_id, agent_version=live.version, commit=False,
+        share_id=caller.share_id, agent_version=agent_version, commit=False,
     )
     user_message.run_id = run.id
     db.commit()
-    return PreparedChat(conversation.id, run.id, live.version)
+    return PreparedChat(conversation.id, run.id, agent_version)
 
 
 def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
@@ -385,6 +389,10 @@ def build_chat_context(db: Session, agent_id: int, message_text: str, conversati
                                run_id=run_id, source=source)
 
     conversation = db.get(Conversation, conversation_id)
+    if conversation is None:
+        # 会话必须存在（历史摘要挂在它上面）；不存在说明传入的 id 有问题，按 404 处理，
+        # 与 prepare_chat 里"会话不存在或不属于该智能体"的口径一致。
+        raise BizError(404, "会话不存在")
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
     # prepare_chat 已把本轮用户消息落库，历史里的最后一行就是它；不剔除会让模型收到两条相同的用户消息
     if history and history[-1].role == "user" and history[-1].content == message_text:
@@ -420,6 +428,8 @@ def prepare_debug(db: Session, user, agent_id: int, message: str, history: list[
     if agent is None:
         raise BizError(404, "智能体不存在")
     if config_source == "inline":
+        if config is None:  # inline 就是"用请求里带的当前编辑器内容"，不带就没得调试
+            raise BizError(400, "inline 调试必须带上当前配置")
         cfg = run_config_from_snapshot(agent_id, agent_service.inline_snapshot(db, config))
     elif config_source == "draft":
         draft = snapshot_of(agent)
