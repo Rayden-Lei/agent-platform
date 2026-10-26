@@ -119,6 +119,10 @@ def apply_event(state: StreamState, event: dict, *, stored_result: str | None = 
         else:
             item["status"] = event.get("state") or "done"
             item["result"] = result
+    elif type_ == "llm_usage":
+        # 一次模型调用的用量（2026-10-26 起）。写进 usage_by_call 后，重放能在没有 done 事件时
+        # 也能算出本轮 token；有 done 时仍以 done 的汇总为准（usage() 里 final_usage 优先）。
+        state.usage_by_call[event.get("call_id")] = event.get("usage") or {}
     elif type_ == "done":
         state.finished_reason = event.get("finished_reason") or "completed"
         if event.get("usage") is not None:

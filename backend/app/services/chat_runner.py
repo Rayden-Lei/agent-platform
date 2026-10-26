@@ -130,7 +130,9 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
             if delta:
                 if state.first_token_ms is None:
                     state.first_token_ms = int((time.perf_counter() - started) * 1000)
-                event = events.emit("delta", content=delta)
+                # call_id 让下游能把 delta 归到某一次模型调用（同一轮里模型可能被调多次）。
+                # 前端不读它，忽略即可；trace 与将来的"按调用分组用量"靠它。
+                event = events.emit("delta", content=delta, call_id=call_id)
                 apply_event(state, event)
                 yield event
             for tc in getattr(chunk, "tool_call_chunks", None) or []:
@@ -153,9 +155,15 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
                     yield event
             um = getattr(chunk, "usage_metadata", None)
             if um:
-                # 同一次调用内按最后一次为准（有的厂商在每个分块上给累计值），不同调用之间相加
-                state.usage_by_call[call_id] = {"prompt_tokens": um.get("input_tokens", 0), "completion_tokens": um.get("output_tokens", 0),
-                                                "total_tokens": um.get("total_tokens", 0)}
+                # 同一次调用内按最后一次为准（有的厂商在每个分块上给累计值），不同调用之间相加。
+                # 用量变化时同时发一条 llm_usage 事件：事件流里有了它，重放才能还原每次调用的 token
+                # （此前只在 state.usage_by_call 里，事件层看不到）。
+                usage = {"prompt_tokens": um.get("input_tokens", 0), "completion_tokens": um.get("output_tokens", 0),
+                         "total_tokens": um.get("total_tokens", 0)}
+                if state.usage_by_call.get(call_id) != usage:
+                    usage_event = events.emit("llm_usage", call_id=call_id, usage=usage)
+                    apply_event(state, usage_event)
+                    yield usage_event
             if tracer:
                 tracer.on_chunk(call_id, delta, [tc.get("name") for tc in (getattr(chunk, "tool_call_chunks", None) or [])])
         elif isinstance(chunk, ToolMessage):
