@@ -96,7 +96,7 @@ def _start_node(run_id: int, node_id: str, node_type: str, input_data: Any = Non
         db.close()
 
 
-def _finish_node(rn_id: int, status: str, output: Any = None, error: str = None) -> None:
+def _finish_node(rn_id: int, status: str, output: Any = None, error: str | None = None) -> None:
     """节点结束：写入 success/failed 状态与输出。每个节点都必须调用。"""
     if not rn_id:
         return
@@ -296,7 +296,7 @@ def _make_condition_node(config: dict, run_id: int, node_id: str, default_ref: s
     return run
 
 
-def _make_kb_node(config: dict, run_id: int, node_id: str, role: str = None, default_ref: str | None = None) -> Callable:
+def _make_kb_node(config: dict, run_id: int, node_id: str, role: str | None = None, default_ref: str | None = None) -> Callable:
     """知识库检索节点工厂：按 config.kb_id/top_k 调用 retrieve，检索结果作为节点输出。
 
     role 用于检索层的权限过滤（与 retriever 的 ACL 两道闸门一致），
@@ -496,7 +496,7 @@ NODE_BUILDERS = {
 }
 
 
-def build_workflow(graph_data: dict, run_id: int = None, role: str = None):
+def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None = None):
     """把数据库 graph JSON（nodes/edges）编译成 LangGraph 可执行图。
 
     图校验（并行 / 汇聚结构）在这里兜底：服务层保存与运行前已显式校验并返回 400，

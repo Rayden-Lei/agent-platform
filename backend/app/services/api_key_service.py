@@ -139,8 +139,8 @@ def _get_owned(db: Session, key_id: int, user: User) -> ApiKey:
     return k
 
 
-def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is_enabled: bool = None,
-                  owner_id: int = None, sort: SortParams = None, agent_id: int = None, workflow_id: int = None, kb_id: int = None) -> dict:
+def list_api_keys(db: Session, params: PageParams, user: User, q: str | None = None, is_enabled: bool | None = None,
+                  owner_id: int | None = None, sort: SortParams | None = None, agent_id: int | None = None, workflow_id: int | None = None, kb_id: int | None = None) -> dict:
     """分页列出 Key 元信息：admin 看全部（可按创建人过滤），developer 只看本人创建的；名称模糊、启用状态过滤，白名单排序。
     agent_id / workflow_id / kb_id 只取作用域含该资源的 Key（智能体"发布渠道"的密钥区用，docs/15 3.7.2）。
     创建人用户名一次 IN 查询装配。"""

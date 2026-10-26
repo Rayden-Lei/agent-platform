@@ -92,7 +92,7 @@ def _serialize(db: Session, rows: list) -> list[dict]:
     return [_kb_dict(k, stats.get(k.id), creators.get(k.created_by)) for k in rows]
 
 
-def list_kbs(db: Session, user: User, params: PageParams, q: str = None, is_public: bool = None, sort: SortParams = None) -> dict:
+def list_kbs(db: Session, user: User, params: PageParams, q: str | None = None, is_public: bool | None = None, sort: SortParams | None = None) -> dict:
     """分页列出当前用户可见的知识库：q 名称模糊，可按公开 / 受限过滤，白名单排序；附文档与切片统计。"""
     query = db.query(KnowledgeBase).filter(visible_kb_filter(user.role))
     if q:
@@ -288,8 +288,8 @@ def _doc_dict(d: Document) -> dict:
     }
 
 
-def list_documents(db: Session, kb_id: int, user: User, params: PageParams, status: str = None, q: str = None, file_type: str = None,
-                   created_from: datetime = None, created_to: datetime = None, sort: SortParams = None) -> dict:
+def list_documents(db: Session, kb_id: int, user: User, params: PageParams, status: str | None = None, q: str | None = None, file_type: str | None = None,
+                   created_from: datetime | None = None, created_to: datetime | None = None, sort: SortParams | None = None) -> dict:
     """分页列出知识库内文档：状态 / 类型精确，名称模糊，上传时间区间，白名单排序（默认新上传在前）。"""
     get_kb(db, kb_id, user.role)
     query = db.query(Document).filter(Document.kb_id == kb_id)

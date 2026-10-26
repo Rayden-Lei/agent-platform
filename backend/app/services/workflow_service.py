@@ -66,7 +66,7 @@ def _serialize(db: Session, rows: list, with_graph: bool = False) -> list[dict]:
     return items
 
 
-def list_workflows(db: Session, params: PageParams, q: str = None, status: str = None, sort: SortParams = None) -> dict:
+def list_workflows(db: Session, params: PageParams, q: str | None = None, status: str | None = None, sort: SortParams | None = None) -> dict:
     """分页列出工作流：q 名称模糊、状态精确，白名单排序；附节点数、创建人、最近 7 天运行数、定时任务数。"""
     query = db.query(Workflow)
     if q:
@@ -154,7 +154,7 @@ def _interrupt_value(result: dict):
     return None
 
 
-async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> dict:
+async def test_run_workflow(graph: dict, input_text: str, role: str | None = None) -> dict:
     """编辑器内测试运行：用当前图直接执行，不落库。图结构不合法 400（在 try 之外，不能被吞成 failed）。"""
     _check_graph(graph)
     try:
@@ -171,7 +171,7 @@ async def test_run_workflow(graph: dict, input_text: str, role: str = None) -> d
         return {"status": "failed", "error": str(e)}
 
 
-def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: str = None) -> dict:
+def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: str | None = None) -> dict:
     """同步执行（或续跑）一张工作流图，并收尾运行记录。接口触发（线程池）与定时任务（调度线程）共用。
 
     payload 为首跑的初始 state，或人工审核后的 Command(resume=...)。
@@ -225,8 +225,8 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
     return await asyncio.to_thread(execute_workflow, db, w, run, Command(resume=decision), role)
 
 
-def list_workflow_runs(db: Session, workflow_id: int, params: PageParams, status: str = None,
-                       started_from=None, started_to=None, sort: SortParams = None) -> dict:
+def list_workflow_runs(db: Session, workflow_id: int, params: PageParams, status: str | None = None,
+                       started_from=None, started_to=None, sort: SortParams | None = None) -> dict:
     """分页列出某工作流的运行记录（委托给 run_service，字段、过滤与排序和全局运行记录页一致）。"""
     get_workflow(db, workflow_id)
     return run_service.list_runs(db, params, run_type="workflow", status=status, workflow_id=workflow_id,
