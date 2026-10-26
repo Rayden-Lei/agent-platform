@@ -56,8 +56,8 @@ class PromptRenderIn(BaseModel):
     variables: dict[str, Any] = Field(default_factory=dict)
 
 
-class TemplateBatchIn(BatchIn):
-    action: Literal["delete"]
+class TemplateBatchIn(BatchIn[Literal["delete"]]):
+    """action 只接受 "delete"，其余值 422。"""
 
 
 @router.get("")

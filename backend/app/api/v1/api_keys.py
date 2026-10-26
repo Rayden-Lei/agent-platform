@@ -6,7 +6,7 @@ developer 只能看到、操作本人创建的 Key（服务层按归属过滤）
 """
 
 import ipaddress
-from typing import Literal
+from typing import Literal, overload
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, field_validator
@@ -26,6 +26,12 @@ MAX_RATE_LIMIT_PER_MINUTE = 10000
 MAX_SCOPE_IDS = 100  # 每类作用域的上限；ID 的存在性与知识库可见性在服务层校验（400）
 
 
+# 两个请求体共用这一个去重函数：ApiKeyCreate 的字段是非空 list，ApiKeyUpdate 的字段可为 None。
+# 用重载说明"传什么回什么"，调用处就不必再判 None —— 实现体本身没有任何变化。
+@overload
+def _dedupe(ids: list[int]) -> list[int]: ...
+@overload
+def _dedupe(ids: None) -> None: ...
 def _dedupe(ids: list[int] | None) -> list[int] | None:
     """作用域去重保序：重复的 ID 不报错，只存一份。"""
     if ids is None:
@@ -98,8 +104,8 @@ class ApiKeyUpdate(BaseModel):
         return _dedupe(value)
 
 
-class ApiKeyBatchIn(BatchIn):
-    action: Literal["enable", "disable", "delete"]
+class ApiKeyBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
+    """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
 @router.get("")

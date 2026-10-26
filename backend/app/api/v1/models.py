@@ -19,8 +19,8 @@ from app.services import model_service
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-class ModelBatchIn(BatchIn):
-    action: Literal["enable", "disable", "delete"]
+class ModelBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
+    """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
 @router.get("", response_model=Page[ModelOut])

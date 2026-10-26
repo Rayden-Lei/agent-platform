@@ -5,6 +5,7 @@
 """
 import threading
 from collections import OrderedDict
+from typing import Any
 
 from langchain_openai import ChatOpenAI
 
@@ -68,7 +69,11 @@ def reset_llm_cache() -> None:
 
 
 def _new_llm(model: ModelConfig, params: dict):
-    kwargs = dict(
+    # 显式标成 dict[str, Any]：这是异构的参数字典（字符串、数字、bool、httpx 客户端混在一起）。
+    # 不标的话检查器会推成 dict[str, str | int | Client | AsyncClient]，解包给 ChatOpenAI 时
+    # 每个参数都判成那个联合类型（同一行报 50 个 reportArgumentType）。标 Any 是如实描述，
+    # 不是掩盖——真正的约束由 ChatOpenAI 的构造签名在运行时报错。
+    kwargs: dict[str, Any] = dict(
         model=model.model_name,
         api_key=decrypt_secret(model.api_key_enc),  # 库里存的是加密后的 Key，构建时解密
         base_url=model.api_base.rstrip("/"),  # 兼容配置里末尾带斜杠的 base_url

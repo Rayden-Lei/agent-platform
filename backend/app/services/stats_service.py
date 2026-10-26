@@ -4,6 +4,7 @@
 成本口径与 run_service 一致：读运行记录收尾时落库的 cost 快照（改单价不追溯）；workflow 运行没有模型，成本为 0 但计入运行数与 token。
 """
 from datetime import datetime, time, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import BigInteger, and_, case, cast, func
@@ -61,8 +62,11 @@ def _metric_columns():
     return [expr.label(name) for name, expr in _METRICS] + [func.coalesce(func.sum(Run.cost), 0.0).label("cost"), _avg_latency().label("avg_latency_ms")]
 
 
-def _row_to_metrics(row) -> dict:
-    data = {name: int(getattr(row, name) or 0) for name, _ in _METRICS}
+def _row_to_metrics(row) -> dict[str, Any]:
+    # 标注 dict[str, Any]：这个字典同时装 int（各状态数、token、耗时）、float（成本、成功率）
+    # 和 None（没有样本时耗时/成功率是 None）。不标的话推导式会把它推成 dict[str, int]，
+    # 后面写 float / None 的几行全报 reportArgumentType。
+    data: dict[str, Any] = {name: int(getattr(row, name) or 0) for name, _ in _METRICS}
     data["cost"] = round(float(row.cost or 0.0), 6)
     data["avg_latency_ms"] = int(round(float(row.avg_latency_ms))) if row.avg_latency_ms is not None else None
     finished = data["success"] + data["failed"]
@@ -70,8 +74,9 @@ def _row_to_metrics(row) -> dict:
     return data
 
 
-def _empty_metrics() -> dict:
-    data = {name: 0 for name, _ in _METRICS}
+def _empty_metrics() -> dict[str, Any]:
+    # 同上：空窗口的指标字典里 int / float / None 混装，必须显式标成 dict[str, Any]。
+    data: dict[str, Any] = {name: 0 for name, _ in _METRICS}
     data.update(cost=0.0, avg_latency_ms=None, success_rate=None)
     return data
 
@@ -159,8 +164,9 @@ def agent_usage(db: Session, days: int = 30, agent_id: int | None = None) -> dic
     if agent_id:
         conv_q = conv_q.filter(Conversation.agent_id == agent_id)
         msg_q = msg_q.filter(Conversation.agent_id == agent_id)
-    conversations = dict(conv_q.group_by(Conversation.agent_id).all())
-    messages = dict(msg_q.group_by(Conversation.agent_id).all())
+    # Row 只是"像 tuple"，并不是 tuple，dict(rows) 过不了类型检查，统一走 rows_to_dict。
+    conversations = rows_to_dict(conv_q.group_by(Conversation.agent_id).all())
+    messages = rows_to_dict(msg_q.group_by(Conversation.agent_id).all())
     items = []
     for row in query.all():
         items.append({

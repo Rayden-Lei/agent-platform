@@ -70,12 +70,12 @@ class SearchIn(BaseModel):
     debug: bool = False
 
 
-class KbBatchIn(BatchIn):
-    action: Literal["delete"]
+class KbBatchIn(BatchIn[Literal["delete"]]):
+    """action 只接受 delete，其余值 422。"""
 
 
-class DocumentBatchIn(BatchIn):
-    action: Literal["delete", "reprocess"]
+class DocumentBatchIn(BatchIn[Literal["delete", "reprocess"]]):
+    """action 只接受 delete / reprocess，其余值 422。"""
 
 
 @router.get("")

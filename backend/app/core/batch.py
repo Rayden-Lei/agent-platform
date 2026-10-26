@@ -4,7 +4,7 @@
 非预期异常记日志后以通用文案进 failed 清单。每条失败后 rollback，否则 IntegrityError 之后 session 不可用。
 """
 import logging
-from typing import Callable
+from typing import Callable, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,12 +15,22 @@ logger = logging.getLogger(__name__)
 
 BATCH_MAX_IDS = 100
 
+# action 的类型由每个子类自己给（都是 Literal 字面量集合）。
+ActionT = TypeVar("ActionT", bound=str)
 
-class BatchIn(BaseModel):
-    """批量请求体：ids 1～100 个且去重；action 由各路由用 Literal 收窄（非法值 422）。"""
+
+class BatchIn(BaseModel, Generic[ActionT]):
+    """批量请求体：ids 1～100 个且去重；action 由各路由用 Literal 收窄（非法值 422）。
+
+    action 做成类型参数、而不是在基类留一个 str：
+    子类需要把它收窄成各自允许的动作集合（Literal["enable", "disable", "delete"]）。
+    如果基类直接写 action: str，子类收窄就成了不兼容的属性覆写——凡是按基类类型使用的地方
+    都可能塞进任意字符串，收窄并不成立，检查器报 reportIncompatibleVariableOverride 是对的。
+    改成泛型参数后，每个子类的 action 就是它自己那组字面量，约束在类型层面真实成立。
+    """
 
     ids: list[int] = Field(min_length=1, max_length=BATCH_MAX_IDS)
-    action: str
+    action: ActionT
 
     def unique_ids(self) -> list[int]:
         seen: set[int] = set()
