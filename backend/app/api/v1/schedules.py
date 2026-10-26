@@ -37,8 +37,8 @@ class ScheduleIn(BaseModel):
         return value
 
 
-class ScheduleBatchIn(BatchIn):
-    action: Literal["enable", "disable", "delete"]
+class ScheduleBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
+    """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
 @router.get("")

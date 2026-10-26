@@ -22,8 +22,8 @@ from app.services import agent_service
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-class AgentBatchIn(BatchIn):
-    action: Literal["publish", "offline", "delete"]
+class AgentBatchIn(BatchIn[Literal["publish", "offline", "delete"]]):
+    """action 只接受 "publish", "offline", "delete"，其余值 422。"""
 
 
 @router.get("", response_model=Page[AgentOut])

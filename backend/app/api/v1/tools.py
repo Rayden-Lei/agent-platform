@@ -27,7 +27,7 @@ class ToolAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["none", "api_key", "bearer", "basic"] = "none"
     location: Literal["header", "query"] | None = None
-    name: str | None = Field(None, min_length=1, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def _api_key_needs_place(self):
@@ -81,8 +81,8 @@ class ToolTestIn(BaseModel):
     args: dict = {}
 
 
-class ToolBatchIn(BatchIn):
-    action: Literal["enable", "disable", "delete"]
+class ToolBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
+    """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
 @router.get("")

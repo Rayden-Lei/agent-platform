@@ -47,8 +47,8 @@ class ResumeIn(BaseModel):
     decision: dict = {}
 
 
-class WorkflowBatchIn(BatchIn):
-    action: Literal["delete"]
+class WorkflowBatchIn(BatchIn[Literal["delete"]]):
+    """action 只接受 "delete"，其余值 422。"""
 
 
 @router.get("")

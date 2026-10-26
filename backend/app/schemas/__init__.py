@@ -131,9 +131,9 @@ class ModelParams(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    temperature: Optional[float] = Field(None, ge=0, le=2)
-    top_p: Optional[float] = Field(None, ge=0, le=1)
-    max_tokens: Optional[int] = Field(None, ge=1, le=128000)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    top_p: Optional[float] = Field(default=None, ge=0, le=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=128000)
     thinking: Optional[str] = None  # disabled / enabled，以 extra_body 透传给 DeepSeek 类混合推理模型
 
     @field_validator("thinking")

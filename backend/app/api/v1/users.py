@@ -22,8 +22,8 @@ class ResetPasswordIn(BaseModel):
     must_change_password: bool = True  # 默认要求该用户下次登录先改密；管理员可取消（如代用户设好最终密码）
 
 
-class UserBatchIn(BatchIn):
-    action: Literal["enable", "disable", "delete"]
+class UserBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
+    """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
 @router.get("", response_model=Page[UserOut])

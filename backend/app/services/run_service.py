@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import BigInteger, case, cast, func
 from sqlalchemy.orm import Session
@@ -77,9 +78,13 @@ def finalize_run(db: Session, run: Run, status: str, output: dict | None = None,
         run.token_usage = usage
     if error:
         run.error = str(error)[:2000]
-    run.finished_at = _now()
-    if run.started_at:
-        run.latency_ms = max(0, int((run.finished_at - run.started_at).total_seconds() * 1000))
+    finished_at = _now()
+    run.finished_at = finished_at
+    # 取到局部变量再算：run.started_at 是 Mapped[datetime | None]，属性访问的收窄在不同检查器下
+    # 不稳定（赋值另一个属性就会失效），局部变量的收窄是确定的。
+    started_at = run.started_at
+    if started_at is not None:
+        run.latency_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
     if run.token_usage and run.model_id:
         run.cost = _cost(run.token_usage, db.get(ModelConfig, run.model_id))
     db.commit()
@@ -185,7 +190,7 @@ def summarize_runs(db: Session, run_type: str | None = None, agent_id: int | Non
     """运行记录页顶部统计：各状态数量、总 token、总成本、平均 / P50 / P95 耗时、成功率、耗时分布，
     全部在数据库聚合，随列表筛选联动。成本读收尾时的快照列，不再实时折算。"""
     base = _filtered(db, run_type, None, agent_id, workflow_id, user_id, model_id, source, started_from, started_to)
-    by_status = dict(base.with_entities(Run.status, func.count(Run.id)).group_by(Run.status).all())
+    by_status = rows_to_dict(base.with_entities(Run.status, func.count(Run.id)).group_by(Run.status).all())
     tokens_row = base.with_entities(
         func.coalesce(func.sum(func.coalesce(cast(Run.token_usage["prompt_tokens"].astext, BigInteger), 0)), 0),
         func.coalesce(func.sum(func.coalesce(cast(Run.token_usage["completion_tokens"].astext, BigInteger), 0)), 0),
@@ -201,7 +206,9 @@ def summarize_runs(db: Session, run_type: str | None = None, agent_id: int | Non
     bucket_rows = finished.with_entities(
         *[func.count(case((_bucket_condition(low, high), 1), else_=None)) for low, high, _ in LATENCY_BUCKETS]
     ).one()
-    summary = {s: int(by_status.get(s, 0)) for s in RUN_STATUSES}
+    # 标注 dict[str, Any]：这个统计字典同时装 int（各状态数、token）、float（成本、成功率）和
+    # None（无样本时的耗时），不标的话会被推成 dict[Literal[...], int]，后面赋值全报错。
+    summary: dict[str, Any] = {s: int(by_status.get(s, 0)) for s in RUN_STATUSES}
     summary["total"] = sum(summary.values())
     summary["prompt_tokens"] = int(tokens_row[0] or 0)
     summary["completion_tokens"] = int(tokens_row[1] or 0)
