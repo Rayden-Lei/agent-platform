@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
+from app.core.limits import TOOL_RESULT_PREVIEW_CHARS, TOOL_RESULT_STORE_CHARS
 from app.core.pagination import PageParams, paginate
 from app.db.models import Agent, ApiKey, Conversation, Message, User
 
@@ -102,17 +103,38 @@ def _serialize(db: Session, rows: list[Conversation]) -> list[dict]:
     } for c in rows]
 
 
-def list_messages(db: Session, conversation_id: int, caller: Caller) -> list[dict]:
+def _tool_calls_for_display(tool_calls: list, full: bool) -> list:
+    """工具调用记录按展示口径返回。库里的结果是按 STORE（8000）存的，历史接口默认只给 PREVIEW（200），
+    与实时 tool_result 事件、前端工具卡片同长，避免会话页把整份工具结果都拉下来；超出的标 truncated 与截断前长度。
+    full=True 时返回库里那份（≤ STORE），只给平台人员排查用。"""
+    limit = TOOL_RESULT_STORE_CHARS if full else TOOL_RESULT_PREVIEW_CHARS
+    rows = []
+    for tc in tool_calls or []:
+        item = dict(tc)
+        result = item.get("result")
+        if isinstance(result, str) and len(result) > limit:
+            item["result"] = result[:limit]
+            item["result_truncated"] = True
+            item["result_chars"] = len(result)  # 截断前的长度（库里那份的长度，原始返回可能更长）
+        rows.append(item)
+    return rows
+
+
+def list_messages(db: Session, conversation_id: int, caller: Caller, full_tool_results: bool = False, full_allowed: bool = False) -> list[dict]:
     """取会话内全部消息（按 ID 升序，即对话顺序），先校验会话归属。token_usage 随消息返回，刷新后历史消息仍能显示用量。
+    工具结果按 PREVIEW 返回；full_tool_results 才给库里那份完整结果，full_allowed 由路由按调用方身份给出
+    （admin / developer 的登录请求），先校验归属再判权限，不通过的不暴露会话是否存在。
     分享访客不走这里（会把工具入参与结果、引用的 kb_id / score、用量整包返回），用 share_service 的访客结构。"""
     get_owned_conversation(db, conversation_id, caller)
+    if full_tool_results and not full_allowed:
+        raise BizError(403, "只有 admin / developer 的登录请求可以查看完整工具结果")
     rows = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
     return [
         {
             "id": m.id,
             "role": m.role,
             "content": m.content,
-            "tool_calls": m.tool_calls,
+            "tool_calls": _tool_calls_for_display(m.tool_calls, full_tool_results),
             "citations": m.citations,
             "token_usage": m.token_usage or None,
             "created_at": m.created_at.isoformat(),
