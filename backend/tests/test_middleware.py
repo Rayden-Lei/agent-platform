@@ -84,3 +84,45 @@ def test_round_guard_counts_only_messages_with_tool_calls():
 def test_observer_failure_is_logged_not_raised():
     """观察者（trace）出错不能打断对话。"""
     notify_event([_ExplodingObserver()], {"type": "delta", "content": "x"})  # 不抛即通过
+
+
+class _FakeModel:
+    id = 7
+    name = "pytest-model"
+
+
+def test_trace_middleware_builds_llm_step_with_usage():
+    """llm 步骤要带这次调用的 usage 与工具名——这是不能用纯事件观察者替代的原因。"""
+    from app.services.chat_events import StreamState
+    from app.services.middleware import TraceMiddleware
+
+    tracer = TraceMiddleware(_FakeModel())
+    state = StreamState()
+    state.usage_by_call["call-1"] = {"total_tokens": 12}
+    tracer.on_chunk("call-1", "你", ["echo"])
+    tracer.on_chunk("call-1", "好", [])
+    step = tracer.close_call(state)
+    assert step["type"] == "llm" and step["name"] == "pytest-model"
+    assert step["output"] == {"content_chars": 2, "tool_calls": ["echo"]}
+    assert step["meta"]["usage"] == {"total_tokens": 12}
+    assert step["meta"]["model_id"] == 7
+    assert step["meta"]["first_token_ms"] is not None
+
+
+def test_trace_middleware_tool_status_counts_inner_error():
+    from app.services.middleware import TraceMiddleware
+
+    tracer = TraceMiddleware(_FakeModel())
+    ok = tracer.tool_step("echo", {"a": 1}, '{"result": "ok"}')
+    bad = tracer.tool_step("echo", {}, '{"error": "boom"}')
+    plain = tracer.tool_step("echo", {}, "纯文本结果")
+    assert ok["status"] == "success" and ok["input"] == {"a": 1}
+    assert bad["status"] == "error"
+    assert plain["status"] == "success"  # 非 JSON 按成功记
+
+
+def test_trace_middleware_close_call_without_open_call_returns_none():
+    from app.services.chat_events import StreamState
+    from app.services.middleware import TraceMiddleware
+
+    assert TraceMiddleware(_FakeModel()).close_call(StreamState()) is None

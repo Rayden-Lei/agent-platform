@@ -12,11 +12,15 @@
 
 中间件只实现自己关心的点，装配时跳过没实现的方法，不产生调用开销。
 """
+import json
 import logging
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from langchain_core.messages import AIMessage
+
+from app.services import chat_trace
+from app.services.chat_events import StreamState
 
 logger = logging.getLogger(__name__)
 
@@ -126,3 +130,55 @@ def notify_event(middlewares: Iterable[ChatMiddleware | None], event: dict) -> N
             middleware.on_event(event)
         except Exception:
             logger.exception("中间件处理事件失败：type=%s", event.get("type"))
+
+
+class TraceMiddleware(ChatMiddleware):
+    """调试调用链：把每次模型调用、每次工具执行记成 TraceStep（docs/15 3.4，FR-041）。
+
+    模型调用以分块的 id 区分：第一个分块到达时开始、最后一个分块到达时结束；工具从模型调用
+    结束时开始计时（工具节点跑完才一起返回，耗时是整个工具节点的）。
+
+    **为什么还是显式三个方法，而不是纯 on_event 观察者**：llm 步骤要按"模型调用 id"归组
+    chunk，并读那次调用的 usage——这两样只存在于 chunk 层（AIMessageChunk.id /
+    usage_metadata），事件里没有。只凭事件顺序确实能推断出步骤边界，但 usage 会丢，
+    调试面板的 token 就空掉了（回归）。等事件契约补上 call_id 与 usage 再改成观察者；
+    在那之前，把逻辑搬进类里已经达到"不散在 chat_runner"的目的。
+    """
+
+    def __init__(self, model):
+        self.model = model
+        self.call: dict | None = None
+        self.next_clock = chat_trace.Clock()
+        self.tool_clock: chat_trace.Clock | None = None
+
+    def on_chunk(self, call_id: str, text: str, tool_names: list[str]) -> None:
+        if self.call is None or self.call["id"] != call_id:
+            self.call = {"id": call_id, "clock": self.next_clock, "chars": 0, "tools": [], "first_token_ms": None}
+        call = self.call
+        if text and call["first_token_ms"] is None:
+            call["first_token_ms"] = call["clock"].elapsed_ms()
+        call["chars"] += len(text)
+        call["tools"].extend(n for n in tool_names if n)
+        call["clock"].stop()
+
+    def close_call(self, state: StreamState) -> dict | None:
+        call, self.call = self.call, None
+        if call is None:
+            return None
+        self.tool_clock = call["clock"].successor()
+        self.next_clock = chat_trace.Clock()
+        return chat_trace.make_step("llm", self.model.name, call["clock"],
+                                    output={"content_chars": call["chars"], "tool_calls": call["tools"]},
+                                    meta={"model_id": self.model.id, "first_token_ms": call["first_token_ms"],
+                                          "usage": state.usage_by_call.get(call["id"], {})})
+
+    def tool_step(self, name: str, args, result: str) -> dict:
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None  # 工具返回的不是 JSON（纯文本结果，或被截断），按成功记
+        failed = isinstance(parsed, dict) and "error" in parsed  # 执行器失败时返回 {"error": ...}，不抛异常
+        clock = (self.tool_clock or chat_trace.Clock()).stop()
+        self.next_clock = chat_trace.Clock()  # 下一次模型调用从工具结果回来时开始
+        return chat_trace.make_step("tool", name, clock, input=args, output=result,
+                                    status="error" if failed else "success")
