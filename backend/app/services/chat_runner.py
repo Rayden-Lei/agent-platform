@@ -12,7 +12,7 @@ import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessageChunk, ToolMessage
 from langgraph.prebuilt import create_react_agent
 from starlette.concurrency import run_in_threadpool
 
@@ -26,6 +26,7 @@ from app.db.session import SessionLocal
 from app.model_gateway.gateway import guarded_astream
 from app.services import chat_service, chat_trace
 from app.services.chat_events import EventStream, StreamState, apply_event
+from app.services.middleware import RoundGuardMiddleware, ToolRoundsExceeded, apply_system_prompt, chain_hooks
 
 warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 logger = logging.getLogger(__name__)
@@ -48,30 +49,6 @@ class ChatTurn:
     kb_scope: list | None = None  # API Key 对话时为 Key 的 kb_ids，检索按 Key 的范围放行（docs/15 3.7.1）；登录对话为 None
     allow_http_tools: bool = True  # 分享访客按分享配置（默认不装配 HTTP 工具，docs/15 3.6）
     source: str = "chat"  # 工具闸门与留痕用的来源：chat / api_key / share（docs/16 P3a）
-
-
-class ToolRoundsExceeded(Exception):
-    """本轮工具调用超过 TOOL_CALL_MAX_ROUNDS。文案是给用户看的，原样下发。"""
-
-    def __init__(self, max_rounds: int):
-        self.max_rounds = max_rounds
-        super().__init__(f"超过最大工具调用轮数（{max_rounds}），已停止")
-
-
-def _tool_round_guard(max_rounds: int):
-    """post_model_hook：模型每次返回后数本轮已请求工具的次数，超过上限直接抛错，运行记录按失败收尾。
-
-    不能只靠 recursion_limit：预置 react 智能体在剩余步数不足时会自己回一句英文 "Sorry, need more steps..." 正常结束，
-    上层会把它当成功回答下发（langgraph 1.2.11 chat_agent_executor._are_more_steps_needed）。
-    历史消息只有文本（chat_service._history_to_messages），state 里带 tool_calls 的 AIMessage 都是本轮产生的。
-    """
-    def guard(state) -> dict:
-        rounds = sum(1 for m in state["messages"] if isinstance(m, AIMessage) and m.tool_calls)
-        if rounds > max_rounds:
-            raise ToolRoundsExceeded(max_rounds)
-        return {}
-
-    return guard
 
 
 def _audit_retrieval(db, turn, ctx: chat_service.ChatContext, ip: str | None, source: str | None = None) -> None:
@@ -164,7 +141,15 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
     每条消息类事件都是"emit 补信封 → apply_event 累积 → yield 下发"三步相邻出现。漏掉中间那步不会报错，
     只会让落库与事件重建少一段内容（静默失效），改动这里时三行要一起看。"""
     max_rounds = settings.TOOL_CALL_MAX_ROUNDS
-    graph = create_react_agent(ctx.llm, ctx.tools, prompt=ctx.system_prompt, post_model_hook=_tool_round_guard(max_rounds))
+    # 中间件装配（docs/16 P1）。本步只把轮数守卫搬进来，它走 post_model_hook（模型返回后、工具执行前）。
+    # pre_model_hook 现在没有实现者，chain_hooks 返回 None，create_react_agent 不建那个节点——
+    # 所以这一步与搬迁前行为完全一致；trace 与工具闸门仍在原位，等后续步骤再搬。
+    middlewares = [RoundGuardMiddleware(max_rounds)]
+    graph = create_react_agent(
+        ctx.llm, ctx.tools, prompt=apply_system_prompt(middlewares, ctx.system_prompt),
+        pre_model_hook=chain_hooks(middlewares, "pre_model_hook"),
+        post_model_hook=chain_hooks(middlewares, "post_model_hook"),
+    )
     # 工具参数按 (模型调用 id, 分块序号) 累积：每次模型调用的序号都从 0 开始，只按序号累积会把第二轮的参数拼到第一轮后面
     #（2026-09-29 前第二轮起的 tool_call 事件参数显示成 _raw 乱码；实际执行用的是模型解析好的参数，不受影响）
     tool_call_acc: dict[tuple, dict] = {}
