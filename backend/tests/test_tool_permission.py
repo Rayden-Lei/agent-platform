@@ -63,10 +63,18 @@ def test_missing_url_with_allowlist_is_denied():
     assert decision == "deny" and "未配置 URL" in reason
 
 
-def test_empty_allowlist_allows_with_warning_reason():
-    """过渡期：存量工具没有白名单，放行但要能清点出来。"""
+def test_empty_allowlist_is_denied():
+    """2026-10-26 收口：没配白名单的 HTTP 工具一律拒绝（此前过渡期是放行 + WARN）。
+    只有工具页测试能调，见 test_admin_test_skips_host_allowlist。"""
     decision, reason = _check(_tool(config={"url": "https://anywhere.example.org/x"}))
-    assert decision == "allow" and "allowed_hosts" in reason
+    assert decision == "deny" and "未配置 allowed_hosts" in reason
+    assert _check(_tool(config={"url": "https://anywhere.example.org/x"}), source="workflow")[0] == "deny"
+
+
+def test_admin_test_still_allowed_without_allowlist():
+    """管理员要在白名单填好之前先验证工具能用，否则新工具永远配不出来。"""
+    decision, reason = _check(_tool(config={"url": "https://anywhere.example.org/x"}), source="admin_test")
+    assert decision == "allow" and "管理员测试" in reason
 
 
 def test_denied_call_does_not_reach_network():

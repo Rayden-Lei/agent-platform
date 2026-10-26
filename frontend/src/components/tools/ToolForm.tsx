@@ -81,7 +81,7 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
                 <Form.Item name="method" label="方法" style={{ width: 120 }}><Select options={METHODS} /></Form.Item>
                 <Form.Item name="url" label="请求地址" style={{ flex: 1 }} rules={[{ required: true, message: '请输入请求地址' }, { type: 'url', message: '请输入合法的 URL' }]}><Input placeholder="https://api.example.com/v1/query" /></Form.Item>
               </div>
-              <Form.Item name="allowedHosts" label="目标地址白名单（可选）" extra="每行一个主机名（如 api.example.com），子域自动放行。留空表示不限制：当前是过渡期，执行时放行但每次记日志；填了之后请求地址的主机不在名单内会被拒绝（docs/16 P3a）">
+              <Form.Item name="allowedHosts" label="目标地址白名单" rules={[{ required: true, message: 'HTTP 工具必须填写目标地址白名单' }]} extra="每行一个主机名（如 api.example.com），子域自动放行。不填的 HTTP 工具在对话与工作流里会被直接拒绝（2026-10-26 起），只有工具页的测试调用能跑（docs/16 P3a）">
                 <Input.TextArea rows={3} placeholder={'api.example.com\nv2.example.com'} />
               </Form.Item>
               <Form.Item name="headersStr" label="请求头（JSON 对象，可选）" extra="只放非敏感的请求头；Authorization、Token、Key 这类凭据在下方鉴权里配置（写进这里保存会被拒绝）"><Input.TextArea rows={3} placeholder='{"Content-Type": "application/json"}' /></Form.Item>
