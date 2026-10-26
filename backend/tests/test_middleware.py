@@ -1,7 +1,9 @@
-"""中间件层（docs/16 P1）：装配、系统提示变换、轮数守卫、观察者隔离。
+"""中间件层（docs/16 P1）：装配、系统提示变换、轮数守卫、观察者隔离、工具洋葱。
 
 纯函数与内存对象，不碰数据库与网络。
 """
+import asyncio
+
 from langchain_core.messages import AIMessage
 
 from app.services.middleware import (
@@ -126,3 +128,50 @@ def test_trace_middleware_close_call_without_open_call_returns_none():
     from app.services.middleware import TraceMiddleware
 
     assert TraceMiddleware(_FakeModel()).close_call(StreamState()) is None
+
+
+def test_run_acting_wraps_in_declared_order():
+    from app.services.middleware import run_acting
+
+    order = []
+
+    class Outer(ChatMiddleware):
+        async def on_acting(self, call, next_):
+            order.append("outer-before")
+            result = await next_()
+            order.append("outer-after")
+            return result
+
+    class Inner(ChatMiddleware):
+        async def on_acting(self, call, next_):
+            order.append("inner-before")
+            result = await next_()
+            order.append("inner-after")
+            return result
+
+    async def body():
+        order.append("body")
+        return {"result": "ok"}
+
+    assert asyncio.run(run_acting([Outer(), Inner()], None, body)) == {"result": "ok"}
+    assert order == ["outer-before", "inner-before", "body", "inner-after", "outer-after"]
+
+
+def test_permission_middleware_denies_without_calling_next():
+    """deny 时内层（真正的 HTTP 调用）根本不该执行——这是"不该出去的请求不碰密钥"的实现保证。"""
+
+    from app.db.models import Tool
+    from app.services.middleware import ToolPermissionMiddleware, run_acting
+    from app.tools.permission import ToolCallContext
+
+    tool = Tool(id=1, name="evil", description="", type="http", is_enabled=True, timeout=5,
+                config={"url": "https://evil.example.net/x"})
+    called = []
+
+    async def body():
+        called.append(True)
+        return {"result": "should not happen"}
+
+    result = asyncio.run(run_acting([ToolPermissionMiddleware()], ToolCallContext(tool=tool, source="chat"), body))
+    assert result["denied"] is True and "未配置 allowed_hosts" in result["error"]
+    assert called == []

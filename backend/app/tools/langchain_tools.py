@@ -6,7 +6,7 @@ from langchain_core.tools import StructuredTool, tool
 from pydantic import ValidationError
 
 from app.db.models import Tool
-from app.tools.executor import _execute_http, _safe_eval
+from app.tools.executor import _safe_eval, execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import ToolParameters, build_args_model, format_validation_error, parse_parameters
 
@@ -46,8 +46,10 @@ def _build_http_tool(t: Tool, ctx: ToolCallContext | None = None):
         parameters = ToolParameters()
 
     async def _run(**kwargs) -> str:
+        # 走 execute_tool 而不是 _execute_http：闸门在 execute_tool 的中间件链里，
+        # 直调 _execute_http 会绕过它（docs/16 P1 第 3 步把两条入口合成一条）。
         # LangChain 会把可选参数的默认 None 一并传进来，不过滤会变成 ?days= 这种空查询参数
-        result = await _execute_http(t, {k: v for k, v in kwargs.items() if v is not None}, ctx)
+        result = await execute_tool(t, {k: v for k, v in kwargs.items() if v is not None}, ctx)
         return json.dumps(result, ensure_ascii=False)
 
     def _on_validation_error(e: ValidationError) -> str:
