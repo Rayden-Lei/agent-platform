@@ -7,6 +7,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import encrypt_secret
+from app.db.session import rows_to_dict
 from app.db.models import Agent, ModelConfig, User
 from app.model_gateway.gateway import build_llm, guarded_ainvoke
 from app.schemas import ModelIn
@@ -33,7 +34,7 @@ def _related(db: Session, models: list) -> tuple[dict, dict]:
     ids = {m.id for m in models}
     counts = {mid: len(agent_ids) for mid, agent_ids in agent_service.agent_ids_using_models(db, ids).items()}
     creator_ids = {m.created_by for m in models if m.created_by}
-    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     return counts, creators
 
 

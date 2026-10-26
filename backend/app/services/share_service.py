@@ -23,6 +23,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, paginate
 from app.core.request_context import get_client_ip, get_request_id
 from app.core.security import GUEST_TOKEN_TYPE, create_guest_token, decode_token, hash_password, verify_password
+from app.db.session import rows_to_dict
 from app.db.models import Agent, AgentShare, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool, User
 from app.rag.retriever import kb_allows
 from app.runtime.agent_config import load_version_config
@@ -316,7 +317,7 @@ def list_guest_conversations(db: Session, guest: Guest, params: PageParams, q: s
     """本访客自己的会话，可按标题模糊搜索（访客专用结构：{id, title, message_count, created_at, updated_at}，不含 summary 等）。"""
     page = paginate(conversation_service.owned_conversations(db, guest.caller(), q=q), params)
     ids = [c.id for c in page["items"]]
-    counts = dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
+    counts = rows_to_dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
     page["items"] = [{"id": c.id, "title": c.title, "message_count": int(counts.get(c.id, 0)),
                       "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat()} for c in page["items"]]
     return page

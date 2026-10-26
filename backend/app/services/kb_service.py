@@ -10,6 +10,7 @@ from app.config import settings
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
+from app.db.session import rows_to_dict
 from app.db.models import Agent, AgentVersion, AuditLog, Document, DocumentChunk, KnowledgeBase, User
 from app.rag.minio_client import upload_file
 from app.rag.retriever import kb_allows, retrieve, retrieve_with_stats
@@ -87,7 +88,7 @@ def _stats_by_kb(db: Session, kb_ids: set[int]) -> dict[int, dict]:
 def _serialize(db: Session, rows: list) -> list[dict]:
     stats = _stats_by_kb(db, {k.id for k in rows})
     creator_ids = {k.created_by for k in rows if k.created_by}
-    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     return [_kb_dict(k, stats.get(k.id), creators.get(k.created_by)) for k in rows]
 
 

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
+from app.db.session import rows_to_dict
 from app.db.models import Agent, ModelConfig, Run, RunNode, User, Workflow
 
 # 运行记录的终态。awaiting_review 不是终态：它不写 finished_at，等待 resume 后再收尾。
@@ -102,10 +103,10 @@ class _Related:
         model_ids = {r.model_id for r in runs if r.model_id}
         workflow_ids = {r.workflow_id for r in runs if r.workflow_id}
         user_ids = {r.user_id for r in runs if r.user_id}
-        self.agents = dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
-        self.models = dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
-        self.workflows = dict(db.query(Workflow.id, Workflow.name).filter(Workflow.id.in_(workflow_ids)).all()) if workflow_ids else {}
-        self.users = dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
+        self.agents = rows_to_dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
+        self.models = rows_to_dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
+        self.workflows = rows_to_dict(db.query(Workflow.id, Workflow.name).filter(Workflow.id.in_(workflow_ids)).all()) if workflow_ids else {}
+        self.users = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
 
     def to_dict(self, run: Run) -> dict:
         return {

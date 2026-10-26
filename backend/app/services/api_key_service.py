@@ -12,6 +12,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.rate_limiter import RateLimitResult
 from app.core.request_context import get_client_ip
+from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, KnowledgeBase, User, Workflow
 from app.services import kb_service
 
@@ -110,7 +111,7 @@ def _scope_names(db: Session, keys: list[ApiKey]) -> dict[str, dict[int, str]]:
     names: dict[str, dict[int, str]] = {}
     for field, model in (("agent_ids", Agent), ("workflow_ids", Workflow), ("kb_ids", KnowledgeBase)):
         ids = {i for k in keys for i in (getattr(k, field) or [])}
-        names[field] = dict(db.query(model.id, model.name).filter(model.id.in_(ids)).all()) if ids else {}
+        names[field] = rows_to_dict(db.query(model.id, model.name).filter(model.id.in_(ids)).all()) if ids else {}
     return names
 
 
@@ -157,7 +158,7 @@ def list_api_keys(db: Session, params: PageParams, user: User, q: str = None, is
         query = query.filter(ApiKey.is_enabled.is_(is_enabled))
     page = paginate(apply_sort(query, sort, SORTABLE, [ApiKey.id.desc()]), params)
     user_ids = {k.user_id for k in page["items"]}
-    names = dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
+    names = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()) if user_ids else {}
     scope_names = _scope_names(db, page["items"])
     page["items"] = [_to_dict(k, names.get(k.user_id), scope_names) for k in page["items"]]
     return page

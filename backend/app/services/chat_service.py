@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 from app.core.exceptions import BizError
 from app.db.models import Agent, ApiKey, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, rows_to_dict
 from app.model_gateway import breaker
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
@@ -358,7 +358,7 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
         queries = _queries_for(model, llm, message_text)
         if trace and settings.RAG_QUERY_REWRITE_ENABLED:
             steps.append(chat_trace.make_step("rewrite", "查询改写", clock, input={"message": message_text}, output=queries))
-        kb_names = dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all()) if trace else None
+        kb_names = rows_to_dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all()) if trace else None
         retrieval = _retrieve_all(cfg.kb_ids, queries, role, kb_names, kb_scope)
         steps.extend(retrieval.steps)
         if retrieval.citations:

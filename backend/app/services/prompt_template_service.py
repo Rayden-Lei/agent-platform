@@ -11,6 +11,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import extract_variables, render
+from app.db.session import rows_to_dict
 from app.db.models import Agent, PromptTemplate, PromptTemplateVersion, User
 
 
@@ -61,9 +62,9 @@ def list_templates(db: Session, params: PageParams, q: str | None = None, sort: 
     page = paginate(apply_sort(query, sort, SORTABLE, [PromptTemplate.id.asc()]), params)
     rows = page["items"]
     ids = {t.id for t in rows}
-    bound = dict(db.query(Agent.prompt_template_id, func.count(Agent.id)).filter(Agent.prompt_template_id.in_(ids)).group_by(Agent.prompt_template_id).all()) if ids else {}
+    bound = rows_to_dict(db.query(Agent.prompt_template_id, func.count(Agent.id)).filter(Agent.prompt_template_id.in_(ids)).group_by(Agent.prompt_template_id).all()) if ids else {}
     creator_ids = {t.created_by for t in rows if t.created_by}
-    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     page["items"] = [{**_summary(t), "agents_count": int(bound.get(t.id, 0)), "created_by_username": creators.get(t.created_by)} for t in rows]
     return page
 

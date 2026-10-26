@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
+from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, Run, ScheduledJob, User, Workflow
 from app.services import api_key_service, run_service
 from app.workflow.engine import build_workflow
@@ -41,12 +42,12 @@ def _serialize(db: Session, rows: list, with_graph: bool = False) -> list[dict]:
     """一页工作流的关联装配：创建人、最近 7 天运行数与最近运行时间、定时任务数，各一次查询。"""
     ids = {w.id for w in rows}
     creator_ids = {w.created_by for w in rows if w.created_by}
-    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
     since = datetime.now(timezone.utc) - timedelta(days=7)
     # 近 7 天运行不计调试（docs/15 D-05；工作流调试台在第 2 批，口径先对齐）
     runs = {wid: (count, last) for wid, count, last in db.query(Run.workflow_id, func.count(Run.id), func.max(Run.started_at)).filter(
         Run.workflow_id.in_(ids), Run.started_at >= since, run_service.operational_only()).group_by(Run.workflow_id).all()} if ids else {}
-    schedules = dict(db.query(ScheduledJob.workflow_id, func.count(ScheduledJob.id)).filter(ScheduledJob.workflow_id.in_(ids)).group_by(ScheduledJob.workflow_id).all()) if ids else {}
+    schedules = rows_to_dict(db.query(ScheduledJob.workflow_id, func.count(ScheduledJob.id)).filter(ScheduledJob.workflow_id.in_(ids)).group_by(ScheduledJob.workflow_id).all()) if ids else {}
     items = []
     for w in rows:
         node_count, node_types = _node_summary(w.graph)

@@ -7,6 +7,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
+from app.db.session import rows_to_dict
 from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
@@ -25,8 +26,8 @@ class _Related:
         creator_ids = {a.created_by for a in agents if a.created_by}
         live_pairs = [(a.id, a.published_version) for a in agents if a.published_version is not None]
         self.templates = {t.id: t for t in db.query(PromptTemplate).filter(PromptTemplate.id.in_(template_ids)).all()} if template_ids else {}
-        self.models = dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
-        self.creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+        self.models = rows_to_dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
+        self.creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
         # 线上快照：判断"有未发布修改"要拿草稿与它比，一页一次 IN 查询
         self.live = {v.agent_id: normalize_snapshot(v.snapshot) for v in db.query(AgentVersion).filter(tuple_(AgentVersion.agent_id, AgentVersion.version).in_(live_pairs))} if live_pairs else {}
         since = datetime.now(timezone.utc) - timedelta(days=7)
@@ -406,9 +407,9 @@ def list_versions(db: Session, agent_id: int, params: PageParams) -> dict:
     creator_ids = {v.created_by for v in rows if v.created_by}
     model_ids = {(v.snapshot or {}).get("model_id") for v in rows} - {None}
     template_ids = {(v.snapshot or {}).get("prompt_template_id") for v in rows} - {None}
-    creators = dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
-    models = dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
-    templates = dict(db.query(PromptTemplate.id, PromptTemplate.name).filter(PromptTemplate.id.in_(template_ids)).all()) if template_ids else {}
+    creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    models = rows_to_dict(db.query(ModelConfig.id, ModelConfig.name).filter(ModelConfig.id.in_(model_ids)).all()) if model_ids else {}
+    templates = rows_to_dict(db.query(PromptTemplate.id, PromptTemplate.name).filter(PromptTemplate.id.in_(template_ids)).all()) if template_ids else {}
     page["items"] = [{
         # 快照补齐成与 snapshot_of 同形（早期版本没有模板三字段），与草稿对比时不会把"缺键"当成差异
         "id": v.id, "version": v.version, "snapshot": normalize_snapshot(v.snapshot), "created_at": v.created_at.isoformat(),
