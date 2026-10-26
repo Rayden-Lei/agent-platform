@@ -4,6 +4,7 @@ import json
 import logging
 import operator
 from datetime import datetime
+from typing import cast
 from urllib.parse import quote
 
 import httpx
@@ -25,8 +26,8 @@ async def execute_tool(tool: Tool, arguments: dict, ctx: ToolCallContext | None 
     ctx 是调用来源（对话 / 工作流 / 管理员测试）与留痕信息；不传时按未知来源处理，
     HTTP 工具会走白名单判定，调用方应尽量显式传。
     """
-    if tool.type == "builtin":
-        return await _execute_builtin(tool.name, arguments)
+    if cast(str, tool.type) == "builtin":
+        return await _execute_builtin(cast(str, tool.name), arguments)
     return await _execute_http(tool, arguments, ctx)
 
 
@@ -69,7 +70,7 @@ def _safe_eval(expr: str) -> int | float:
 def _calc_node(node: ast.AST) -> int | float:
     # type() 精确匹配：bool 是 int 的子类、复数与字符串常量都不放行（'a'*10**9 能吃掉 1GB 内存）
     if isinstance(node, ast.Constant) and type(node.value) in (int, float):
-        return _calc_checked(node.value)
+        return _calc_checked(cast(int | float, node.value))
     if isinstance(node, ast.UnaryOp) and type(node.op) in _CALC_UNARY_OPS:
         return _CALC_UNARY_OPS[type(node.op)](_calc_node(node.operand))
     if isinstance(node, ast.BinOp) and type(node.op) in _CALC_BIN_OPS:
@@ -117,7 +118,7 @@ async def _execute_http(tool: Tool, args: dict, ctx: ToolCallContext | None = No
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")
-    timeout = tool.timeout or 30
+    timeout = cast(float, tool.timeout or 30)
     if not url:
         return {"error": "工具未配置 URL"}
     try:
@@ -157,9 +158,9 @@ def _auth_parts(tool: Tool) -> tuple[dict, dict, str | None]:
     凭据解密失败抛 BizError（AES_KEY 换过），由调用方转成工具错误。"""
     auth = tool.auth or {}
     kind = auth.get("type") or "none"
-    if kind == "none" or not tool.secret_enc:
+    if kind == "none" or tool.secret_enc is None:
         return {}, {}, None
-    secret = decrypt_secret(tool.secret_enc)
+    secret = decrypt_secret(cast(str, tool.secret_enc))
     if kind == "bearer":
         return {"Authorization": f"Bearer {secret}"}, {}, secret
     if kind == "basic":
