@@ -37,8 +37,8 @@ async def execute_tool(tool: Tool, arguments: dict, ctx: ToolCallContext | None 
 
 async def _dispatch(tool: Tool, arguments: dict) -> dict:
     """闸门放行之后才走这里：只按类型分发，不再做任何判定。"""
-    if cast(str, tool.type) == "builtin":
-        return await _execute_builtin(cast(str, tool.name), arguments)
+    if tool.type == "builtin":
+        return await _execute_builtin(tool.name, arguments)
     return await _execute_http(tool, arguments)
 
 
@@ -117,7 +117,7 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")
-    timeout = cast(float, tool.timeout or 30)
+    timeout = tool.timeout or 30
     if not url:
         return {"error": "工具未配置 URL"}
     try:
@@ -157,9 +157,11 @@ def _auth_parts(tool: Tool) -> tuple[dict, dict, str | None]:
     凭据解密失败抛 BizError（AES_KEY 换过），由调用方转成工具错误。"""
     auth = tool.auth or {}
     kind = auth.get("type") or "none"
-    if kind == "none" or tool.secret_enc is None:
+    # 先取到局部变量再判空：属性访问的收窄在不同类型检查器下不稳定，局部变量收窄是确定的
+    secret_enc = tool.secret_enc
+    if kind == "none" or secret_enc is None:
         return {}, {}, None
-    secret = decrypt_secret(cast(str, tool.secret_enc))
+    secret = decrypt_secret(secret_enc)
     if kind == "bearer":
         return {"Authorization": f"Bearer {secret}"}, {}, secret
     if kind == "basic":
