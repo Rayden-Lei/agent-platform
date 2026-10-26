@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage
 
 from app.services import chat_trace
 from app.services.chat_events import StreamState
+from app.tools.permission import check, log_decision
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class ChatMiddleware:
 
     - post_model_hook() → 返回交给 create_react_agent 的节点函数（模型返回后、工具执行前）
     - pre_model_hook()  → 同上（模型调用前，每轮都会跑）
+    - on_acting(call, next_) → 洋葱：包住一次工具执行，不调 next_ 就是拦下
+    - on_system_prompt(prompt) → 变换系统提示词
     - on_event(event)   → 观察者，收到执行器产出的每个事件，不允许改变它
     """
 
@@ -51,11 +54,43 @@ class ChatMiddleware:
     def pre_model_hook(self) -> Callable[[Any], dict] | None:
         return None
 
+    async def on_acting(self, call, next_):
+        return await next_()
+
     def on_system_prompt(self, prompt: str) -> str:
         return prompt
 
     def on_event(self, event: dict) -> None:
         return None
+
+
+async def run_acting(middlewares: Iterable[ChatMiddleware | None], call, next_) -> dict:
+    """把一次工具执行按中间件顺序包成洋葱：最先声明的在最外层，deny 时内层根本不会执行。"""
+    chain = [m for m in middlewares if m is not None]
+
+    async def invoke(index: int):
+        if index >= len(chain):
+            return await next_()
+        return await chain[index].on_acting(call, lambda: invoke(index + 1))
+
+    return await invoke(0)
+
+
+class ToolPermissionMiddleware(ChatMiddleware):
+    """执行闸门（docs/16 P3a）：工具真正执行前判一次 allow / deny。
+
+    放在 on_acting 而不是 `_execute_http` 里，是为了让对话、工作流、工具页测试、定时任务
+    都走同一条 `execute_tool → run_acting` 链路——闸门只有一处，不会出现"某个入口忘了判"。
+    规则本身仍在 tools/permission.check（纯函数，可单测），这里只负责调用与拒绝的返回形状。
+    """
+
+    async def on_acting(self, call, next_):
+        decision, reason = check(call)
+        log_decision(call, decision, reason)
+        if decision == "deny":
+            # 返回 denied 而不是抛异常：抛异常会被 LangGraph 标成 error，和"调失败"混在一起
+            return {"error": f"该工具在当前调用来源下不可用：{reason}", "denied": True}
+        return await next_()
 
 
 class RoundGuardMiddleware(ChatMiddleware):

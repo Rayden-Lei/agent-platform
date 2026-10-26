@@ -12,23 +12,34 @@ import httpx
 from app.core.exceptions import BizError
 from app.core.security import decrypt_secret
 from app.db.models import Tool
-from app.tools.permission import ToolCallContext, check, log_decision
+from app.services.middleware import ToolPermissionMiddleware, run_acting
+from app.tools.permission import ToolCallContext
 
 logger = logging.getLogger(__name__)
 
 
 async def execute_tool(tool: Tool, arguments: dict, ctx: ToolCallContext | None = None) -> dict:
-    """工具执行入口：按类型分发。
+    """工具执行入口，也是闸门的唯一入口：所有来源（对话 / 工作流 / 工具页测试 / 定时任务）
+    都必须走这里，先过中间件再分发（docs/16 P1 第 3 步）。
+
+    把闸门收在这一层而不是 `_execute_http` 里，是因为 LangChain 包装出来的工具原本直调
+    `_execute_http`、工作流与工具页直调 `execute_tool`——两条入口各判一次，规则迟早走偏。
+    现在中间件是唯一判定点，`_execute_http` 只负责"怎么发请求"。
 
     - builtin：走内置实现（current_time / calculator）
-    - 其他（http）：先过执行闸门（docs/16 P3a），再按 tool.config 调用外部 HTTP 接口
+    - 其他（http）：按 tool.config 调用外部 HTTP 接口
     返回统一 dict（{"result": ...} 或 {"error": ...}），调用方不感知底层差异；本函数为 async。
-    ctx 是调用来源（对话 / 工作流 / 管理员测试）与留痕信息；不传时按未知来源处理，
-    HTTP 工具会走白名单判定，调用方应尽量显式传。
+    ctx 是调用来源与留痕信息；不传时按未知来源处理（白名单判定照走）。
     """
+    call = ctx or ToolCallContext(tool=tool, source="unknown")
+    return await run_acting([ToolPermissionMiddleware()], call, lambda: _dispatch(tool, arguments))
+
+
+async def _dispatch(tool: Tool, arguments: dict) -> dict:
+    """闸门放行之后才走这里：只按类型分发，不再做任何判定。"""
     if cast(str, tool.type) == "builtin":
         return await _execute_builtin(cast(str, tool.name), arguments)
-    return await _execute_http(tool, arguments, ctx)
+    return await _execute_http(tool, arguments)
 
 
 async def _execute_builtin(name: str, args: dict) -> dict:
@@ -96,25 +107,13 @@ def _calc_checked(value: int | float | complex) -> int | float:
     return value
 
 
-async def _execute_http(tool: Tool, args: dict, ctx: ToolCallContext | None = None) -> dict:
-    """按工具配置调用外部 HTTP 接口。
+async def _execute_http(tool: Tool, args: dict) -> dict:
+    """按工具配置调用外部 HTTP 接口。**不做闸门判定**——调用方必须是 execute_tool（已过中间件）。
 
-    - 先过执行闸门（docs/16 P3a）：停用、分享来源、目标地址不在 allowed_hosts 内都直接拒绝，
-      返回 {"error": ..., "denied": True}，不发请求；denied 让上层把这次调用标成"被拒"而不是"失败"
     - method=GET：参数走 query；其他方法：参数作为 JSON body
     - 响应优先按 JSON 解析返回；非 JSON（纯文本/HTML）按 {"result": 文本} 返回
     - 网络/HTTP 错误不抛出，返回 {"error": ...} 并记日志，交由上层（工作流/Agent）继续处理
     """
-    call_ctx = ctx or ToolCallContext(tool=tool, source="unknown")
-    # 闸门挂在这一层而不是 execute_tool：LangChain 包装出来的工具（langchain_tools._build_http_tool）
-    # 直接调 _execute_http，挂在 execute_tool 会漏掉对话这条最常走的路径。放在最前面，
-    # 被拒的调用连 URL 校验与凭据解密都不做——不该出去的请求，也不该碰一次密钥。
-    decision, reason = check(call_ctx)
-    log_decision(call_ctx, decision, reason)
-    if decision == "deny":
-        # 返回 denied 而不是抛异常：抛异常会让 LangGraph 把这次调用标成 error，
-        # "没让调"和"调失败"就混在一起了；denied 由 chat_runner 写进事件 state 与落库 status
-        return {"error": f"该工具在当前调用来源下不可用：{reason}", "denied": True}
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")
