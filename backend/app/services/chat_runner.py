@@ -24,9 +24,9 @@ from app.core.request_context import get_client_ip, get_request_id
 from app.db.models import Run, User
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import guarded_astream
-from app.services import chat_service, chat_trace
+from app.services import chat_service
 from app.services.chat_events import EventStream, StreamState, apply_event
-from app.services.middleware import RoundGuardMiddleware, ToolRoundsExceeded, apply_system_prompt, chain_hooks
+from app.services.middleware import RoundGuardMiddleware, ToolRoundsExceeded, TraceMiddleware, apply_system_prompt, chain_hooks
 
 warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 logger = logging.getLogger(__name__)
@@ -93,46 +93,6 @@ def _tool_result_state(result: str, langchain_status: str) -> str:
     return "error" if langchain_status == "error" else "done"
 
 
-class _LlmTrace:
-    """调试时把每次模型调用、每次工具执行记成调用链步骤。模型调用以分块的 id 区分，第一个分块到达时开始，
-    最后一个分块到达时结束；工具从模型调用结束时开始计时（工具节点跑完才一起返回，耗时是整个工具节点的）。"""
-
-    def __init__(self, model):
-        self.model = model
-        self.call: dict | None = None
-        self.next_clock = chat_trace.Clock()
-        self.tool_clock: chat_trace.Clock | None = None
-
-    def on_chunk(self, call_id: str, text: str, tool_names: list[str]) -> None:
-        if self.call is None or self.call["id"] != call_id:
-            self.call = {"id": call_id, "clock": self.next_clock, "chars": 0, "tools": [], "first_token_ms": None}
-        call = self.call
-        if text and call["first_token_ms"] is None:
-            call["first_token_ms"] = call["clock"].elapsed_ms()
-        call["chars"] += len(text)
-        call["tools"].extend(n for n in tool_names if n)
-        call["clock"].stop()
-
-    def close_call(self, state: StreamState) -> dict | None:
-        call, self.call = self.call, None
-        if call is None:
-            return None
-        self.tool_clock = call["clock"].successor()
-        self.next_clock = chat_trace.Clock()
-        return chat_trace.make_step("llm", self.model.name, call["clock"], output={"content_chars": call["chars"], "tool_calls": call["tools"]},
-                                    meta={"model_id": self.model.id, "first_token_ms": call["first_token_ms"], "usage": state.usage_by_call.get(call["id"], {})})
-
-    def tool_step(self, name: str, args, result: str) -> dict:
-        try:
-            parsed = json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            parsed = None  # 工具返回的不是 JSON（纯文本结果，或被截断），按成功记
-        failed = isinstance(parsed, dict) and "error" in parsed  # 执行器失败时返回 {"error": ...}，不抛异常
-        clock = (self.tool_clock or chat_trace.Clock()).stop()
-        self.next_clock = chat_trace.Clock()  # 下一次模型调用从工具结果回来时开始
-        return chat_trace.make_step("tool", name, clock, input=args, output=result, status="error" if failed else "success")
-
-
 async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, events: EventStream, started: float, *,
                         run_id: int, tool_result_chars: int, trace: bool) -> AsyncIterator[dict]:
     """模型与工具循环：产出 delta / tool_call / tool_result（trace=True 时另产出 llm 与 tool 两类 trace 事件）。
@@ -158,7 +118,7 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
     # 分支用累积参数再拼一遍。不去重的话前端会出现两张同名卡片，事件重建也会多出一条 tool_call；
     # 去重后以先到的为准，后到的参数更完整时由 apply_event 覆盖（见 chat_events）。
     announced: set[str] = set()
-    tracer = _LlmTrace(ctx.model) if trace else None
+    tracer = TraceMiddleware(ctx.model) if trace else None
     # 每轮工具调用走 agent → post_model_hook → tools 三步；上限留足余量，守卫先于它触发，它只兜底其他死循环
     config = {"recursion_limit": 3 * max_rounds + 10}
     # 熔断包装：打开期直接抛 503；首个 chunk 视为成功，建立流之前的异常计入失败
