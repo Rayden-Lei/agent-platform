@@ -8,9 +8,9 @@ from app.db.models import AuditLog
 SORTABLE = {"id": AuditLog.id, "created_at": AuditLog.created_at}
 
 
-def list_audit_logs(db: Session, params: PageParams, action: str = None, resource: str = None, username: str = None,
-                    resource_id: int = None, ip: str = None, created_from: datetime = None, created_to: datetime = None,
-                    sort: SortParams = None) -> dict:
+def list_audit_logs(db: Session, params: PageParams, action: str | None = None, resource: str | None = None, username: str | None = None,
+                    resource_id: int | None = None, ip: str | None = None, created_from: datetime | None = None, created_to: datetime | None = None,
+                    sort: SortParams | None = None) -> dict:
     """分页查询审计日志：action / resource / resource_id / ip 精确过滤，username 模糊匹配，时间左闭右开区间；默认按时间倒序。"""
     query = db.query(AuditLog)
     if action:

@@ -49,7 +49,7 @@ def _serialize_page(db: Session, rows: list) -> list[dict]:
     return [_to_dict(s, workflows.get(s.workflow_id), users.get(s.user_id), next_runs.get(s.id), last_runs.get(s.id)) for s in rows]
 
 
-def list_schedules(db: Session, params: PageParams, q: str = None, workflow_id: int = None, is_enabled: bool = None, sort: SortParams = None) -> dict:
+def list_schedules(db: Session, params: PageParams, q: str | None = None, workflow_id: int | None = None, is_enabled: bool | None = None, sort: SortParams | None = None) -> dict:
     """分页列出定时任务：名称模糊、按工作流、启用状态过滤，白名单排序，默认 ID 倒序。"""
     query = db.query(ScheduledJob)
     if q:

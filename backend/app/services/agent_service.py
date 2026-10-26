@@ -93,8 +93,8 @@ def inline_snapshot(db: Session, data: AgentIn) -> dict:
             "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "workflow_id": data.workflow_id, **_prompt_fields(db, data)}
 
 
-def list_agents(db: Session, params: PageParams, q: str = None, status: str = None, model_id: int = None,
-                kb_id: int = None, tool_id: int = None, prompt_template_id: int = None, sort: SortParams = None) -> dict:
+def list_agents(db: Session, params: PageParams, q: str | None = None, status: str | None = None, model_id: int | None = None,
+                kb_id: int | None = None, tool_id: int | None = None, prompt_template_id: int | None = None, sort: SortParams | None = None) -> dict:
     """分页列出智能体：q 名称模糊，status / model_id / prompt_template_id 精确，kb_id / tool_id 按 JSONB 数组包含过滤；
     白名单排序；关联信息批量装配，不逐行查库。"""
     query = db.query(Agent)
@@ -137,7 +137,7 @@ def agent_ids_using_models(db: Session, model_ids: set) -> dict[int, set]:
     return refs
 
 
-def list_available_agents(db: Session, params: PageParams, q: str = None, api_key: ApiKey | None = None) -> dict:
+def list_available_agents(db: Session, params: PageParams, q: str | None = None, api_key: ApiKey | None = None) -> dict:
     """可对话的智能体：只列已发布且有线上版本的，名称与描述取线上快照（草稿改名不影响对外展示），
     q 按线上名称模糊，按 id 升序（与对话页原来的默认选中口径一致）。字段白名单由路由的 AgentBriefOut 保证。
     API Key 请求只列作用域内的（docs/15 3.7.1）。"""

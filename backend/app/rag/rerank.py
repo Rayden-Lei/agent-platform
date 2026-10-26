@@ -67,7 +67,7 @@ def _clear_failure() -> None:
     _last_failure = None
 
 
-def rerank_lexical(query: str, candidates: list, keywords: list = None) -> list:
+def rerank_lexical(query: str, candidates: list, keywords: list | None = None) -> list:
     """词法启发式：query 词元在 content 中的覆盖率（词法命中）与既有混合分各占 50% 融合。"""
     if not candidates:
         return []
@@ -140,7 +140,7 @@ def rerank_by_model(query: str, candidates: list) -> list:
     return ranked
 
 
-def rerank(query: str, candidates: list, keywords: list = None) -> list:
+def rerank(query: str, candidates: list, keywords: list | None = None) -> list:
     """对候选重排，返回按 score 降序的新列表。配置了重排模型走模型，失败退回词法并记录降级；候选为空不调服务。"""
     if not candidates:
         return []

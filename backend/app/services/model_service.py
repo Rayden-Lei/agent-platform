@@ -38,7 +38,7 @@ def _related(db: Session, models: list) -> tuple[dict, dict]:
     return counts, creators
 
 
-def list_models(db: Session, params: PageParams, q: str = None, provider: str = None, is_enabled: bool = None, sort: SortParams = None) -> dict:
+def list_models(db: Session, params: PageParams, q: str | None = None, provider: str | None = None, is_enabled: bool | None = None, sort: SortParams | None = None) -> dict:
     """分页列出模型配置：q 名称模糊，可按提供商、启用状态过滤，白名单排序；引用智能体数与创建人各一次查询装配。"""
     query = db.query(ModelConfig)
     if q:

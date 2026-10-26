@@ -31,9 +31,9 @@ def operational_only():
     return Run.source != "debug"
 
 
-def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, workflow_id: int = None,
-               input_data: dict = None, model_id: int = None, conversation_id: int = None, *,
-               source: str, agent_version: int = None, api_key_id: int = None, schedule_id: int = None, share_id: int = None,
+def create_run(db: Session, run_type: str, user_id: int, agent_id: int | None = None, workflow_id: int | None = None,
+               input_data: dict | None = None, model_id: int | None = None, conversation_id: int | None = None, *,
+               source: str, agent_version: int | None = None, api_key_id: int | None = None, schedule_id: int | None = None, share_id: int | None = None,
                commit: bool = True) -> Run:
     """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务/调试）都必须走这里，
     否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version 是统计与追溯用的快照。
@@ -59,7 +59,7 @@ def create_run(db: Session, run_type: str, user_id: int, agent_id: int = None, w
     return run
 
 
-def finalize_run(db: Session, run: Run, status: str, output: dict = None, error: str = None, usage: dict = None) -> bool:
+def finalize_run(db: Session, run: Run, status: str, output: dict | None = None, error: str | None = None, usage: dict | None = None) -> bool:
     """把运行记录置为终态，并写 finished_at / latency_ms / cost 快照。返回是否实际做了收尾。
 
     幂等：已处于终态的记录直接返回 False、不做任何改动，保证首次收尾结果不被覆盖
@@ -134,9 +134,9 @@ def _run_dict(r: Run) -> dict:
     }
 
 
-def _filtered(db: Session, run_type: str = None, status: str = None, agent_id: int = None, workflow_id: int = None,
-              user_id: int = None, model_id: int = None, source: str = None,
-              started_from: datetime = None, started_to: datetime = None):
+def _filtered(db: Session, run_type: str | None = None, status: str | None = None, agent_id: int | None = None, workflow_id: int | None = None,
+              user_id: int | None = None, model_id: int | None = None, source: str | None = None,
+              started_from: datetime | None = None, started_to: datetime | None = None):
     """列表与汇总共用的过滤条件：精确过滤 + 发起时间左闭右开区间。"""
     query = db.query(Run)
     if run_type:
@@ -160,9 +160,9 @@ def _filtered(db: Session, run_type: str = None, status: str = None, agent_id: i
     return query
 
 
-def list_runs(db: Session, params: PageParams, run_type: str = None, status: str = None,
-              agent_id: int = None, workflow_id: int = None, user_id: int = None, model_id: int = None, source: str = None,
-              started_from: datetime = None, started_to: datetime = None, sort: SortParams = None) -> dict:
+def list_runs(db: Session, params: PageParams, run_type: str | None = None, status: str | None = None,
+              agent_id: int | None = None, workflow_id: int | None = None, user_id: int | None = None, model_id: int | None = None, source: str | None = None,
+              started_from: datetime | None = None, started_to: datetime | None = None, sort: SortParams | None = None) -> dict:
     """分页查询运行记录：精确过滤 + 时间区间 + 白名单排序（默认 id 倒序）；
     返回前为一页数据批量装配关联名称（智能体、模型、工作流、用户各查一次，不在循环内查库）。"""
     query = _filtered(db, run_type, status, agent_id, workflow_id, user_id, model_id, source, started_from, started_to)
@@ -179,9 +179,9 @@ def recent_runs(db: Session, limit: int = 10) -> list[dict]:
     return [related.to_dict(r) for r in runs]
 
 
-def summarize_runs(db: Session, run_type: str = None, agent_id: int = None, workflow_id: int = None,
-                   user_id: int = None, model_id: int = None, source: str = None,
-                   started_from: datetime = None, started_to: datetime = None) -> dict:
+def summarize_runs(db: Session, run_type: str | None = None, agent_id: int | None = None, workflow_id: int | None = None,
+                   user_id: int | None = None, model_id: int | None = None, source: str | None = None,
+                   started_from: datetime | None = None, started_to: datetime | None = None) -> dict:
     """运行记录页顶部统计：各状态数量、总 token、总成本、平均 / P50 / P95 耗时、成功率、耗时分布，
     全部在数据库聚合，随列表筛选联动。成本读收尾时的快照列，不再实时折算。"""
     base = _filtered(db, run_type, None, agent_id, workflow_id, user_id, model_id, source, started_from, started_to)

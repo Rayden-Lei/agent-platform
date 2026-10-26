@@ -26,7 +26,7 @@ def ensure_initial_admin(db: Session) -> str | None:
     return "configured" if configured else "default"
 
 
-def list_users(db: Session, params: PageParams, q: str = None, role: str = None, is_active: bool = None, sort: SortParams = None) -> dict:
+def list_users(db: Session, params: PageParams, q: str | None = None, role: str | None = None, is_active: bool | None = None, sort: SortParams | None = None) -> dict:
     """分页列出用户：q 用户名模糊，可按角色、启用状态过滤，白名单排序。"""
     query = db.query(User)
     if q:
@@ -57,7 +57,7 @@ def get_user(db: Session, user_id: int) -> User:
     return u
 
 
-def update_user(db: Session, user_id: int, data: UserUpdate, operator: User = None) -> User:
+def update_user(db: Session, user_id: int, data: UserUpdate, operator: User | None = None) -> User:
     """更新用户：只处理显式传入的字段（role / is_active），其余保持不动。管理员不能停用或降级自己，避免把自己锁在门外。"""
     u = get_user(db, user_id)
     if operator is not None and operator.id == user_id and (data.is_active is False or (data.role is not None and data.role != "admin")):
@@ -86,7 +86,7 @@ def reset_password(db: Session, user_id: int, new_password: str, operator: User,
     record_audit(db, operator, "reset_password", "user", u.id, detail={"username": u.username, "must_change_password": must_change})
 
 
-def delete_user(db: Session, user_id: int, operator: User = None) -> None:
+def delete_user(db: Session, user_id: int, operator: User | None = None) -> None:
     """删除用户：先检查其名下配置类资源，有引用则拒绝删除（RESTRICT 保护）；不能删除自己。"""
     u = get_user(db, user_id)
     if operator is not None and operator.id == user_id:

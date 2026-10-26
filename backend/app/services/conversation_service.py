@@ -67,7 +67,7 @@ def get_owned_conversation(db: Session, conversation_id: int, caller: Caller) ->
     return conv
 
 
-def owned_conversations(db: Session, caller: Caller, agent_id: int = None, q: str = None):
+def owned_conversations(db: Session, caller: Caller, agent_id: int | None = None, q: str | None = None):
     """属于该调用方的会话查询（按更新时间倒序，id 作副键），列表与分享访客的会话列表共用。"""
     query = _owned_filter(db.query(Conversation), caller)
     if agent_id:
@@ -77,7 +77,7 @@ def owned_conversations(db: Session, caller: Caller, agent_id: int = None, q: st
     return query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
 
 
-def list_conversations(db: Session, caller: Caller, params: PageParams, agent_id: int = None, q: str = None) -> dict:
+def list_conversations(db: Session, caller: Caller, params: PageParams, agent_id: int | None = None, q: str | None = None) -> dict:
     """分页列出属于该调用方的会话（登录：本人在界面里的；API Key：这个 Key 与同一个 end_user 建的），
     可按智能体过滤、按标题模糊搜索，按更新时间倒序（最近活跃在前）。
     附带消息数与智能体名：消息数用一次分组查询，智能体名用一次 IN 查询，不逐行查库。"""

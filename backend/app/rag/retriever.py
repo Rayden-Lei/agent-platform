@@ -183,7 +183,7 @@ def _dedupe(ranked: list) -> list:
     return kept
 
 
-def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list = None, kb_scope: list | None = None) -> tuple[list, int]:
+def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBase, keywords: list | None = None, kb_scope: list | None = None) -> tuple[list, int]:
     """重排 + 淘汰 + 逐条鉴权：返回 (有权重排结果, 鉴权剔除数)。
 
     模型重排的分数分布与词法完全不同（相关 ≈ 0.99、无关 ≈ 0），淘汰阈值按重排模式分别取配置。
@@ -203,7 +203,7 @@ def _rank_and_authorize(query: str, candidates: list, role: str, kb: KnowledgeBa
     return kept, rejected
 
 
-def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None, kb_scope: list | None = None) -> list:
+def retrieve(kb_id: int, query: str, top_k: int | None = None, mode: str = "hybrid", role: str | None = None, kb_scope: list | None = None) -> list:
     """RRF 融合召回 + 重排淘汰 + 权限过滤，返回完整文本块（content/score/doc_id/doc_name/meta）。kb_scope 见 kb_allows。"""
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()
@@ -218,7 +218,7 @@ def retrieve(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", ro
         db.close()
 
 
-def retrieve_with_stats(kb_id: int, query: str, top_k: int = None, mode: str = "hybrid", role: str = None, kb_scope: list | None = None) -> dict:
+def retrieve_with_stats(kb_id: int, query: str, top_k: int | None = None, mode: str = "hybrid", role: str | None = None, kb_scope: list | None = None) -> dict:
     """检索 + 召回质量统计（含 RRF、淘汰、鉴权剔除数），供评测 / 调试 / 对话使用。kb_scope 见 kb_allows（API Key 对话才传）。"""
     top_k = top_k or runtime_value("rag_top_k")
     db = SessionLocal()

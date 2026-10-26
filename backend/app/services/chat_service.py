@@ -374,7 +374,7 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
                        acl_rejected=retrieval.acl_rejected, rerank_mode=retrieval.rerank_mode, trace=steps if trace else [], retrieval_ms=retrieval_ms)
 
 
-def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
+def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str | None = None,
                        agent_version: int | None = None, kb_scope: list | None = None, allow_http_tools: bool = True,
                        run_id: int | None = None, source: str = "chat") -> ChatContext:
     """构建线上对话的上下文：配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本），
@@ -445,7 +445,7 @@ def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
     return ctx
 
 
-def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list = None,
+def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list | None = None,
                            run_id: int | None = None) -> Message:
     """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。run_id 是这一轮的运行记录，幂等回放据此找回首次的回答。"""
     msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage,
@@ -456,7 +456,7 @@ def save_assistant_message(db: Session, conversation_id: int, content: str, cita
     return msg
 
 
-def finalize_run(db: Session, run_id: int, status: str, content: str = None, usage: dict = None, error: str = None) -> None:
+def finalize_run(db: Session, run_id: int, status: str, content: str | None = None, usage: dict | None = None, error: str | None = None) -> None:
     """对话结束收尾运行记录（委托 run_service.finalize_run，幂等：终态不会被二次覆盖）。"""
     run = db.get(Run, run_id)
     if run:
