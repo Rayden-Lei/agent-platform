@@ -26,8 +26,15 @@ _NON_MESSAGE_EVENTS = frozenset({"prompt", "trace"})
 
 @dataclass
 class StreamState:
-    """一轮执行中累积的结果。用量按模型调用分开记再相加：一轮里有工具调用时模型会被调多次，
-    2026-09-29 前每来一次用量就整体覆盖，只剩最后一次调用的 token，前几次的用量与成本都丢了。"""
+    """一轮执行中累积的结果，也是落库的真相。
+
+    usage_by_call 按模型调用分开记再相加：一轮里有工具调用时模型会被调多次，2026-09-29 前
+    每来一次用量就整体覆盖，只剩最后一次调用的 token，前几次的用量与成本都丢了。
+    final_usage 是 done 事件里那份汇总（重放时只有它可用），不为空时优先返回，保证
+    "实时跑出来的用量"与"从事件重放出来的用量"永远相等。
+    finished_reason 只在 done / error 事件上出现：completed / interrupted / exceed_max_iters / error；
+    为空表示这一轮还没收尾（例如客户端中途断开）。
+    """
 
     content: str = ""
     tool_calls: list = field(default_factory=list)
@@ -48,7 +55,11 @@ class StreamState:
 
 @dataclass
 class EventStream:
-    """事件信封：给每条事件补 seq 与 reply_id，不改事件本身的类型与字段。"""
+    """事件信封：给每条事件补 seq 与 reply_id，**不做任何累积**。
+
+    累积必须由调用方显式 `apply_event(state, event)`。漏掉不会报错，只会让"事件重建"少一段内容，
+    属于静默失效，所以生产路径里 emit 与 apply_event 总是相邻两行（见 chat_runner._agent_events）。
+    """
 
     reply_id: str
     seq: int = 0
@@ -60,12 +71,23 @@ class EventStream:
 
 
 def apply_event(state: StreamState, event: dict, *, stored_result: str | None = None) -> None:
-    """把一个事件累积进消息状态。实时产出与事后重放共用这一份，避免两条路径各写一套。
+    """把一个事件累积进消息状态。实时产出与事后重放共用这一份，避免两条路径各写一套规则。
 
-    工具调用按 id 去重：一次工具调用可能先由完整 chunk 报一次、再由 ToolMessage 报一次，
-    同 id 只保留一条（后到的参数与结果覆盖先到的）。
+    各分支的累积规则与注意事项：
+    - delta：拼接正文。事件是逐 token 的，落库只存拼好的整段，不存事件本身（一轮几百条，体积不划算）。
+    - citations：整段替换。一次检索给的是完整列表，不存在增量。
+    - tool_call：按 id 去重后追加，status 先记 running；同 id 再来时只更新 name / args。
+      LangChain 可能先给完整 chunk（tool_calls）再给 ToolMessage 分支拼出来的参数，两次都建条目
+      就是两张工具卡片；后到的参数更完整，所以覆盖而不是忽略。
+    - tool_result：按 tool_call_id 回填 status 与 result；找不到对应 tool_call 时补一条只有结果的记录。
+      工具结果先于调用事件到达、或调用事件因去重被跳过时，宁可少 name / args，也不能把结果丢掉。
+    - done / error：只记终态。usage 只出现在 done 上（事件里没有逐次用量），写进 final_usage
+      让 StreamState.usage() 优先返回它，重放与实时才是同一个数。
+    - prompt / trace：调试专用，不属于消息内容，落到这里直接忽略。
+
     stored_result：实时路径传落库口径的工具结果（TOOL_RESULT_STORE_CHARS），不传时用事件里的
-    展示口径（TOOL_RESULT_PREVIEW_CHARS）。重放只能拿到事件里的那份。
+    展示口径（TOOL_RESULT_PREVIEW_CHARS）。只有实时路径能拿到全文——重放只有事件里那份，
+    这是"事件可重建展示视图、全文以落库为准"的边界（见模块开头）。
     """
     type_ = event.get("type")
     if type_ == "delta":
@@ -134,7 +156,11 @@ def reduce_events(events: Iterable[dict]) -> dict:
 
 
 def tag_events(events: Iterable[dict], reply_id: str) -> Iterator[dict]:
-    """给一段已有的事件序列补 seq / reply_id（回放、测试与将来从存储重放时用）。"""
+    """给一段已有的事件序列补 seq / reply_id（回放、测试与将来从存储重放时用）。
+
+    返回的是生成器，只能遍历一次：需要"先断言 seq、再拿去重建"时先 list() 存下来，
+    否则第二次循环拿到的是空序列（测试里踩过，表现是重建出空消息而不是报错）。
+    """
     stream = EventStream(reply_id)
     for event in events:
         payload = {k: v for k, v in event.items() if k not in ("type", "reply_id", "seq")}

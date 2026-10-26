@@ -11,20 +11,23 @@ import httpx
 from app.core.exceptions import BizError
 from app.core.security import decrypt_secret
 from app.db.models import Tool
+from app.tools.permission import ToolCallContext, check, log_decision
 
 logger = logging.getLogger(__name__)
 
 
-async def execute_tool(tool: Tool, arguments: dict) -> dict:
+async def execute_tool(tool: Tool, arguments: dict, ctx: ToolCallContext | None = None) -> dict:
     """工具执行入口：按类型分发。
 
     - builtin：走内置实现（current_time / calculator）
-    - 其他（http）：按 tool.config 调用外部 HTTP 接口
+    - 其他（http）：先过执行闸门（docs/16 P3a），再按 tool.config 调用外部 HTTP 接口
     返回统一 dict（{"result": ...} 或 {"error": ...}），调用方不感知底层差异；本函数为 async。
+    ctx 是调用来源（对话 / 工作流 / 管理员测试）与留痕信息；不传时按未知来源处理，
+    HTTP 工具会走白名单判定，调用方应尽量显式传。
     """
     if tool.type == "builtin":
         return await _execute_builtin(tool.name, arguments)
-    return await _execute_http(tool, arguments)
+    return await _execute_http(tool, arguments, ctx)
 
 
 async def _execute_builtin(name: str, args: dict) -> dict:
@@ -92,13 +95,25 @@ def _calc_checked(value: int | float | complex) -> int | float:
     return value
 
 
-async def _execute_http(tool: Tool, args: dict) -> dict:
+async def _execute_http(tool: Tool, args: dict, ctx: ToolCallContext | None = None) -> dict:
     """按工具配置调用外部 HTTP 接口。
 
+    - 先过执行闸门（docs/16 P3a）：停用、分享来源、目标地址不在 allowed_hosts 内都直接拒绝，
+      返回 {"error": ..., "denied": True}，不发请求；denied 让上层把这次调用标成"被拒"而不是"失败"
     - method=GET：参数走 query；其他方法：参数作为 JSON body
     - 响应优先按 JSON 解析返回；非 JSON（纯文本/HTML）按 {"result": 文本} 返回
     - 网络/HTTP 错误不抛出，返回 {"error": ...} 并记日志，交由上层（工作流/Agent）继续处理
     """
+    call_ctx = ctx or ToolCallContext(tool=tool, source="unknown")
+    # 闸门挂在这一层而不是 execute_tool：LangChain 包装出来的工具（langchain_tools._build_http_tool）
+    # 直接调 _execute_http，挂在 execute_tool 会漏掉对话这条最常走的路径。放在最前面，
+    # 被拒的调用连 URL 校验与凭据解密都不做——不该出去的请求，也不该碰一次密钥。
+    decision, reason = check(call_ctx)
+    log_decision(call_ctx, decision, reason)
+    if decision == "deny":
+        # 返回 denied 而不是抛异常：抛异常会让 LangGraph 把这次调用标成 error，
+        # "没让调"和"调失败"就混在一起了；denied 由 chat_runner 写进事件 state 与落库 status
+        return {"error": f"该工具在当前调用来源下不可用：{reason}", "denied": True}
     cfg = tool.config or {}
     method = str(cfg.get("method") or "POST").upper()
     url = cfg.get("url")

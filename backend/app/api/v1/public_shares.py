@@ -87,7 +87,7 @@ async def guest_chat(code: str, data: GuestChatIn, db: Session = Depends(get_db)
     else:
         turn = chat_runner.ChatTurn(agent_id=guest.agent_id, user_id=caller.user_id, role=role, message=data.message,
                                     conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
-                                    allow_http_tools=allow_http_tools)
+                                    allow_http_tools=allow_http_tools, source="share")
         events = chat_runner.stream_chat(turn)
     return StreamingResponse(sse_stream(share_service.guest_events(events, show_citations)), media_type="text/event-stream", headers=headers)
 

@@ -10,6 +10,7 @@ import { errorText } from '../../utils/errors'
 interface Props { open: boolean; editing: ToolRow | null; onClose: () => void; onSaved: () => void }
 interface FormValues {
   name: string; description: string; type: 'builtin' | 'http'; timeout: number; method?: string; url?: string; headersStr?: string; params?: ParamRow[]
+  allowedHosts?: string
   authType: ToolAuthType; authLocation?: 'header' | 'query'; authName?: string; secret?: string; clearSecret?: boolean
 }
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))
@@ -25,10 +26,11 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
     if (!open) return
     form.resetFields()
     if (editing) {
-      const { parameters, url, method, headers } = editing.config || {}
+      const { parameters, url, method, headers, allowed_hosts } = editing.config || {}
       form.setFieldsValue({
         name: editing.name, description: editing.description, type: editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(), url,
         headersStr: headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '', params: rowsFromSchema(parameters),
+        allowedHosts: (allowed_hosts || []).join('\n'),
         authType: editing.auth?.type ?? 'none', authLocation: editing.auth?.location ?? undefined, authName: editing.auth?.name ?? undefined,
       })
     }
@@ -42,9 +44,12 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
         try { headers = JSON.parse(values.headersStr) } catch { message.error('请求头 JSON 格式错误'); return }
         if (typeof headers !== 'object' || Array.isArray(headers)) { message.error('请求头必须是 JSON 对象'); return }
       }
-      // 保留 config 里前端不认识的键（后端扩展字段），只覆盖结构化录入的四项
-      const { parameters: _p, url: _u, method: _m, headers: _h, ...rest } = editing?.config || {}
-      config = { ...rest, method: values.method, url: values.url, headers, parameters: schemaFromRows(values.params || []) }
+      // 保留 config 里前端不认识的键（后端扩展字段），只覆盖结构化录入的几项
+      const { parameters: _p, url: _u, method: _m, headers: _h, allowed_hosts: _a, ...rest } = editing?.config || {}
+      // 白名单每行一个主机名（也接受逗号）。清空时删掉这个键而不是写空数组：接口上两者都表示"不限制"，
+      // 但缺失更干净，也避免以后收紧语义时把"用户明确清空"和"从没配过"混成同一种状态（docs/16 P3a 过渡期）
+      const hosts = (values.allowedHosts || '').split(/[\n,]/).map((h) => h.trim()).filter(Boolean)
+      config = { ...rest, method: values.method, url: values.url, headers, parameters: schemaFromRows(values.params || []), ...(hosts.length ? { allowed_hosts: hosts } : {}) }
     }
     const authType = values.type === 'http' ? values.authType : 'none'
     const auth = authType === 'api_key' ? { type: authType, location: values.authLocation, name: values.authName } : { type: authType }
@@ -76,6 +81,9 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
                 <Form.Item name="method" label="方法" style={{ width: 120 }}><Select options={METHODS} /></Form.Item>
                 <Form.Item name="url" label="请求地址" style={{ flex: 1 }} rules={[{ required: true, message: '请输入请求地址' }, { type: 'url', message: '请输入合法的 URL' }]}><Input placeholder="https://api.example.com/v1/query" /></Form.Item>
               </div>
+              <Form.Item name="allowedHosts" label="目标地址白名单（可选）" extra="每行一个主机名（如 api.example.com），子域自动放行。留空表示不限制：当前是过渡期，执行时放行但每次记日志；填了之后请求地址的主机不在名单内会被拒绝（docs/16 P3a）">
+                <Input.TextArea rows={3} placeholder={'api.example.com\nv2.example.com'} />
+              </Form.Item>
               <Form.Item name="headersStr" label="请求头（JSON 对象，可选）" extra="只放非敏感的请求头；Authorization、Token、Key 这类凭据在下方鉴权里配置（写进这里保存会被拒绝）"><Input.TextArea rows={3} placeholder='{"Content-Type": "application/json"}' /></Form.Item>
               <ToolAuthFields hasSecret={!!editing?.auth?.has_secret} />
               <Form.Item name="params" label="参数声明（模型按此以结构化参数调用）"><ToolParamsEditor /></Form.Item>

@@ -5,7 +5,8 @@ export type ToolPropertyType = 'string' | 'number' | 'integer' | 'boolean'
 export interface ToolProperty { type: ToolPropertyType; description?: string; enum?: string[] }
 // HTTP 工具参数声明（docs/03-数据库设计.md 4.2 的 JSON Schema 子集）；后端保存时校验并规范化
 export interface ToolParameters { type: 'object'; properties: Record<string, ToolProperty>; required: string[] }
-export interface ToolConfig { url?: string; method?: string; headers?: Record<string, string>; parameters?: ToolParameters }
+// 目标地址白名单（docs/16 P3a）：只写主机名，执行时按域名后缀匹配；不填表示过渡期放行但每次留日志
+export interface ToolConfig { url?: string; method?: string; headers?: Record<string, string>; parameters?: ToolParameters; allowed_hosts?: string[] }
 // 鉴权（docs/04 4.7，2026-09-29 起）：凭据加密托管、任何接口不回传，只告诉你配没配（has_secret）
 export type ToolAuthType = 'none' | 'api_key' | 'bearer' | 'basic'
 export interface ToolAuth { type: ToolAuthType; location?: 'header' | 'query' | null; name?: string | null }
