@@ -68,7 +68,12 @@ class DebugChatIn(BaseModel):
 
 
 def _sse(data: dict) -> str:
-    """把数据包装成 SSE 的 data 帧（UTF-8，JSON 序列化）。"""
+    """把数据包装成 SSE 的 data 帧（UTF-8，JSON 序列化）。
+
+    刻意不加 SSE 的 `id:` 行：前端用 fetch 手工解析（不是 EventSource），浏览器不会拿 id 做
+    Last-Event-ID 重连；而现有解析按整块 `startsWith("data: ")` 判断事件，多一行 `id:` 会让
+    整块被丢掉。seq / reply_id 放在事件体内（docs/16 P0），将来做续传按它们重放，不改帧格式。
+    """
     return "data: " + json.dumps(data, ensure_ascii=False) + "\n\n"
 
 

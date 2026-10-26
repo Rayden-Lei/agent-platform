@@ -10,7 +10,7 @@ import logging
 import time
 import warnings
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.prebuilt import create_react_agent
@@ -25,6 +25,7 @@ from app.db.models import Run, User
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import guarded_astream
 from app.services import chat_service, chat_trace
+from app.services.chat_events import EventStream, StreamState, apply_event
 
 warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 logger = logging.getLogger(__name__)
@@ -92,21 +93,10 @@ def public_error(e: Exception) -> str:
     return f"生成失败，请稍后重试（trace: {get_request_id()}）"
 
 
-@dataclass
-class _StreamState:
-    """一轮执行中累积的结果。用量按模型调用分开记再相加：一轮里有工具调用时模型会被调多次，
-    2026-09-29 前每来一次用量就整体覆盖，只剩最后一次调用的 token，前几次的用量与成本都丢了。"""
-
-    content: str = ""
-    tool_calls: list = field(default_factory=list)
-    usage_by_call: dict = field(default_factory=dict)
-    first_token_ms: int | None = None
-
-    def usage(self) -> dict:
-        if not self.usage_by_call:
-            return {}
-        keys = ("prompt_tokens", "completion_tokens", "total_tokens")
-        return {k: sum(u.get(k, 0) for u in self.usage_by_call.values()) for k in keys}
+def _finished_reason(e: Exception) -> str:
+    """事件层的结束原因（docs/16 P0）：工具轮数超限单独一个值，其余业务与内部异常都是 error。
+    用户主动停止不发事件（客户端已断连），由前端本地收尾为 interrupted。"""
+    return "exceed_max_iters" if isinstance(e, ToolRoundsExceeded) else "error"
 
 
 class _LlmTrace:
@@ -129,7 +119,7 @@ class _LlmTrace:
         call["tools"].extend(n for n in tool_names if n)
         call["clock"].stop()
 
-    def close_call(self, state: _StreamState) -> dict | None:
+    def close_call(self, state: StreamState) -> dict | None:
         call, self.call = self.call, None
         if call is None:
             return None
@@ -149,30 +139,32 @@ class _LlmTrace:
         return chat_trace.make_step("tool", name, clock, input=args, output=result, status="error" if failed else "success")
 
 
-async def _agent_events(ctx: chat_service.ChatContext, state: _StreamState, started: float, *, run_id: int,
-                        tool_result_chars: int, trace: bool) -> AsyncIterator[dict]:
-    """模型与工具循环：产出 delta / tool_call / tool_result（trace=True 时另产出 llm 与 tool 两类 trace 事件），结果累积进 state。
-    异常原样抛出，由调用方按线上或调试各自收尾。"""
+async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, events: EventStream, started: float, *,
+                        run_id: int, tool_result_chars: int, trace: bool) -> AsyncIterator[dict]:
+    """模型与工具循环：产出 delta / tool_call / tool_result（trace=True 时另产出 llm 与 tool 两类 trace 事件）。
+    结果经 apply_event 累积进 state（落库用），每条事件由 events 补 seq / reply_id；异常原样抛出，由调用方按线上或调试各自收尾。"""
     max_rounds = settings.TOOL_CALL_MAX_ROUNDS
     graph = create_react_agent(ctx.llm, ctx.tools, prompt=ctx.system_prompt, post_model_hook=_tool_round_guard(max_rounds))
     # 工具参数按 (模型调用 id, 分块序号) 累积：每次模型调用的序号都从 0 开始，只按序号累积会把第二轮的参数拼到第一轮后面
     #（2026-09-29 前第二轮起的 tool_call 事件参数显示成 _raw 乱码；实际执行用的是模型解析好的参数，不受影响）
     tool_call_acc: dict[tuple, dict] = {}
     tool_call_by_id: dict[str, tuple] = {}
+    announced: set[str] = set()  # 已下发过的工具调用：完整 chunk 与 ToolMessage 可能各报一次，同一 id 只发一条
     tracer = _LlmTrace(ctx.model) if trace else None
     # 每轮工具调用走 agent → post_model_hook → tools 三步；上限留足余量，守卫先于它触发，它只兜底其他死循环
     config = {"recursion_limit": 3 * max_rounds + 10}
     # 熔断包装：打开期直接抛 503；首个 chunk 视为成功，建立流之前的异常计入失败
-    stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, config=config, stream_mode="messages"))
-    async for chunk, _meta in stream:
+    llm_stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, config=config, stream_mode="messages"))
+    async for chunk, _meta in llm_stream:
         if isinstance(chunk, AIMessageChunk):
             call_id = chunk.id or "_"
             delta = chunk.content if isinstance(chunk.content, str) else ""
             if delta:
                 if state.first_token_ms is None:
                     state.first_token_ms = int((time.perf_counter() - started) * 1000)
-                state.content += delta
-                yield {"type": "delta", "content": delta}
+                event = events.emit("delta", content=delta)
+                apply_event(state, event)
+                yield event
             for tc in getattr(chunk, "tool_call_chunks", None) or []:
                 index = tc.get("index")
                 if index is None:
@@ -186,8 +178,11 @@ async def _agent_events(ctx: chat_service.ChatContext, state: _StreamState, star
                 entry["args_str"] += tc.get("args") or ""
             for tc in getattr(chunk, "tool_calls", None) or []:
                 tc_id = tc.get("id")
-                if tc_id and tc_id not in tool_call_by_id and (tc.get("args") or tc.get("name")):
-                    yield {"type": "tool_call", "name": tc.get("name"), "arguments": tc.get("args", {}), "id": tc_id}
+                if tc_id and tc_id not in tool_call_by_id and tc_id not in announced and (tc.get("args") or tc.get("name")):
+                    announced.add(tc_id)
+                    event = events.emit("tool_call", name=tc.get("name"), arguments=tc.get("args", {}), id=tc_id, state="running")
+                    apply_event(state, event)
+                    yield event
             um = getattr(chunk, "usage_metadata", None)
             if um:
                 # 同一次调用内按最后一次为准（有的厂商在每个分块上给累计值），不同调用之间相加
@@ -197,7 +192,7 @@ async def _agent_events(ctx: chat_service.ChatContext, state: _StreamState, star
                 tracer.on_chunk(call_id, delta, [tc.get("name") for tc in (getattr(chunk, "tool_call_chunks", None) or [])])
         elif isinstance(chunk, ToolMessage):
             if tracer and (step := tracer.close_call(state)):
-                yield {"type": "trace", "step": step}
+                yield events.emit("trace", step=step)
             tc_id = chunk.tool_call_id
             key = tool_call_by_id.get(tc_id) if tc_id else None
             entry = tool_call_acc.get(key) if key is not None else None
@@ -212,17 +207,23 @@ async def _agent_events(ctx: chat_service.ChatContext, state: _StreamState, star
                         # 模型拼出的参数不是合法 JSON：原样透传给前端展示，不中断对话
                         logger.warning("工具调用参数不是合法 JSON run_id=%s tool=%s", run_id, entry["name"])
                         args = {"_raw": entry["args_str"]}
-                yield {"type": "tool_call", "name": tool_name, "arguments": args, "id": tc_id or entry["id"]}
+                call_id_for_event = tc_id or entry["id"]
+                if call_id_for_event not in announced:
+                    announced.add(call_id_for_event)
+                    event = events.emit("tool_call", name=tool_name, arguments=args, id=call_id_for_event, state="running")
+                    apply_event(state, event)
+                    yield event
             # 下发（tool_result 事件与调用链）按 preview 截断；落库要留全貌供事后排查，按 STORE 截断，两者不共用一个值
             raw_result = str(chunk.content)
             result = raw_result[:tool_result_chars]
-            state.tool_calls.append({"id": tc_id or (entry or {}).get("id"), "name": tool_name, "args": args,
-                                     "result": raw_result[:TOOL_RESULT_STORE_CHARS]})
-            yield {"type": "tool_result", "content": result, "tool_call_id": tc_id}
+            event = events.emit("tool_result", content=result, tool_call_id=tc_id,
+                                state="error" if getattr(chunk, "status", "success") == "error" else "done")
+            apply_event(state, event, stored_result=raw_result[:TOOL_RESULT_STORE_CHARS])
+            yield event
             if tracer:
-                yield {"type": "trace", "step": tracer.tool_step(tool_name, args, result)}
+                yield events.emit("trace", step=tracer.tool_step(tool_name, args, result))
     if tracer and (step := tracer.close_call(state)):
-        yield {"type": "trace", "step": step}
+        yield events.emit("trace", step=step)
 
 
 async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
@@ -232,8 +233,8 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
     避免运行记录永远停在 running。自己开数据库会话，路由请求结束后它还在用。
     """
     db = SessionLocal()
-    state = _StreamState()
-    citations: list = []
+    state = StreamState()
+    events = EventStream(f"run-{turn.run_id}")
     finished = False  # 已正常收尾（done / failed）；finally 据此判断是否为客户端中断
     started = time.perf_counter()
     try:
@@ -247,22 +248,30 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
                 logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", turn.run_id, turn.agent_id)
             chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
             finished = True
-            yield {"type": "error", "message": public_error(e)}
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
             return
-        citations = ctx.citations
+        state.citations = ctx.citations
         # 来源 IP 在事件循环里取好再传进线程池，不依赖线程池是否复制请求上下文
         await run_in_threadpool(_audit_retrieval, db, turn, ctx, get_client_ip())
-        yield {"type": "citations", "citations": citations}
+        citations_event = events.emit("citations", citations=state.citations)
+        apply_event(state, citations_event)
+        yield citations_event
         try:
-            async for event in _agent_events(ctx, state, started, run_id=turn.run_id, tool_result_chars=TOOL_RESULT_PREVIEW_CHARS, trace=False):
+            async for event in _agent_events(ctx, state, events, started, run_id=turn.run_id,
+                                             tool_result_chars=TOOL_RESULT_PREVIEW_CHARS, trace=False):
                 yield event
             usage = state.usage()
-            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, citations, usage,
-                                                    state.tool_calls, turn.run_id)
+            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, state.citations,
+                                                    usage, state.tool_calls, turn.run_id)
             await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
             finished = True
             logger.info("对话完成 run_id=%s 首字节 %sms 总 %dms", turn.run_id, state.first_token_ms if state.first_token_ms is not None else "-", int((time.perf_counter() - started) * 1000))
-            yield {"type": "done", "message_id": assistant_msg.id, "run_id": turn.run_id, "conversation_id": turn.conversation_id, "usage": usage}
+            done = events.emit("done", message_id=assistant_msg.id, run_id=turn.run_id, conversation_id=turn.conversation_id,
+                               usage=usage, finished_reason="completed")
+            apply_event(state, done)
+            yield done
             if ctx.summary_pending:
                 # 摘要压缩是一次完整的模型调用，放到响应之后的后台线程，下一轮对话用到新摘要
                 chat_service.schedule_summary_refresh(ctx.model.id, turn.conversation_id)
@@ -270,11 +279,13 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
             _log_failure(e, turn.run_id, turn.agent_id)
             chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
             finished = True
-            yield {"type": "error", "message": public_error(e)}
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
     finally:
         if not finished:
             try:
-                chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, citations, state.usage(), state.tool_calls)
+                chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, state.citations, state.usage(), state.tool_calls)
             except Exception:
                 logger.exception("对话中断收尾失败 run_id=%s", turn.run_id)
         db.close()
@@ -285,13 +296,14 @@ async def replay_chat(replay: chat_service.ReplayChat) -> AsyncIterator[dict]:
     首次完成：citations（有的话）+ 一条 delta 带回答全文 + done（首次的 message_id / run_id，replayed=true）；
     首次失败或中断：一条 error 带首次的错误文案。首次仍在生成的在 prepare_chat 就 409 了，到不了这里。"""
     if replay.status != "success":
-        yield {"type": "error", "message": replay.error}
+        yield {"type": "error", "message": replay.error,
+               "finished_reason": "interrupted" if replay.status == "cancelled" else "error"}
         return
     if replay.citations:
         yield {"type": "citations", "citations": replay.citations}
     yield {"type": "delta", "content": replay.content}
     yield {"type": "done", "message_id": replay.message_id, "run_id": replay.run_id, "conversation_id": replay.conversation_id,
-           "usage": replay.usage, "replayed": True}
+           "usage": replay.usage, "replayed": True, "finished_reason": "completed"}
 
 
 def _log_failure(e: Exception, run_id: int, agent_id: int) -> None:
@@ -305,25 +317,30 @@ async def stream_debug(turn: chat_service.DebugTurn) -> AsyncIterator[dict]:
     """装配页调试（docs/15 3.4，FR-041）：与线上同一个模型与工具循环，多下发实际系统提示词（prompt）与调用链（trace），
     done 带首字 / 总耗时 / 检索耗时 / 成本。不建会话、不落消息；运行记录 source=debug，中断时置 cancelled。"""
     db = SessionLocal()
-    state = _StreamState()
+    state = StreamState()
+    events = EventStream(f"run-{turn.run_id}")
     finished = False
     started = time.perf_counter()
     try:
         try:
             ctx = await run_in_threadpool(chat_service.build_debug_context, db, turn)
             await run_in_threadpool(_audit_retrieval, db, turn, ctx, get_client_ip(), "debug")
-            yield {"type": "prompt", "system_prompt": ctx.system_prompt[:PROMPT_EVENT_MAX_CHARS], "history_count": len(ctx.history_messages) - 1}
-            yield {"type": "citations", "citations": ctx.citations}
+            state.citations = ctx.citations
+            yield events.emit("prompt", system_prompt=ctx.system_prompt[:PROMPT_EVENT_MAX_CHARS], history_count=len(ctx.history_messages) - 1)
+            yield events.emit("citations", citations=state.citations)
             for step in ctx.trace:
-                yield {"type": "trace", "step": step}
-            async for event in _agent_events(ctx, state, started, run_id=turn.run_id, tool_result_chars=DEBUG_TOOL_RESULT_CHARS, trace=True):
+                yield events.emit("trace", step=step)
+            async for event in _agent_events(ctx, state, events, started, run_id=turn.run_id,
+                                             tool_result_chars=DEBUG_TOOL_RESULT_CHARS, trace=True):
                 yield event
         except Exception as e:
             _log_failure(e, turn.run_id, turn.agent_id)
             chat_service.finalize_run(db, turn.run_id, "failed", content=state.content or None, usage=state.usage() or None,
                                       error=e.detail if isinstance(e, BizError) else str(e))
             finished = True
-            yield {"type": "error", "message": public_error(e)}
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
             return
         usage = state.usage()
         await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
@@ -331,7 +348,9 @@ async def stream_debug(turn: chat_service.DebugTurn) -> AsyncIterator[dict]:
         run = db.get(Run, turn.run_id)
         metrics = {"first_token_ms": state.first_token_ms, "latency_ms": int((time.perf_counter() - started) * 1000), "retrieval_ms": ctx.retrieval_ms,
                    "cost": run.cost if run else None, "model_id": ctx.model.id, "model_name": ctx.model.name, "config_source": turn.config_source}
-        yield {"type": "done", "run_id": turn.run_id, "usage": usage, "metrics": metrics}
+        done = events.emit("done", run_id=turn.run_id, usage=usage, metrics=metrics, finished_reason="completed")
+        apply_event(state, done)
+        yield done
     finally:
         if not finished:
             try:
