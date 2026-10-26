@@ -45,9 +45,18 @@ def get_conversation(conversation_id: int, request: Request, end_user: str | Non
 
 
 @router.get("/{conversation_id}/messages")
-def list_messages(conversation_id: int, request: Request, end_user: str | None = EndUser, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """指定会话下的消息列表。会话归属校验在 service 层完成。"""
-    return conversation_service.list_messages(db, conversation_id, _caller(request, user, end_user))
+def list_messages(
+    conversation_id: int,
+    request: Request,
+    end_user: str | None = EndUser,
+    full_tool_results: bool = Query(False, description="返回落库的完整工具结果（≤ 8000 字），仅 admin / developer 的登录请求可用"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """指定会话下的消息列表。会话归属校验在 service 层完成。
+    工具结果默认与实时事件同长（200 字）；排查时 admin / developer 带 full_tool_results=true 取库里那份（≤ 8000）。"""
+    full_allowed = current_api_key(request) is None and user.role in ("admin", "developer")
+    return conversation_service.list_messages(db, conversation_id, _caller(request, user, end_user), full_tool_results, full_allowed)
 
 
 @router.delete("/{conversation_id}")

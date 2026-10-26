@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import settings
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
+from app.core.limits import TOOL_RESULT_PREVIEW_CHARS, TOOL_RESULT_STORE_CHARS
 from app.core.request_context import get_client_ip, get_request_id
 from app.db.models import Run, User
 from app.db.session import SessionLocal
@@ -28,7 +29,6 @@ from app.services import chat_service, chat_trace
 warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 logger = logging.getLogger(__name__)
 
-TOOL_RESULT_PREVIEW_CHARS = 200  # 工具结果下发与落库的截断长度
 DEBUG_TOOL_RESULT_CHARS = 4000  # 调试放宽，便于看完整结果（docs/15 3.4）
 PROMPT_EVENT_MAX_CHARS = 20000  # prompt 事件里的系统提示词截断长度（含注入的参考片段）
 
@@ -213,8 +213,11 @@ async def _agent_events(ctx: chat_service.ChatContext, state: _StreamState, star
                         logger.warning("工具调用参数不是合法 JSON run_id=%s tool=%s", run_id, entry["name"])
                         args = {"_raw": entry["args_str"]}
                 yield {"type": "tool_call", "name": tool_name, "arguments": args, "id": tc_id or entry["id"]}
-            result = str(chunk.content)[:tool_result_chars]
-            state.tool_calls.append({"id": tc_id or (entry or {}).get("id"), "name": tool_name, "args": args, "result": result})
+            # 下发（tool_result 事件与调用链）按 preview 截断；落库要留全貌供事后排查，按 STORE 截断，两者不共用一个值
+            raw_result = str(chunk.content)
+            result = raw_result[:tool_result_chars]
+            state.tool_calls.append({"id": tc_id or (entry or {}).get("id"), "name": tool_name, "args": args,
+                                     "result": raw_result[:TOOL_RESULT_STORE_CHARS]})
             yield {"type": "tool_result", "content": result, "tool_call_id": tc_id}
             if tracer:
                 yield {"type": "trace", "step": tracer.tool_step(tool_name, args, result)}

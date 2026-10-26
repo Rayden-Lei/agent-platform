@@ -6,11 +6,16 @@ import json
 import uuid
 
 import pytest
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 
 from app.config import settings
+from app.core.exceptions import BizError
 from app.db.models import Conversation, Message, Run
 from app.db.session import SessionLocal
-from app.services import chat_service
+from app.services import chat_service, conversation_service
+from app.services.chat_runner import TOOL_RESULT_PREVIEW_CHARS, TOOL_RESULT_STORE_CHARS
+from tests.fakes import FAKE_MODEL, ScriptedModel
 from tests.fakes import AnswerModel as _AnswerModel
 from tests.fakes import ToolLoopModel as _ToolLoopModel
 from tests.fakes import use_llm as _use_llm
@@ -163,5 +168,80 @@ def test_conversation_row_belongs_to_the_agent_it_was_created_with(client, auth_
     db = SessionLocal()
     try:
         assert db.get(Conversation, conv_id).agent_id == agent["id"]
+    finally:
+        db.close()
+
+
+def test_tool_result_store_keeps_more_than_preview(client, auth_headers, make_agent, monkeypatch):
+    """下发与落库的截断长度分开（2026-10-26）：tool_result 事件与调用链仍是 200 字（前端卡片不变），
+    messages.tool_calls 保留到 8000 字，事后排查能看到工具实际返回了什么。"""
+    agent = make_agent()
+    long_text = "结果" * 4500  # 9000 字符，超过两个上限
+
+    @tool
+    def big_result() -> str:
+        """返回一段长文本，用于验证工具结果下发与落库的截断长度不同。"""
+        return long_text
+
+    def _build(db, agent_id, message_text, conversation_id, role=None, **kwargs):
+        return chat_service.ChatContext(model=FAKE_MODEL, llm=ScriptedModel(script=[("tool", "big_result"), ("text", "好了")]),
+                                        tools=[big_result], system_prompt="你是测试助手",
+                                        citations=[], history_messages=[HumanMessage(content=message_text)])
+
+    monkeypatch.setattr(chat_service, "build_chat_context", _build)
+    events = _events(_chat(client, auth_headers, agent["id"], "调个大工具"))
+    done = events[-1]
+    assert done["type"] == "done"
+    tool_result = next(e for e in events if e["type"] == "tool_result")
+    assert tool_result["content"] == long_text[:TOOL_RESULT_PREVIEW_CHARS]
+    db = SessionLocal()
+    try:
+        answer = db.query(Message).filter(Message.conversation_id == done["conversation_id"], Message.role == "assistant").one()
+        assert answer.tool_calls[0]["result"] == long_text[:TOOL_RESULT_STORE_CHARS]
+        assert len(answer.tool_calls[0]["result"]) == 8000
+    finally:
+        db.close()
+
+
+def test_history_tool_results_default_to_preview_and_full_is_admin_only(client, auth_headers, make_agent, monkeypatch):
+    """历史消息里的工具结果默认按展示口径给 200 字（与实时 tool_result 事件同长），会话页不会因落库放宽而变重；
+    排查时 admin 带 full_tool_results=true 取库里那份（≤ 8000）。权限判定在归属校验之后，别人的会话仍是 404。"""
+    agent = make_agent()
+    long_text = "结果" * 4500
+
+    @tool
+    def big_result() -> str:
+        """返回一段长文本。"""
+        return long_text
+
+    def _build(db, agent_id, message_text, conversation_id, role=None, **kwargs):
+        return chat_service.ChatContext(model=FAKE_MODEL, llm=ScriptedModel(script=[("tool", "big_result"), ("text", "好了")]),
+                                        tools=[big_result], system_prompt="", citations=[], history_messages=[HumanMessage(content=message_text)])
+
+    monkeypatch.setattr(chat_service, "build_chat_context", _build)
+    conv_id = _events(_chat(client, auth_headers, agent["id"], "调个大工具"))[-1]["conversation_id"]
+
+    def _tool_call(url: str) -> dict:
+        rows = client.get(url, headers=auth_headers).json()
+        return next(m for m in rows if m["role"] == "assistant")["tool_calls"][0]
+
+    preview = _tool_call(f"/api/v1/conversations/{conv_id}/messages")
+    assert len(preview["result"]) == TOOL_RESULT_PREVIEW_CHARS and preview["result_truncated"] is True
+    assert preview["result_chars"] == TOOL_RESULT_STORE_CHARS
+
+    full = _tool_call(f"/api/v1/conversations/{conv_id}/messages?full_tool_results=true")
+    assert len(full["result"]) == TOOL_RESULT_STORE_CHARS and "result_truncated" not in full
+
+    db = SessionLocal()
+    try:
+        conv = db.get(Conversation, conv_id)
+        owner_no_rights = conversation_service.Caller(conversation_service.CHANNEL_UI, conv.user_id)
+        with pytest.raises(BizError) as denied:
+            conversation_service.list_messages(db, conv_id, owner_no_rights, full_tool_results=True, full_allowed=False)
+        assert denied.value.status_code == 403 and "完整工具结果" in denied.value.detail
+        stranger = conversation_service.Caller(conversation_service.CHANNEL_UI, conv.user_id + 100000)
+        with pytest.raises(BizError) as hidden:
+            conversation_service.list_messages(db, conv_id, stranger, full_tool_results=False, full_allowed=False)
+        assert hidden.value.status_code == 404
     finally:
         db.close()
