@@ -103,7 +103,7 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
         return StreamingResponse(sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
-                                kb_scope=kb_scope)
+                                kb_scope=kb_scope, source=conversation_service.RUN_SOURCE_OF[caller.channel])
     return StreamingResponse(sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
 
 

@@ -47,6 +47,7 @@ class ChatTurn:
     agent_version: int
     kb_scope: list | None = None  # API Key 对话时为 Key 的 kb_ids，检索按 Key 的范围放行（docs/15 3.7.1）；登录对话为 None
     allow_http_tools: bool = True  # 分享访客按分享配置（默认不装配 HTTP 工具，docs/15 3.6）
+    source: str = "chat"  # 工具闸门与留痕用的来源：chat / api_key / share（docs/16 P3a）
 
 
 class ToolRoundsExceeded(Exception):
@@ -99,6 +100,22 @@ def _finished_reason(e: Exception) -> str:
     return "exceed_max_iters" if isinstance(e, ToolRoundsExceeded) else "error"
 
 
+def _tool_result_state(result: str, langchain_status: str) -> str:
+    """工具结果的终态：被执行闸门拒绝（{"denied": true}）单独一个值，与执行失败分开。
+
+    为什么不能只看 LangChain 的 status：被闸门拒绝的工具对 LangChain 来说是"成功执行并返回了
+    一段 JSON"，status 仍是 success；不解析内容就分不出"没让调"和"调完了但结果里有 error"。
+    这里拿到的 result 是下发口径（≤200 字），被拒的文案很短，不会被截断到解析失败。
+    """
+    try:
+        parsed = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("denied") is True:
+        return "denied"
+    return "error" if langchain_status == "error" else "done"
+
+
 class _LlmTrace:
     """调试时把每次模型调用、每次工具执行记成调用链步骤。模型调用以分块的 id 区分，第一个分块到达时开始，
     最后一个分块到达时结束；工具从模型调用结束时开始计时（工具节点跑完才一起返回，耗时是整个工具节点的）。"""
@@ -142,14 +159,20 @@ class _LlmTrace:
 async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, events: EventStream, started: float, *,
                         run_id: int, tool_result_chars: int, trace: bool) -> AsyncIterator[dict]:
     """模型与工具循环：产出 delta / tool_call / tool_result（trace=True 时另产出 llm 与 tool 两类 trace 事件）。
-    结果经 apply_event 累积进 state（落库用），每条事件由 events 补 seq / reply_id；异常原样抛出，由调用方按线上或调试各自收尾。"""
+    结果经 apply_event 累积进 state（落库用），每条事件由 events 补 seq / reply_id；异常原样抛出，由调用方按线上或调试各自收尾。
+
+    每条消息类事件都是"emit 补信封 → apply_event 累积 → yield 下发"三步相邻出现。漏掉中间那步不会报错，
+    只会让落库与事件重建少一段内容（静默失效），改动这里时三行要一起看。"""
     max_rounds = settings.TOOL_CALL_MAX_ROUNDS
     graph = create_react_agent(ctx.llm, ctx.tools, prompt=ctx.system_prompt, post_model_hook=_tool_round_guard(max_rounds))
     # 工具参数按 (模型调用 id, 分块序号) 累积：每次模型调用的序号都从 0 开始，只按序号累积会把第二轮的参数拼到第一轮后面
     #（2026-09-29 前第二轮起的 tool_call 事件参数显示成 _raw 乱码；实际执行用的是模型解析好的参数，不受影响）
     tool_call_acc: dict[tuple, dict] = {}
     tool_call_by_id: dict[str, tuple] = {}
-    announced: set[str] = set()  # 已下发过的工具调用：完整 chunk 与 ToolMessage 可能各报一次，同一 id 只发一条
+    # 已下发过的工具调用 id。同一次调用可能被报两遍：完整 chunk 的 tool_calls 一遍、ToolMessage
+    # 分支用累积参数再拼一遍。不去重的话前端会出现两张同名卡片，事件重建也会多出一条 tool_call；
+    # 去重后以先到的为准，后到的参数更完整时由 apply_event 覆盖（见 chat_events）。
+    announced: set[str] = set()
     tracer = _LlmTrace(ctx.model) if trace else None
     # 每轮工具调用走 agent → post_model_hook → tools 三步；上限留足余量，守卫先于它触发，它只兜底其他死循环
     config = {"recursion_limit": 3 * max_rounds + 10}
@@ -213,11 +236,12 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
                     event = events.emit("tool_call", name=tool_name, arguments=args, id=call_id_for_event, state="running")
                     apply_event(state, event)
                     yield event
-            # 下发（tool_result 事件与调用链）按 preview 截断；落库要留全貌供事后排查，按 STORE 截断，两者不共用一个值
+            # 下发（tool_result 事件与调用链）按 preview 截断；落库要留全貌供事后排查，按 STORE 截断，两者不共用一个值。
+            # state 按三种终态之一：denied（闸门拒绝，见 _tool_result_state）/ error（LangChain 标了 error）/ done。
             raw_result = str(chunk.content)
             result = raw_result[:tool_result_chars]
             event = events.emit("tool_result", content=result, tool_call_id=tc_id,
-                                state="error" if getattr(chunk, "status", "success") == "error" else "done")
+                                state=_tool_result_state(result, getattr(chunk, "status", "success")))
             apply_event(state, event, stored_result=raw_result[:TOOL_RESULT_STORE_CHARS])
             yield event
             if tracer:
@@ -242,7 +266,7 @@ async def stream_chat(turn: ChatTurn) -> AsyncIterator[dict]:
             # 检索、历史装配要几百毫秒到几秒，放线程池，不拖住事件循环上的其他请求
             ctx = await run_in_threadpool(chat_service.build_chat_context, db, turn.agent_id, turn.message, turn.conversation_id,
                                           role=turn.role, agent_version=turn.agent_version, kb_scope=turn.kb_scope,
-                                          allow_http_tools=turn.allow_http_tools)
+                                          allow_http_tools=turn.allow_http_tools, run_id=turn.run_id, source=turn.source)
         except Exception as e:
             if not isinstance(e, BizError):
                 logger.exception("对话上下文构建失败 run_id=%s agent_id=%s", turn.run_id, turn.agent_id)

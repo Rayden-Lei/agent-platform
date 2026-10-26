@@ -6,6 +6,7 @@ from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import encrypt_secret
 from app.db.models import Agent, Tool, User
 from app.tools.executor import execute_tool
+from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
 
 SORTABLE = {"id": Tool.id, "name": Tool.name, "type": Tool.type, "timeout": Tool.timeout}
@@ -50,6 +51,28 @@ def _check_auth(data, has_secret_after: bool) -> None:
         raise BizError(400, "没有选择鉴权方式，凭据不会被使用；请先选择鉴权方式")
 
 
+MAX_ALLOWED_HOSTS = 20
+
+
+def _check_allowed_hosts(config: dict | None, tool_type: str) -> None:
+    """allowed_hosts 只对 HTTP 工具生效（docs/16 P3a）：存主机名，不带协议、端口与路径，执行时按域名后缀匹配。
+    不填或空数组表示过渡期的"放行但每次留日志"，见 tools/permission.check。"""
+    hosts = (config or {}).get("allowed_hosts")
+    if hosts in (None, []):
+        return
+    if tool_type != "http":
+        raise BizError(400, "allowed_hosts 只对 HTTP 工具生效")
+    if not isinstance(hosts, list):
+        raise BizError(400, "allowed_hosts 必须是数组")
+    if len(hosts) > MAX_ALLOWED_HOSTS:
+        raise BizError(400, f"allowed_hosts 最多 {MAX_ALLOWED_HOSTS} 项")
+    for host in hosts:
+        if not isinstance(host, str) or not host.strip():
+            raise BizError(400, "allowed_hosts 里的每一项都必须是非空字符串")
+        if "/" in host or ":" in host or len(host) > 255:
+            raise BizError(400, f"allowed_hosts 里的 {host!r} 不是合法主机名（只写域名，不带协议、端口与路径）")
+
+
 def _agents_count_by_tool(db: Session, tool_ids: set[int]) -> dict[int, int]:
     """引用各工具的智能体数。tool_ids 是 JSONB 数组没有外键，一次拉回全部智能体的 (id, tool_ids) 在内存里数；
     智能体表小，避免对每个工具发一条 contains 查询。"""
@@ -82,6 +105,7 @@ def list_tools(db: Session, params: PageParams, q: str = None, tool_type: str = 
 def create_tool(db: Session, data, user: User) -> dict:
     """新建工具（type 决定执行方式，config 为各类型工具的参数配置）。凭据加密后存 secret_enc；写审计 create。"""
     _check_auth(data, bool(data.secret))
+    _check_allowed_hosts(data.config, data.type)
     t = Tool(name=data.name, description=data.description, type=data.type, config=data.config, timeout=data.timeout,
              auth=data.auth.stored(), secret_enc=encrypt_secret(data.secret) if data.secret else None, created_by=user.id)
     db.add(t)
@@ -112,6 +136,7 @@ def update_tool(db: Session, tool_id: int, data, user: User) -> dict:
     t = get_tool(db, tool_id)
     had_secret = bool(t.secret_enc)
     _check_auth(data, bool(data.secret) or (had_secret and not data.clear_secret))
+    _check_allowed_hosts(data.config, data.type)
     before = {f: getattr(t, f) for f in _AUDITED_FIELDS}
     t.name = data.name
     t.description = data.description
@@ -170,10 +195,12 @@ def apply_batch_action(db: Session, tool_id: int, action: str, user: User) -> No
 
 
 async def test_tool(db: Session, tool_id: int, args: dict) -> dict:
-    """用给定参数实际执行一次工具，供前端测试配置是否可用。HTTP 工具先按参数声明校验，不合法 400 且不发起调用。"""
+    """用给定参数实际执行一次工具，供前端测试配置是否可用。HTTP 工具先按参数声明校验，不合法 400 且不发起调用。
+    执行闸门按 admin_test 来源判定（docs/16 P3a）：管理员正在配这个工具，白名单没填好也要能测，
+    其余（停用、分享限制）照旧拦。"""
     t = get_tool(db, tool_id)
     try:
         args = check_tool_args(t, args)
     except ValueError as e:
         raise BizError(400, str(e)) from e
-    return await execute_tool(t, args)
+    return await execute_tool(t, args, ToolCallContext(tool=t, source="admin_test"))

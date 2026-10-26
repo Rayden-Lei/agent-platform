@@ -19,6 +19,7 @@ from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
 from app.runtime.agent_config import resolve_live_config, usable_model
 from app.tools.executor import execute_tool
+from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
 from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
 
@@ -257,7 +258,12 @@ def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | 
                 args = json.loads(input_val) if isinstance(input_val, str) else (input_val or {})
             # HTTP 工具按参数声明校验（FR-030）：不合法抛 ValueError → 节点 failed，错误文本"参数校验失败：..."
             args = check_tool_args(tool_db, args)
-            result = asyncio.run(execute_tool(tool_db, args))
+            # 执行闸门按 workflow 来源判定（docs/16 P3a）：目标地址不在 allowed_hosts 内直接拒绝。
+            # 把 denied 转成 ValueError 让节点 failed——工作流没有"把错误回给模型再重试"的回合，
+            # 继续跑只会拿一个 error 当正常输出传给下游节点。
+            result = asyncio.run(execute_tool(tool_db, args, ToolCallContext(tool=tool_db, source="workflow", run_id=run_id)))
+            if result.get("denied"):
+                raise ValueError(result.get("error") or "工具调用被拒绝")
             out = _finalize_node_output(node_id, result, config)
             out["steps"] = [f"tool:{tool_name}"]
             _finish_node(rn_id, "success", out["output"])

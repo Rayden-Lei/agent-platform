@@ -337,15 +337,17 @@ def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int
 
 
 def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
-                         kb_scope: list | None = None, allow_http_tools: bool = True) -> ChatContext:
+                         kb_scope: list | None = None, allow_http_tools: bool = True,
+                         run_id: int | None = None, source: str = "chat") -> ChatContext:
     """按一份智能体配置装配 LLM、工具与检索（含 RAG 引用，带权限过滤 + 证据绑定），历史消息由调用方补。
     线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。
     kb_scope：API Key 对话时传 Key 的 kb_ids，检索只放行公开库与范围内且归属人可见的库（docs/15 3.7.1）。
-    allow_http_tools=False 时不装配绑定的 HTTP 工具（分享访客默认如此，docs/15 3.6），内置工具照常可用。"""
+    allow_http_tools=False 时不装配绑定的 HTTP 工具（分享访客默认如此，docs/15 3.6），内置工具照常可用。
+    run_id / source 传给工具的执行闸门（docs/16 P3a），决定被拒时能追到哪一轮、哪个来源。"""
     model = usable_model(db, cfg.model_id)
     llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）
     tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids and allow_http_tools else []
-    tools = build_tools(tool_dbs)
+    tools = build_tools(tool_dbs, source=source, agent_id=cfg.agent_id, run_id=run_id)
 
     kb_context = ""
     retrieval = Retrieval([], 0, None, [])
@@ -373,11 +375,14 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
 
 
 def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str = None,
-                       agent_version: int | None = None, kb_scope: list | None = None, allow_http_tools: bool = True) -> ChatContext:
+                       agent_version: int | None = None, kb_scope: list | None = None, allow_http_tools: bool = True,
+                       run_id: int | None = None, source: str = "chat") -> ChatContext:
     """构建线上对话的上下文：配置取 agent_version 指定的发布版本（对话执行器传 prepare_chat 定好的版本），
-    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。kb_scope、allow_http_tools 见 _context_from_config。"""
+    不传时取当前线上版本；历史取会话里的消息（最近 N 条原文 + 更早的持久化摘要）。
+    kb_scope、allow_http_tools、run_id、source 见 _context_from_config。"""
     cfg = load_version_config(db, agent_id, agent_version) if agent_version is not None else resolve_live_config(db, agent_id)
-    ctx = _context_from_config(db, cfg, message_text, role, kb_scope=kb_scope, allow_http_tools=allow_http_tools)
+    ctx = _context_from_config(db, cfg, message_text, role, kb_scope=kb_scope, allow_http_tools=allow_http_tools,
+                               run_id=run_id, source=source)
 
     conversation = db.get(Conversation, conversation_id)
     history = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
@@ -431,8 +436,9 @@ def prepare_debug(db: Session, user, agent_id: int, message: str, history: list[
 
 
 def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
-    """调试上下文：配置取调试对象，历史用前端带来的调试历史，按与线上相同的记忆条数截断，不模拟会话摘要。"""
-    ctx = _context_from_config(db, turn.config, turn.message, turn.role, trace=True)
+    """调试上下文：配置取调试对象，历史用前端带来的调试历史，按与线上相同的记忆条数截断，不模拟会话摘要。
+    工具闸门按 source=debug 判定（与线上对话分开留痕）。"""
+    ctx = _context_from_config(db, turn.config, turn.message, turn.role, trace=True, run_id=turn.run_id, source="debug")
     recent = list(turn.history)[-settings.CHAT_HISTORY_MAX_MESSAGES:]
     ctx.history_messages = [HumanMessage(content=h["content"]) if h["role"] == "user" else AIMessage(content=h["content"]) for h in recent]
     ctx.history_messages.append(HumanMessage(content=turn.message))
