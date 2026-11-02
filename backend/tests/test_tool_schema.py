@@ -23,7 +23,9 @@ WEATHER = {
 
 
 def _http_tool_payload(name: str, parameters: dict | None) -> dict:
-    config = {"url": "http://upstream.test/weather", "method": "GET"}
+    # allowed_hosts 必填：ee9e5b3 关闭过渡期后，未配白名单的 HTTP 工具在执行层直接 deny
+    # （工具页测试接口 admin_test 可绕过，但 LangChain 工具那条用例走的是未知来源）。
+    config = {"url": "http://upstream.test/weather", "method": "GET", "allowed_hosts": ["upstream.test"]}
     if parameters is not None:
         config["parameters"] = parameters
     return {"name": name, "description": "天气查询", "type": "http", "config": config, "timeout": 5}
