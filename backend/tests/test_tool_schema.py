@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from app.tools import executor, langchain_tools
+from app.tools import executor
 from app.tools.langchain_tools import build_tools
 from app.tools.schema import ToolParameters, build_args_model, validate_args
 
@@ -38,8 +38,9 @@ def http_calls(monkeypatch):
         calls.append(args)
         return {"result": "ok", "echo": args}
 
+    # 只需 patch executor：langchain_tools 现在经 execute_tool 间接调用，不再自己绑定引用
+    # （f0483f2 把闸门收进中间件后，_execute_http 已不在 langchain_tools 命名空间里）。
     monkeypatch.setattr(executor, "_execute_http", _fake)
-    monkeypatch.setattr(langchain_tools, "_execute_http", _fake)  # 该模块在 import 时就绑定了引用
     return calls
 
 
