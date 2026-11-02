@@ -1,0 +1,10 @@
+{
+  // 类型检查的边界（docs/16 里"129 → 0"当时没有配置，全靠口头约定，无法复现）。
+  // 只覆盖 app：tests 里还有约 167 条 Optional 相关报错，属噪音级，单独作为清理项，不阻塞这里。
+  "include": ["app"],
+  "exclude": ["**/__pycache__", "**/.venv"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic"
+}

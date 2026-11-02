@@ -32,7 +32,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt pytest
+        run: pip install -r backend/requirements.txt pytest pyright
+      - name: Type check (pyright)
+        run: cd backend && pyright
       - name: Run tests
         run: cd backend && PYTHONPATH=. python3 -m pytest tests/ -v
         env:
