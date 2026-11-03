@@ -10,10 +10,15 @@ interface Props {
 }
 
 export default function ResourceLink({ type, id, name, showIcon = false }: Props) {
-  if (id === null || id === undefined) return <span style={{ color: '#9ca3af' }}>-</span>
+  if (id === null || id === undefined) return <span style={{ color: 'var(--fg-subtle)' }}>-</span>
   const meta = RESOURCES[type]
   return (
-    <Link to={meta.link(id)} onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+    <Link
+      to={meta.link(id)}
+      onClick={(e) => e.stopPropagation()}
+      className="whitespace-nowrap hover:underline"
+      style={{ color: 'var(--accent)' }}
+    >
       {showIcon && <span style={{ marginRight: 4 }}>{meta.icon}</span>}
       {name || `#${id}`}
     </Link>
