@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Table, message } from 'antd'
+import { message } from 'antd'
 import { PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { batchAgents, deleteAgent, getAgent, listAgents, listModels, OPTIONS_PAGE, publishAgent, type AgentDetail, type AgentRow, type ModelRow } from '../api'
@@ -14,6 +14,8 @@ import BatchResultModal from '../components/common/BatchResultModal'
 import AgentFilters, { type AgentFilterValues } from '../components/agents/AgentFilters'
 import PublishModal from '../components/agents/PublishModal'
 import { buildAgentColumns } from '../components/agents/agentColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
 import { errorText } from '../utils/errors'
 
 const DEFAULTS: AgentFilterValues = { q: undefined, status: undefined, model_id: undefined, tool_id: undefined, kb_id: undefined, prompt_template_id: undefined }
@@ -48,18 +50,18 @@ export default function Agents() {
     } catch (e) { message.error(errorText(e, '发布失败')); throw e }
   }
   const columns = useMemo(() => buildAgentColumns({
-    sortProps: list.sortProps,
+    sort: list.sort,
     onChat: (a) => navigate(`/chat?agent=${a.id}`),
     onPublish: openPublish,
     onEdit: (a) => navigate(`/agents/${a.id}/edit`),
     onDelete: (a) => act(() => deleteAgent(a.id), '删除失败'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [list.sortProps])
+  }), [list.sort])
   const nameOf = (id: number) => list.items.find((a) => a.id === id)?.name
 
   return (
     <ListPage
-      header={<PageHeader icon={<RobotOutlined />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/agents/new')}>新增智能体</Button>} />}
+      header={<PageHeader icon={<RobotOutlined />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => navigate('/agents/new')}>新增智能体</Button>} />}
       filters={<AgentFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} models={models} loading={list.loading} />}
       batch={
         <BatchActionBar
@@ -74,7 +76,24 @@ export default function Agents() {
         />
       }
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="还没有智能体。先配置模型，再创建智能体并发布，之后才能对话。" action={{ label: '新增智能体', onClick: () => navigate('/agents/new') }} />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <PublishModal agent={publishing} onClose={() => setPublishing(null)} onPublish={onPublish} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={nameOf} />
     </ListPage>
