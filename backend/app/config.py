@@ -1,4 +1,5 @@
 import ipaddress
+import os
 from urllib.parse import urlsplit
 
 from pydantic import field_validator
@@ -11,7 +12,9 @@ def _split_csv(value: str) -> list[str]:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # 默认读 .env；同一份代码同时维护多套环境（云端 / 本机）时，用 ENV_FILE=.env.local 切到另一份，
+    # 两份都留在机器上、互不覆盖。两者都在 .gitignore 里。
+    model_config = SettingsConfigDict(env_file=os.environ.get("ENV_FILE", ".env"), extra="ignore")
 
     APP_NAME: str = "Agent Platform"
     API_V1_PREFIX: str = "/api/v1"

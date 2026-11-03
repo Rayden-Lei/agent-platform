@@ -30,9 +30,12 @@ def admin_login() -> dict:
     口令不写进代码：开发库是共享的、服务器对公网开放，写死在仓库里的默认口令等于公开口令（2026-09-25 改掉）。
     CI 是空库，应用启动时建的 admin 用默认口令，在 ci.yml 里显式设置。
     """
-    password = os.environ.get("TEST_ADMIN_PASSWORD") or dotenv_values(Path(__file__).resolve().parents[1] / ".env").get("TEST_ADMIN_PASSWORD")
+    # 跟随 ENV_FILE（与 app/config.py 同口径）：同一份代码跑多套环境时，口令要取正在用的那份配置，
+    # 否则会拿 .env 里的口令去登 .env.local 建的库。
+    env_file = Path(__file__).resolve().parents[1] / os.environ.get("ENV_FILE", ".env")
+    password = os.environ.get("TEST_ADMIN_PASSWORD") or dotenv_values(env_file).get("TEST_ADMIN_PASSWORD")
     if not password:
-        pytest.exit("未配置 TEST_ADMIN_PASSWORD：本地写在 backend/.env，CI 在 .github/workflows/ci.yml 设置", returncode=2)
+        pytest.exit(f"未配置 TEST_ADMIN_PASSWORD：本地写在 {env_file.name}，CI 在 .github/workflows/ci.yml 设置", returncode=2)
     return {"username": "admin", "password": password}
 
 
