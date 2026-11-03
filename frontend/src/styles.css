@@ -1,13 +1,15 @@
+/* 旧的 --brand-* 变量保留给尚未迁移的页面用，值指向新的设计 token（styles/theme.css），
+   这样切换配色时它们也跟着变，不会出现"新壳层换了色、老页面还是蓝的"。 */
 :root {
-  --brand-primary: #1e40af;
-  --brand-deep: #1f2937;
-  --brand-bg: #f5f6f8;
+  --brand-primary: var(--accent);
+  --brand-deep: var(--fg);
+  --brand-bg: var(--bg);
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  background: var(--brand-bg);
-  color: #1f2937;
+  background: var(--bg);
+  color: var(--fg);
 }
 
 /* ===== 登录页 ===== */
@@ -30,7 +32,7 @@ body {
   overflow: hidden;
 }
 .login-card-header {
-  background: #1e40af;
+  background: var(--accent);
   padding: 28px 24px;
   color: #fff;
   text-align: center;
@@ -48,7 +50,7 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: #1e40af;
+  background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,7 +71,7 @@ body {
 
 /* ===== 工作台 banner ===== */
 .dash-banner {
-  background: #1e40af;
+  background: var(--accent);
   border-radius: 12px;
   color: #fff;
   padding: 24px;
@@ -165,7 +167,7 @@ html, body, #root {
 .markdown-body table { border-collapse: collapse; margin: 0 0 8px; }
 .markdown-body th, .markdown-body td { border: 1px solid #e2e8f0; padding: 6px 10px; font-size: 13px; }
 .markdown-body th { background: #f8fafc; }
-.markdown-body a { color: #1e40af; }
+.markdown-body a { color: var(--accent); }
 
 /* ===== 对话页 ===== */
 .assistant-bubble {
@@ -217,14 +219,14 @@ html, body, #root {
 
 /* 内联引用标记 */
 .citation-mark {
-  color: #1e40af;
+  color: var(--accent);
   cursor: pointer;
   font-weight: 600;
   font-size: 11px;
   padding: 0 2px;
   line-height: 1;
 }
-.citation-mark:hover { color: #1d4ed8; text-decoration: underline; }
+.citation-mark:hover { color: var(--accent); opacity: .85; text-decoration: underline; }
 
 /* 知识块卡片 */
 .context-cards { display: flex; flex-direction: column; gap: 8px; }
@@ -241,7 +243,7 @@ html, body, #root {
 .context-card .ant-card-head-title { padding: 8px 0; font-size: 13px; }
 .context-card .ant-card-body { padding: 8px 10px; }
 .context-card-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
-.context-card-index { color: #1e40af; font-weight: 600; }
+.context-card-index { color: var(--accent); font-weight: 600; }
 
 .usage-footer { font-size: 12px; color: #94a3b8; padding-top: 2px; }
 
@@ -260,7 +262,7 @@ html, body, #root {
 .batch-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px; }
 .stat-card { padding: 14px 16px; }
 .stat-card-clickable { cursor: pointer; }
-.stat-card-active { border-color: #1e40af; box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.15); }
+.stat-card-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .detail-header { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
 .detail-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .detail-tabs > .ant-tabs-nav { flex-shrink: 0; margin-bottom: 0; }

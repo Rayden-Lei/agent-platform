@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // 分享页允许被哪些站点嵌入（docs/15 PB-07；嵌入功能在第 3 批）：空格分隔的来源，如 "https://a.com https://b.com"。
 // 只保留形如 scheme://host[:port] 的项，防止把分号、引号、换行写进响应头；为空时分享页与管理台一样只许同源嵌入。
@@ -20,11 +21,17 @@ function frameAncestors(): Plugin {
   }
 }
 
+// 用临时隧道（cloudflared 等）从外网访问时，Vite 的 DNS rebinding 防护会拒绝外部域名
+// （"Blocked request. This host ... is not allowed"）。用 VITE_ALLOWED_HOSTS 逗号分隔放行；
+// 不配则完全不设该项，保持 Vite 默认（只放行本机与 IP）。
+const ALLOWED_HOSTS = (process.env.VITE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim()).filter(Boolean)
+
 export default defineConfig({
-  plugins: [react(), frameAncestors()],
+  plugins: [react(), tailwindcss(), frameAncestors()],
   server: {
     host: '0.0.0.0',
     port: 5173,
+    ...(ALLOWED_HOSTS.length ? { allowedHosts: ALLOWED_HOSTS } : {}),
     // 只反代 /api/ 前缀（正则）：写成 '/api' 会按前缀把前端路由 /api-keys 也转给后端，刷新页面时看到的是后端 404。
     // vite preview 默认沿用 server.proxy，线上（preview 反代）同样受此影响。
     // 后端地址可用 VITE_API_TARGET 覆盖：本机跑 oMLX 时 8000 被它占用，后端要换到 8001
