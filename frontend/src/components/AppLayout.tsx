@@ -1,30 +1,43 @@
-import { Suspense, useEffect, useState } from 'react'
-import { Layout, Button, Space, Typography, Drawer, Dropdown, Grid, Avatar, Skeleton, message } from 'antd'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { Button, Drawer, Dropdown, Skeleton, message } from 'antd'
 import { DownOutlined, LogoutOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../store/auth'
 import { useUnsaved } from '../store/unsaved'
+import { useTheme } from '../store/theme'
 import { navTitle } from '../constants/nav'
 import { roleLabel } from '../constants/status'
 import SideNav from './layout/SideNav'
 import DegradedBanner from './layout/DegradedBanner'
 import ForcePasswordModal from './layout/ForcePasswordModal'
+import AppearanceMenu from './theme/AppearanceMenu'
+import { useLiquidGlass } from '../hooks/useLiquidGlass'
 import { changeMyPassword } from '../api'
 import { useSessionSync } from '../hooks/useSessionSync'
 
-const { Sider, Header, Content } = Layout
-const { useBreakpoint } = Grid
-
-// 应用主框架：左侧导航（桌面端 Sider / 移动端 Drawer）+ 顶部用户信息栏 + 降级横幅 + 右侧内容区（<Outlet> 渲染当前路由页面，路由级懒加载用骨架兜底）
+// 应用主框架：左侧玻璃导航 + 顶部玻璃栏 + 内容区。
+// 页面背景铺一层光斑与点阵（styles/theme.css 的 .page-blobs / .page-dots），玻璃才有东西可糊。
+// 移动端侧栏收进抽屉；断点用 CSS（lg）判断，不再依赖 antd Grid 的 JS 断点。
 export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, logout, setAuth } = useAuth()
   const dirty = useUnsaved((s) => s.dirty)
-  const screens = useBreakpoint() // antd 响应式断点
-  const isMobile = !screens.md // md 以下视为移动端：侧边栏改为抽屉
-  const [drawerOpen, setDrawerOpen] = useState(false) // 移动端抽屉是否展开
+  const glass = useTheme((s) => s.glass)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024)
   useSessionSync() // 进入应用与切回页面时刷新角色、菜单与"必须改密"（docs/15 OP-02）
+
+  // 顶栏与侧栏的玻璃滤镜（关闭玻璃时不生成贴图）
+  const headerRef = useLiquidGlass<HTMLElement>({ enabled: glass })
+  const sideRef = useLiquidGlass<HTMLDivElement>({ enabled: glass })
+
+  // 视口宽度变化时切换移动端形态
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 1024)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   // 必须改密：改完旧令牌全部失效（token_version +1），先换上新令牌再整页重载，免得页面上还在跑的请求带着旧令牌 401 被踢回登录页
   const changePassword = async (oldPassword: string, newPassword: string) => {
@@ -43,52 +56,102 @@ export default function AppLayout() {
   }, [dirty])
 
   return (
-    <Layout style={{ height: '100%', overflow: 'hidden' }}>
-      {/* 移动端用抽屉承载导航，桌面端用固定 Sider */}
+    <div className="relative h-full overflow-hidden flex" style={{ background: 'var(--bg)' }}>
+      {/* 背景光斑与点阵：纯装饰，不接收事件 */}
+      <div className="page-blobs" aria-hidden="true" />
+      <div className="page-dots" aria-hidden="true" />
+
+      {/* 侧栏：桌面固定，移动端抽屉 */}
       {isMobile ? (
-        <Drawer placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} width={230} styles={{ body: { padding: 0, background: '#1f2937' } }} title={null}>
+        <Drawer
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={224}
+          closable={false}
+          styles={{ body: { padding: 0, background: 'var(--bg-soft-2)' } }}
+          title={null}
+        >
           <SideNav onNavigate={() => setDrawerOpen(false)} />
         </Drawer>
       ) : (
-        <Sider theme="dark" width={220} style={{ background: '#1f2937', height: '100%', overflowY: 'auto' }}>
+        <div
+          ref={sideRef}
+          className="lg shrink-0 h-full overflow-y-auto"
+          style={{ width: 212, borderRadius: 0, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
+        >
           <SideNav />
-        </Sider>
+        </div>
       )}
-      <Layout style={{ height: '100%', overflow: 'hidden', minWidth: 0 }}>
-        {/* 顶部栏：左侧为移动端菜单按钮/页面标题，右侧为当前用户（下拉：个人中心、退出登录） */}
-        <Header style={{ height: 56, flexShrink: 0, background: '#fff', padding: '0 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', zIndex: 10 }}>
-          {isMobile ? (
-            <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} />
-          ) : (
-            <Typography.Text strong style={{ fontSize: 15 }}>{navTitle(location.pathname)}</Typography.Text>
-          )}
-          {/* 用户信息：头像取用户名首字母，另展示用户名与角色中文名；点开是个人中心与退出登录（docs/15 OP-03） */}
-          <Dropdown trigger={['click']} menu={{ items: [
-            { key: 'profile', icon: <UserOutlined />, label: '个人中心', onClick: () => navigate('/profile') },
-            { type: 'divider' },
-            { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: () => { logout(); navigate('/login') } },
-          ] }}>
-            <Button type="text" style={{ height: 40 }} aria-label="账号菜单">
-              <Space size={8}>
-                <Avatar size="small" style={{ background: '#1e40af' }}>{user?.username?.[0]?.toUpperCase()}</Avatar>
-                <Typography.Text style={{ fontSize: 13 }}>{user?.username}</Typography.Text>
-                {!isMobile && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{roleLabel[user?.role] || user?.role}</Typography.Text>}
-                <DownOutlined style={{ fontSize: 10, color: '#9ca3af' }} />
-              </Space>
-            </Button>
-          </Dropdown>
-        </Header>
+
+      <div className="flex-1 flex flex-col min-w-0 relative z-[1]">
+        {/* 顶栏 */}
+        <header
+          ref={headerRef}
+          className="lg shrink-0 flex items-center justify-between gap-3 px-4 sm:px-5"
+          style={{ height: 56, borderRadius: 0, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            {isMobile && (
+              <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} aria-label="打开菜单" />
+            )}
+            <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--fg)' }}>
+              {navTitle(location.pathname)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <AppearanceMenu />
+            {/* 用户信息：头像取用户名首字母，点开是个人中心与退出登录（docs/15 OP-03） */}
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  { key: 'profile', icon: <UserOutlined />, label: '个人中心', onClick: () => navigate('/profile') },
+                  { type: 'divider' },
+                  { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: () => { logout(); navigate('/login') } },
+                ],
+              }}
+            >
+              <button
+                type="button"
+                aria-label="账号菜单"
+                className="flex items-center gap-2 h-9 px-1.5 rounded-lg transition-colors"
+              >
+                <span
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0"
+                  style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+                >
+                  {user?.username?.[0]?.toUpperCase()}
+                </span>
+                <span className="hidden sm:inline text-[13px]" style={{ color: 'var(--fg)' }}>{user?.username}</span>
+                <span className="hidden md:inline text-[12px]" style={{ color: 'var(--fg-subtle)' }}>
+                  {roleLabel[user?.role] || user?.role}
+                </span>
+                <DownOutlined style={{ fontSize: 10, color: 'var(--fg-subtle)' }} />
+              </button>
+            </Dropdown>
+          </div>
+        </header>
+
         <DegradedBanner />
+
         {/* 内容区：外层负责占位与内边距（min-height: 0 保证 flex 子项可收缩），页面自身滚动由各页面内部处理 */}
-        <Content style={{ flex: 1, minHeight: 0, padding: isMobile ? 12 : 20, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden" style={{ padding: isMobile ? 12 : 20 }}>
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             <Suspense fallback={<Skeleton active paragraph={{ rows: 8 }} style={{ padding: 8 }} />}>
               <Outlet />
             </Suspense>
           </div>
-        </Content>
-      </Layout>
-      <ForcePasswordModal open={!!user?.must_change_password} username={user?.username} onSubmit={changePassword} onLogout={() => { logout(); navigate('/login') }} />
-    </Layout>
+        </main>
+      </div>
+
+      <ForcePasswordModal
+        open={!!user?.must_change_password}
+        username={user?.username}
+        onSubmit={changePassword}
+        onLogout={() => { logout(); navigate('/login') }}
+      />
+    </div>
   )
 }

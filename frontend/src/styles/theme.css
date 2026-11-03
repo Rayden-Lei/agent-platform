@@ -1,0 +1,318 @@
+@import "tailwindcss";
+
+/* ============================================================
+   智枢 · 设计 token
+   8 套配色共用同一套组件结构，切换只改 data-theme 属性。
+   新增一套配色 = 复制一个 [data-theme="xxx"] 块并改 20 个变量。
+   ============================================================ */
+
+:root,
+[data-theme="indigo"] {
+  --bg: #F5F7FB;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #EEF1FE;
+  --bg-soft-2: #F8FAFE;
+  --fg: #0F172A;
+  --fg-muted: #64748B;
+  --fg-subtle: #94A3B8;
+  --border: #E4E9F0;
+  --border-strong: #CBD5E1;
+  --accent: #4F46E5;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #EEF1FE;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.07);
+  --glass-bg: rgba(255, 255, 255, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.78);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-hi-soft: rgba(255, 255, 255, 0.38);
+  --blob-1: rgba(79, 70, 229, 0.20);
+  --blob-2: rgba(56, 189, 248, 0.18);
+  --blob-3: rgba(168, 85, 247, 0.14);
+  --dot: rgba(15, 23, 42, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="celadon"] {
+  --bg: #F2F6F5;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #E1F0EC;
+  --bg-soft-2: #EDF4F2;
+  --fg: #14201E;
+  --fg-muted: #5A6B67;
+  --fg-subtle: #8C9A96;
+  --border: #DCE6E3;
+  --border-strong: #C4D3CF;
+  --accent: #0F766E;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #E1F0EC;
+  --shadow: 0 1px 2px rgba(20, 32, 30, 0.05);
+  --shadow-card: 0 1px 3px rgba(20, 32, 30, 0.07);
+  --glass-bg: rgba(255, 255, 255, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.78);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-hi-soft: rgba(255, 255, 255, 0.38);
+  --blob-1: rgba(15, 118, 110, 0.22);
+  --blob-2: rgba(132, 204, 22, 0.16);
+  --blob-3: rgba(56, 189, 248, 0.14);
+  --dot: rgba(20, 32, 30, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="navy"] {
+  --bg: #F4F6FA;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #E6ECFB;
+  --bg-soft-2: #F0F4FC;
+  --fg: #111C33;
+  --fg-muted: #5B6B85;
+  --fg-subtle: #8A97AC;
+  --border: #DFE5EF;
+  --border-strong: #C3CDDD;
+  --accent: #1E40AF;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #E6ECFB;
+  --shadow: 0 1px 2px rgba(17, 28, 51, 0.05);
+  --shadow-card: 0 1px 3px rgba(17, 28, 51, 0.07);
+  --glass-bg: rgba(255, 255, 255, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.78);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-hi-soft: rgba(255, 255, 255, 0.38);
+  --blob-1: rgba(30, 64, 175, 0.22);
+  --blob-2: rgba(14, 165, 233, 0.16);
+  --blob-3: rgba(99, 102, 241, 0.14);
+  --dot: rgba(17, 28, 51, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="sand"] {
+  --bg: #F8F5F0;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #F7EBDD;
+  --bg-soft-2: #FBF7F1;
+  --fg: #241E17;
+  --fg-muted: #6E6455;
+  --fg-subtle: #9C9182;
+  --border: #E8E1D6;
+  --border-strong: #D3C9B9;
+  --accent: #B45309;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #F7EBDD;
+  --shadow: 0 1px 2px rgba(36, 30, 23, 0.05);
+  --shadow-card: 0 1px 3px rgba(36, 30, 23, 0.07);
+  --glass-bg: rgba(255, 252, 247, 0.46);
+  --glass-border: rgba(255, 255, 255, 0.80);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-hi-soft: rgba(255, 255, 255, 0.40);
+  --blob-1: rgba(180, 83, 9, 0.20);
+  --blob-2: rgba(234, 179, 8, 0.18);
+  --blob-3: rgba(244, 114, 182, 0.12);
+  --dot: rgba(36, 30, 23, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="fuchsia"] {
+  --bg: #F9F5FB;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #FAE8FD;
+  --bg-soft-2: #FEF7FF;
+  --fg: #22132A;
+  --fg-muted: #70577E;
+  --fg-subtle: #A08CAC;
+  --border: #EBE1F0;
+  --border-strong: #D6C6DE;
+  --accent: #C026D3;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #FAE8FD;
+  --shadow: 0 1px 2px rgba(34, 19, 42, 0.05);
+  --shadow-card: 0 1px 3px rgba(34, 19, 42, 0.07);
+  --glass-bg: rgba(255, 255, 255, 0.42);
+  --glass-border: rgba(255, 255, 255, 0.78);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-hi-soft: rgba(255, 255, 255, 0.38);
+  --blob-1: rgba(192, 38, 211, 0.20);
+  --blob-2: rgba(236, 72, 153, 0.16);
+  --blob-3: rgba(56, 189, 248, 0.12);
+  --dot: rgba(34, 19, 42, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="graphite"] {
+  --bg: #F6F6F7;
+  --bg-elev: #FFFFFF;
+  --bg-soft: #EFEFF1;
+  --bg-soft-2: #F9F9FA;
+  --fg: #18181B;
+  --fg-muted: #63636B;
+  --fg-subtle: #9A9AA3;
+  --border: #E4E4E7;
+  --border-strong: #C9C9CF;
+  --accent: #27272A;
+  --accent-fg: #FFFFFF;
+  --accent-soft: #EFEFF1;
+  --shadow: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --shadow-card: 0 1px 3px rgba(24, 24, 27, 0.07);
+  --glass-bg: rgba(255, 255, 255, 0.46);
+  --glass-border: rgba(255, 255, 255, 0.82);
+  --glass-hi: rgba(255, 255, 255, 0.96);
+  --glass-hi-soft: rgba(255, 255, 255, 0.40);
+  --blob-1: rgba(24, 24, 27, 0.10);
+  --blob-2: rgba(113, 113, 122, 0.13);
+  --blob-3: rgba(56, 189, 248, 0.09);
+  --dot: rgba(24, 24, 27, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="deep"] {
+  --bg: #0A0C10;
+  --bg-elev: #12151C;
+  --bg-soft: rgba(124, 147, 255, 0.13);
+  --bg-soft-2: #151922;
+  --fg: #E7E9ED;
+  --fg-muted: #8A92A0;
+  --fg-subtle: #5E6673;
+  --border: #1E242E;
+  --border-strong: #2C3442;
+  --accent: #7C93FF;
+  --accent-fg: #0A0C10;
+  --accent-soft: rgba(124, 147, 255, 0.13);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.45);
+  --glass-bg: rgba(28, 34, 46, 0.44);
+  --glass-border: rgba(255, 255, 255, 0.17);
+  --glass-hi: rgba(255, 255, 255, 0.30);
+  --glass-hi-soft: rgba(255, 255, 255, 0.09);
+  --blob-1: rgba(124, 147, 255, 0.26);
+  --blob-2: rgba(56, 189, 248, 0.16);
+  --blob-3: rgba(168, 85, 247, 0.16);
+  --dot: rgba(255, 255, 255, 0.045);
+  color-scheme: dark;
+}
+
+[data-theme="midnight"] {
+  --bg: #100A1A;
+  --bg-elev: #1A1128;
+  --bg-soft: rgba(167, 139, 250, 0.15);
+  --bg-soft-2: #1C1330;
+  --fg: #EDE8F5;
+  --fg-muted: #9589AD;
+  --fg-subtle: #6B5F85;
+  --border: #251B38;
+  --border-strong: #33264A;
+  --accent: #A78BFA;
+  --accent-fg: #100A18;
+  --accent-soft: rgba(167, 139, 250, 0.15);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.45);
+  --glass-bg: rgba(30, 22, 44, 0.44);
+  --glass-border: rgba(255, 255, 255, 0.17);
+  --glass-hi: rgba(255, 255, 255, 0.30);
+  --glass-hi-soft: rgba(255, 255, 255, 0.09);
+  --blob-1: rgba(167, 139, 250, 0.30);
+  --blob-2: rgba(236, 72, 153, 0.18);
+  --blob-3: rgba(56, 189, 248, 0.13);
+  --dot: rgba(255, 255, 255, 0.045);
+  color-scheme: dark;
+}
+
+/* ============================================================
+   液态玻璃
+   两层结构：::before 做背景模糊 + 光学位移折射，::after 做镜面高光。
+   位移滤镜由 useLiquidGlass 按元素实际尺寸动态生成，通过 --lg-filter 注入。
+   ============================================================ */
+
+.lg {
+  position: relative;
+  isolation: isolate;
+}
+
+[data-glass="on"] .lg {
+  background-color: var(--glass-bg);
+  background-image: linear-gradient(158deg, var(--glass-hi-soft) 0%, transparent 46%);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 14px 48px -12px rgba(8, 12, 24, 0.22),
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.10);
+}
+
+[data-glass="on"] .lg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  backdrop-filter: blur(2px) saturate(190%) brightness(1.05);
+  -webkit-backdrop-filter: blur(2px) saturate(190%) brightness(1.05);
+  filter: var(--lg-filter, none);
+  -webkit-filter: var(--lg-filter, none);
+}
+
+[data-glass="on"] .lg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 18% -10%, var(--glass-hi) 0%, transparent 42%);
+  opacity: 0.55;
+  mix-blend-mode: soft-light;
+}
+
+[data-glass="on"] .lg > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 关闭玻璃时的降级：退回实色，保留圆角与描边 */
+[data-glass="off"] .lg {
+  background-color: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+}
+
+/* ============================================================
+   基础排版
+   ============================================================ */
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* 页面背景光斑：玻璃要有东西可糊才看得出折射 */
+.page-blobs {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(680px 380px at 8% -12%, var(--blob-1), transparent 62%),
+    radial-gradient(560px 320px at 96% 6%, var(--blob-2), transparent 62%),
+    radial-gradient(620px 360px at 50% 116%, var(--blob-3), transparent 66%);
+}
+
+/* 点阵纹理：让玻璃模糊后有层次 */
+.page-dots {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(to bottom, black, transparent 70%);
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 70%);
+}
