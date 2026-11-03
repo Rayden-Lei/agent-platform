@@ -57,7 +57,11 @@ def test_profile_update_changes_only_given_fields_and_masks_phone(client, auth_h
     assert client.get(ME, headers=headers).json()["phone_masked"] == "138****5678"
     db = SessionLocal()
     try:
-        audits = db.query(AuditLog).filter(AuditLog.resource == "user", AuditLog.resource_id == user["id"], AuditLog.action == "update").all()
+        # 必须显式排序：不带 order_by 时 Postgres 不保证返回插入顺序，两条审计的 created_at 又可能同毫秒
+        audits = (db.query(AuditLog)
+                  .filter(AuditLog.resource == "user", AuditLog.resource_id == user["id"], AuditLog.action == "update")
+                  .order_by(AuditLog.id)
+                  .all())
         assert [a.detail["changed"] for a in audits] == [["display_name", "email", "phone"], ["email"]]
         assert all("13812345678" not in str(a.detail) and "t@example.com" not in str(a.detail) for a in audits)
     finally:
