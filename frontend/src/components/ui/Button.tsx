@@ -1,9 +1,10 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { cn } from 'cn'
 import { Button as ShadcnButton } from '@/components/shadcn/button'
 
 // 按钮：底层就是 shadcn 的 Button（焦点环、禁用态、asChild 都由它负责），
 // 这里只保留项目原来的四个语义与两档尺寸，避免每迁一个页面就改一遍调用处。
+// 必须 forwardRef：TooltipTrigger / PopoverTrigger 的 asChild 会给它挂 ref。
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md'
 
@@ -26,9 +27,13 @@ const VARIANTS: Record<Variant, string> = {
   danger: 'bg-transparent text-destructive border border-destructive/35 hover:bg-destructive/10 shadow-none',
 }
 
-export default function Button({ variant = 'secondary', size = 'sm', icon, block, children, disabled, ...rest }: Props) {
+const Button = forwardRef<HTMLButtonElement, Props>(function Button(
+  { variant = 'secondary', size = 'sm', icon, block, children, disabled, ...rest },
+  ref,
+) {
   return (
     <ShadcnButton
+      ref={ref}
       type="button"
       disabled={disabled}
       className={cn('font-medium', SIZES[size], VARIANTS[variant], block && 'w-full')}
@@ -38,4 +43,6 @@ export default function Button({ variant = 'secondary', size = 'sm', icon, block
       {children}
     </ShadcnButton>
   )
-}
+})
+
+export default Button
