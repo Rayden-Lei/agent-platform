@@ -35,6 +35,8 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // preview 也要放行隧道域名：线上预览走它，不放行同样是 "Blocked request"。
+  ...(ALLOWED_HOSTS.length ? { preview: { allowedHosts: ALLOWED_HOSTS } } : {}),
   server: {
     host: '0.0.0.0',
     port: 5173,
