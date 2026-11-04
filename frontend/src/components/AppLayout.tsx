@@ -15,7 +15,7 @@ import DegradedBanner from './layout/DegradedBanner'
 import ForcePasswordModal from './layout/ForcePasswordModal'
 import AppearanceMenu from './theme/AppearanceMenu'
 import Button from './ui/Button'
-import { useLiquidGlass } from '../hooks/useLiquidGlass'
+import GlassSurface from './theme/GlassSurface'
 import { changeMyPassword } from '../api'
 import { useSessionSync } from '../hooks/useSessionSync'
 
@@ -32,9 +32,8 @@ export default function AppLayout() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024)
   useSessionSync() // 进入应用与切回页面时刷新角色、菜单与"必须改密"（docs/15 OP-02）
 
-  // 顶栏与侧栏的玻璃滤镜（关闭玻璃时不生成贴图）
-  const headerRef = useLiquidGlass<HTMLElement>({ enabled: glass })
-  const sideRef = useLiquidGlass<HTMLDivElement>({ enabled: glass })
+  // 玻璃底色：关闭玻璃时退回实色，和 theme.css 的降级规则一致
+  const glassOff = { background: 'var(--bg-elev)' }
 
   // 视口宽度变化时切换移动端形态
   useEffect(() => {
@@ -74,21 +73,23 @@ export default function AppLayout() {
         </Sheet>
       ) : (
         <div
-          ref={sideRef}
-          className="lg h-full shrink-0 overflow-y-auto"
-          style={{ width: 212, borderRadius: 0, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
+          className="relative h-full shrink-0"
+          style={{ width: 212, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)', ...(glass ? null : glassOff) }}
         >
-          <SideNav />
+          <GlassSurface enabled={glass} />
+          <div className="relative h-full overflow-y-auto">
+            <SideNav />
+          </div>
         </div>
       )}
 
       <div className="relative z-[1] flex min-w-0 flex-1 flex-col">
         {/* 顶栏 */}
         <header
-          ref={headerRef}
-          className="lg flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5"
-          style={{ height: 56, borderRadius: 0, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
+          className="relative flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5"
+          style={{ height: 56, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)', ...(glass ? null : glassOff) }}
         >
+          <GlassSurface enabled={glass} />
           <div className="flex min-w-0 items-center gap-2">
             {isMobile && (
               <Button variant="ghost" size="sm" aria-label="打开菜单" onClick={() => setDrawerOpen(true)}>

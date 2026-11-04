@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useTheme } from '../../store/theme'
-import { useLiquidGlass } from '../../hooks/useLiquidGlass'
+import GlassSurface from '../theme/GlassSurface'
 
 // 输入条：圆角浮岛，底部一排功能位（附件 / 模型名 / 发送）。
 // Enter 发送、Shift+Enter 换行；发送中切换为停止。maxLength 与后端 CHAT_MESSAGE_MAX_CHARS 对齐只是体验，
@@ -34,7 +34,7 @@ const ICON_STOP = (
 export default function ChatInput({ disabled, sending, onSend, onStop, compact, placeholder, maxLength, modelName }: Props) {
   const [text, setText] = useState('')
   const glass = useTheme((s) => s.glass)
-  const boxRef = useLiquidGlass<HTMLDivElement>({ enabled: glass })
+
   const areaRef = useRef<HTMLTextAreaElement>(null)
 
   const canSend = !!text.trim() && !sending && !disabled
@@ -54,10 +54,10 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
       style={{ padding: pad, paddingBottom: `calc(${pad}px + env(safe-area-inset-bottom))` }}
     >
       <div
-        ref={boxRef}
-        className="lg"
-        style={{ borderRadius: 'var(--radius-lg)', padding: '10px 12px' }}
+        className="relative"
+        style={{ borderRadius: 'var(--radius-lg)', padding: '10px 12px', ...(glass ? null : { background: 'var(--bg-elev)', border: '1px solid var(--border-strong)' }) }}
       >
+        <GlassSurface enabled={glass} cornerRadius={12} />
         <textarea
           ref={areaRef}
           value={text}
