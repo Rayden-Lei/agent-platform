@@ -1,10 +1,11 @@
-import { Button, Checkbox, Input, Space, Table } from 'antd'
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Trash2, Plus } from 'lucide-react'
+import Button from '../ui/Button'
 import type { PromptVariable } from '../../api'
 
 // 模板变量声明编辑器（FR-028）：表格编辑 {name, description, required, default}，
 // 对外通过 rowsFromVariables / variablesFromRows 与接口结构互转；名称合法性与上限由后端 422 兜底。
-
 export interface VarRow {
   key: number
   name: string
@@ -35,18 +36,60 @@ export default function VariablesEditor({ value = [], onChange }: Props) {
   const remove = (key: number) => onChange?.(value.filter((r) => r.key !== key))
   const add = () => onChange?.([...value, { key: nextKey++, name: '', description: '', required: false, default: '' }])
 
-  const columns = [
-    { title: '名称', dataIndex: 'name', width: 150, render: (v: string, r: VarRow) => <Input value={v} placeholder="如 role" status={v.trim() ? undefined : 'error'} onChange={(e) => update(r.key, { name: e.target.value })} /> },
-    { title: '描述', dataIndex: 'description', render: (v: string, r: VarRow) => <Input value={v} placeholder="给填写者看的说明" onChange={(e) => update(r.key, { description: e.target.value })} /> },
-    { title: '必填', dataIndex: 'required', width: 60, align: 'center' as const, render: (v: boolean, r: VarRow) => <Checkbox checked={v} onChange={(e) => update(r.key, { required: e.target.checked })} /> },
-    { title: '默认值', dataIndex: 'default', width: 150, render: (v: string, r: VarRow) => <Input value={v} placeholder="未传值时使用" onChange={(e) => update(r.key, { default: e.target.value })} /> },
-    { title: '', width: 40, render: (_: unknown, r: VarRow) => <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => remove(r.key)} /> },
-  ]
-
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size={8}>
-      <Table rowKey="key" size="small" pagination={false} columns={columns} dataSource={value} locale={{ emptyText: '未声明变量：内容里不能出现 {{…}} 占位符' }} />
-      <Button size="small" icon={<PlusOutlined />} onClick={add} disabled={value.length >= 30}>添加变量</Button>
-    </Space>
+    <div className="flex flex-col gap-2">
+      <div className="overflow-hidden rounded-lg border border-border">
+        <table className="w-full border-collapse text-[13px]">
+          <thead className="bg-secondary">
+            <tr>
+              <th className="w-[150px] px-2 py-1.5 text-left text-[12px] font-medium text-muted-foreground">名称</th>
+              <th className="px-2 py-1.5 text-left text-[12px] font-medium text-muted-foreground">描述</th>
+              <th className="w-[60px] px-2 py-1.5 text-center text-[12px] font-medium text-muted-foreground">必填</th>
+              <th className="w-[150px] px-2 py-1.5 text-left text-[12px] font-medium text-muted-foreground">默认值</th>
+              <th className="w-[40px]" />
+            </tr>
+          </thead>
+          <tbody>
+            {value.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-2 py-4 text-center text-[12.5px] text-muted-foreground">
+                  未声明变量：内容里不能出现 {'{{…}}'} 占位符
+                </td>
+              </tr>
+            )}
+            {value.map((r) => (
+              <tr key={r.key} className="border-t border-border">
+                <td className="px-2 py-1.5">
+                  <Input
+                    value={r.name}
+                    placeholder="如 role"
+                    aria-invalid={!r.name.trim()}
+                    className="h-7 text-[12.5px] aria-invalid:border-destructive"
+                    onChange={(e) => update(r.key, { name: e.target.value })}
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <Input value={r.description} placeholder="给填写者看的说明" className="h-7 text-[12.5px]" onChange={(e) => update(r.key, { description: e.target.value })} />
+                </td>
+                <td className="px-2 py-1.5 text-center">
+                  <Checkbox checked={r.required} onCheckedChange={(v) => update(r.key, { required: v === true })} />
+                </td>
+                <td className="px-2 py-1.5">
+                  <Input value={r.default} placeholder="未传值时使用" className="h-7 text-[12.5px]" onChange={(e) => update(r.key, { default: e.target.value })} />
+                </td>
+                <td className="px-1 py-1.5">
+                  <Button size="sm" variant="ghost" aria-label="删除该变量" onClick={() => remove(r.key)}>
+                    <Trash2 className="size-3.5 text-destructive" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <Button size="sm" variant="secondary" icon={<Plus />} disabled={value.length >= 30} onClick={add}>添加变量</Button>
+      </div>
+    </div>
   )
 }
