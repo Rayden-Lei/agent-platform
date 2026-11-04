@@ -19,7 +19,7 @@ export default function ResourceLink({ type, id, name, showIcon = false }: Props
       className="whitespace-nowrap hover:underline"
       style={{ color: 'var(--accent)' }}
     >
-      {showIcon && <span style={{ marginRight: 4 }}>{meta.icon}</span>}
+      {showIcon && <span className="mr-1 inline-flex [&>svg]:size-3.5">{meta.icon}</span>}
       {name || `#${id}`}
     </Link>
   )

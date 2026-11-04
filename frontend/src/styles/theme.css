@@ -258,10 +258,25 @@
    单独放在这里而不是塞进 8 个主题块，是因为它跟配色方案无关、全站固定语义。 */
 :root {
   --danger: #DC2626;
+  --danger-soft: rgba(220, 38, 38, 0.13);
+  --success: #15803D;
+  --success-soft: rgba(22, 163, 74, 0.14);
+  --warning: #B45309;
+  --warning-soft: rgba(217, 119, 6, 0.16);
+  --info: #1D4ED8;
+  --info-soft: rgba(37, 99, 235, 0.13);
 }
+/* 深色主题把语义色提亮、淡底加深，保证在深底上的对比度 */
 [data-theme="deep"],
 [data-theme="midnight"] {
   --danger: #F87171;
+  --danger-soft: rgba(248, 113, 113, 0.16);
+  --success: #4ADE80;
+  --success-soft: rgba(74, 222, 128, 0.16);
+  --warning: #FBBF24;
+  --warning-soft: rgba(251, 191, 36, 0.16);
+  --info: #60A5FA;
+  --info-soft: rgba(96, 165, 250, 0.16);
 }
 
 /* ============================================================
