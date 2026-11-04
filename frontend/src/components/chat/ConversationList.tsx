@@ -1,13 +1,9 @@
-import { Button, List, Popconfirm, Tooltip, Typography, message } from 'antd'
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { useState, type ReactNode } from 'react'
 import type { ConversationRow } from '../../api'
-import EmptyState from '../common/EmptyState'
-import SearchInput from '../common/SearchInput'
-import { errorText } from '../../utils/errors'
 import { fromNow } from '../../utils/time'
 
-// 会话侧栏：按当前智能体过滤的会话列表，标题搜索、相对时间、消息数、摘要提示、加载更多、删除。
-// 展示组件不发请求（07 第 9 节）：删除由页面注入，失败在这里提示
+// 会话列表：搜索 + 新建 + 按更新时间倒序；当前会话高亮，悬停出现删除。
+// 迁移期改为自绘列表（原实现用 antd List），不再有内建分页，改为"加载更多"。
 interface Props {
   conversations: ConversationRow[]
   total: number
@@ -17,49 +13,79 @@ interface Props {
   onSelect: (id: number) => void
   onNew: () => void
   onLoadMore: () => void
-  onDelete: (id: number) => Promise<void>
-  agentSelector: React.ReactNode
-  loading?: boolean
+  onDelete: (id: number) => void
+  agentSelector?: ReactNode
 }
 
-export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDelete, agentSelector, loading }: Props) {
-  const remove = async (id: number) => {
-    try { await onDelete(id) } catch (e) { message.error(errorText(e, '删除会话失败')) }
-  }
+export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDelete, agentSelector }: Props) {
+  const [keyword, setKeyword] = useState(q ?? '')
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', minHeight: 0 }}>
+    <div className="flex flex-col h-full min-h-0 gap-2.5">
       {agentSelector}
-      <Button type="primary" icon={<PlusOutlined />} block onClick={onNew}>新对话</Button>
-      <SearchInput value={q} onChange={onSearch} placeholder="搜索会话标题" width={196} />
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        {conversations.length === 0 && !loading ? (
-          <EmptyState description={q ? '没有匹配的会话' : '该智能体下还没有会话，发送第一条消息即可创建'} />
-        ) : (
-          <List
-            size="small"
-            loading={loading && conversations.length === 0}
-            dataSource={conversations}
-            renderItem={(c) => (
-              <List.Item
-                onClick={() => onSelect(c.id)}
-                style={{ cursor: 'pointer', background: currentId === c.id ? '#e8eefb' : 'transparent', padding: '6px 8px', borderRadius: 6, alignItems: 'flex-start' }}
-                actions={[
-                  <Popconfirm key="d" title="删除会话？" onConfirm={(e) => { e?.stopPropagation(); remove(c.id) }} onCancel={(e) => e?.stopPropagation()}>
-                    <DeleteOutlined onClick={(e) => e.stopPropagation()} />
-                  </Popconfirm>,
-                ]}
-              >
-                <Tooltip title={c.summary ? `摘要：${c.summary}` : undefined} placement="right">
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{c.title || '对话'}</div>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>{fromNow(c.updated_at)} · {c.message_count} 条{c.summary ? ' · 已压缩' : ''}</Typography.Text>
-                  </div>
-                </Tooltip>
-              </List.Item>
-            )}
-          />
+
+      <div className="flex items-center gap-1.5">
+        <input
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSearch(keyword || undefined) }}
+          placeholder="搜索会话…"
+          className="flex-1 min-w-0 h-8 px-2.5 rounded-lg text-[12.5px] outline-none"
+          style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)', color: 'var(--fg)' }}
+        />
+        <button
+          type="button"
+          onClick={onNew}
+          title="新建会话"
+          aria-label="新建会话"
+          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto flex flex-col gap-0.5 min-h-0">
+        {conversations.length === 0 && (
+          <div className="text-[12.5px] py-6 text-center" style={{ color: 'var(--fg-subtle)' }}>还没有会话</div>
         )}
-        {conversations.length < total && <Button size="small" type="link" block onClick={onLoadMore}>加载更多（{conversations.length}/{total}）</Button>}
+        {conversations.map((c) => {
+          const active = c.id === currentId
+          return (
+            <div
+              key={c.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelect(c.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSelect(c.id) }}
+              className="group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[12.5px]"
+              style={{
+                background: active ? 'var(--accent-soft)' : 'transparent',
+                color: active ? 'var(--fg)' : 'var(--fg-muted)',
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate" style={{ fontWeight: active ? 550 : 400 }}>{c.title || '未命名会话'}</div>
+                <div className="text-[11px]" style={{ color: 'var(--fg-subtle)' }}>{fromNow(c.updated_at)}</div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete(c.id) }}
+                title="删除会话"
+                aria-label="删除会话"
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded shrink-0"
+                style={{ color: '#DC2626' }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
+              </button>
+            </div>
+          )
+        })}
+        {conversations.length < total && (
+          <button type="button" onClick={onLoadMore} className="text-[12px] py-2 rounded-lg" style={{ color: 'var(--accent)' }}>
+            加载更多（{conversations.length}/{total}）
+          </button>
+        )}
       </div>
     </div>
   )

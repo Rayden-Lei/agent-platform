@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Grid, Select, Typography, message } from 'antd'
+import { Grid, Select, Typography, message } from 'antd'
+import Button from '../components/ui/Button'
 import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
 import { chatAgentStream, deleteConversation, getConversation, listConversations, listMessages, type ChatTransport, type ConversationRow } from '../api'
 import { visibleNavItems } from '../constants/nav'
@@ -108,7 +109,18 @@ export default function Chat() {
   }
 
   const sidebar = (
-    <div style={{ width: isMobile ? '100%' : 236, border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, flexShrink: 0, height: '100%', minHeight: 0, background: '#fff' }}>
+    <div
+      style={{
+        width: isMobile ? '100%' : 240,
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)',
+        padding: 12,
+        flexShrink: 0,
+        height: '100%',
+        minHeight: 0,
+        background: 'var(--bg-elev)',
+      }}
+    >
       <ConversationList
         conversations={conversations} total={total} currentId={conversationId} q={q} onSearch={setQ}
         onSelect={(id) => { setQuery({ conversation: String(id) }); setShowList(false) }}
@@ -122,12 +134,18 @@ export default function Chat() {
 
   const header = (
     <>
-      {isMobile && <Button size="small" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Typography.Text strong>{currentAgent?.name ?? '未选择智能体'}</Typography.Text>
-        {currentAgent?.description && <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{currentAgent.description}</Typography.Text>}
+      {isMobile && (
+        <Button size="sm" variant="secondary" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--fg)' }}>{currentAgent?.name ?? '未选择智能体'}</div>
+        {currentAgent?.description && (
+          <div className="text-[12px] truncate" style={{ color: 'var(--fg-subtle)' }}>{currentAgent.description}</div>
+        )}
       </div>
-      {isMobile && <Button size="small" icon={<PlusOutlined />} onClick={newConversation} />}
+      {isMobile && (
+        <Button size="sm" variant="secondary" icon={<PlusOutlined />} onClick={newConversation} aria-label="新建会话" />
+      )}
     </>
   )
   const chatArea = (
@@ -135,6 +153,7 @@ export default function Chat() {
       header={header} messages={messages} sending={stream.sending} loading={loadingMessages} isMobile={isMobile}
       emptyHint={currentAgent ? `向「${currentAgent.name}」发送第一条消息开始对话` : '先在左侧选择一个已发布的智能体'}
       inputDisabled={!agentId} maxLength={CHAT_MESSAGE_MAX_CHARS} capabilities={capabilities}
+      agentName={currentAgent?.name}
       onSend={stream.send} onStop={stream.stop} onRegenerate={stream.regenerate}
     />
   )

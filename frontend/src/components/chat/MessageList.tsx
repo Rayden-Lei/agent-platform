@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { Typography } from 'antd'
 import AssistantMessage from './AssistantMessage'
-import EmptyState from '../common/EmptyState'
 import type { ChatCapabilities, Msg } from './types'
 import { fromNow } from '../../utils/time'
 
-// 消息流：user 气泡 + assistant 组件；最后一条发送中的 assistant 消息按流式渲染；新消息到达自动滚到底。
+// 消息流：用户消息右对齐实色块，助手消息平铺不套气泡；新消息到达自动滚到底。
 interface Props {
   messages: Msg[]
   sending: boolean
@@ -13,30 +11,65 @@ interface Props {
   loading?: boolean
   emptyHint: string
   capabilities: ChatCapabilities
-  onShowDetails?: (msg: Msg) => void // 调试：打开某条回答的调用链与实际提示词
+  agentName?: string
+  onShowDetails?: (msg: Msg) => void
+  onRegenerate?: () => void
 }
 
-export default function MessageList({ messages, sending, isMobile, loading, emptyHint, capabilities, onShowDetails }: Props) {
+export default function MessageList({ messages, sending, isMobile, loading, emptyHint, capabilities, agentName, onShowDetails, onRegenerate }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, sending])
+
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: isMobile ? 12 : 16, background: '#f5f6f8', minHeight: 0 }}>
-      {messages.length === 0 && !loading && <EmptyState description={emptyHint} image="default" />}
+    <div
+      className="flex-1 overflow-auto flex flex-col gap-5"
+      style={{ padding: isMobile ? '14px 13px' : '20px 22px', minHeight: 0 }}
+    >
+      {messages.length === 0 && !loading && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-sm text-[13px]" style={{ color: 'var(--fg-subtle)' }}>{emptyHint}</div>
+        </div>
+      )}
+      {loading && messages.length === 0 && (
+        <div className="flex flex-col gap-3">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="block h-3 rounded" style={{ background: 'var(--bg-soft)', width: i === 1 ? '72%' : '88%' }} />
+          ))}
+        </div>
+      )}
+
       {messages.map((m, i) => {
-        // 只有"最后一条且正在发送中的 assistant 消息"才算流式中，驱动打字光标/加载态
+        // 只有"最后一条且正在发送中的 assistant 消息"才算流式中，驱动脉冲与占位文案
         const isStreaming = i === messages.length - 1 && sending && m.role === 'assistant'
-        return (
-          <div key={m.id ?? i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
-            {m.role === 'user' ? (
-              <>
-                <div style={{ maxWidth: isMobile ? '88%' : '75%', padding: '10px 14px', borderRadius: 8, background: '#1e40af', color: '#fff', whiteSpace: 'pre-wrap' }}>{m.content}</div>
-                {m.createdAt && <Typography.Text type="secondary" style={{ fontSize: 11, marginTop: 2 }}>{fromNow(m.createdAt)}</Typography.Text>}
-              </>
-            ) : (
-              <div className="assistant-bubble" style={{ maxWidth: isMobile ? '94%' : '78%' }}>
-                <AssistantMessage msg={m} streaming={isStreaming} capabilities={capabilities} onShowDetails={onShowDetails} />
+        if (m.role === 'user') {
+          return (
+            <div key={m.id ?? i} className="flex flex-col items-end gap-1">
+              <div
+                className="whitespace-pre-wrap text-[14px] leading-[1.7]"
+                style={{
+                  maxWidth: isMobile ? '90%' : '76%',
+                  padding: '9px 13px',
+                  borderRadius: 'var(--radius)',
+                  background: 'var(--accent)',
+                  color: 'var(--accent-fg)',
+                }}
+              >
+                {m.content}
               </div>
-            )}
+              {m.createdAt && <span className="text-[11px]" style={{ color: 'var(--fg-subtle)' }}>{fromNow(m.createdAt)}</span>}
+            </div>
+          )
+        }
+        return (
+          <div key={m.id ?? i} style={{ maxWidth: isMobile ? '100%' : '88%' }}>
+            <AssistantMessage
+              msg={m}
+              streaming={isStreaming}
+              capabilities={capabilities}
+              onShowDetails={onShowDetails}
+              agentName={agentName}
+              onRegenerate={isStreaming ? undefined : onRegenerate}
+            />
           </div>
         )
       })}

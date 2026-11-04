@@ -1,89 +1,89 @@
-// “思考过程”折叠面板：用 Timeline 展示检索知识库、逐个调用工具、生成回答这几类步骤的进度与结果
-import { Collapse, Tag, Timeline, Typography } from 'antd'
-import { SearchOutlined, ToolOutlined, FileDoneOutlined } from '@ant-design/icons'
-import type { Citation, ToolStep, ToolStepStatus } from './types'
+import { useEffect, useRef, useState } from 'react'
+import type { Citation, ToolStep } from './types'
 
-const { Text } = Typography
-
-// 工具步骤状态 → Timeline 节点颜色：运行中蓝、出错红、其余绿
-function stepColor(status: ToolStepStatus): string {
-  if (status === 'running') return 'blue'
-  if (status === 'error') return 'red'
-  return 'green'
-}
-
-export default function ThinkingTrace({
-  citations,
-  tools,
-  running,
-}: {
+// 思考过程：折叠成一行，进行中显示呼吸脉冲与实时计时；点开看步骤明细。
+// 不再用时间线堆叠——过程信息不该比回答更抢眼。
+//
+// 注意：后端目前没有下发模型推理内容（只有 delta / citations / tool_call / tool_result），
+// 所以展开区展示的是"做了哪些步骤"，不是模型的原始思维链。要展示推理文本需要后端补一个事件。
+interface Props {
   citations?: Citation[]
   tools?: ToolStep[]
   running?: boolean
-}) {
+}
+
+const CHEVRON = (
+  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+)
+
+export default function ThinkingTrace({ citations, tools, running }: Props) {
+  const [open, setOpen] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const startRef = useRef<number>(0)
+
   const hasCitations = Array.isArray(citations) && citations.length > 0
   const hasTools = Array.isArray(tools) && tools.length > 0
-  // 既没有检索也没有工具调用时，该面板没有内容可展示，直接不渲染
-  if (!hasCitations && !hasTools) return null
+  const stepCount = (hasCitations ? 1 : 0) + (tools?.length ?? 0)
 
-  // 按时间顺序组装 Timeline 节点：检索 → 每个工具调用 → 生成回答
-  const items: any[] = []
+  // 进行中显示秒数：从开始计时，结束后停在总时长
+  useEffect(() => {
+    if (running) {
+      startRef.current = Date.now()
+      setElapsed(0)
+      const t = window.setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 100)
+      return () => window.clearInterval(t)
+    }
+  }, [running])
 
-  if (hasCitations) {
-    items.push({
-      color: 'blue',
-      dot: <SearchOutlined />,
-      children: (
-        <span>
-          检索知识库，命中 <b>{citations!.length}</b> 条相关片段
-        </span>
-      ),
-    })
-  }
-
-  ;(tools || []).forEach((t) => {
-    items.push({
-      color: stepColor(t.status),
-      dot: <ToolOutlined />,
-      children: (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>调用工具 {t.name}</div>
-          <div style={{ fontSize: 12, color: '#64748b' }}>
-            {t.status === 'running' ? '执行中…' : t.status === 'error' ? '执行出错' : '已完成'}
-          </div>
-        </div>
-      ),
-    })
-  })
-
-  // 最后一步：回答生成中（灰）或已完成（绿）
-  items.push({
-    color: running ? 'gray' : 'green',
-    dot: <FileDoneOutlined />,
-    children: running ? '正在生成回答…' : '已生成回答',
-  })
-
-  // 步骤总数 = 检索(0/1) + 工具调用数 + 生成回答(1)，用于标题上的“N 步”标签
-  const stepCount = (hasCitations ? 1 : 0) + (hasTools ? tools!.length : 0) + 1
+  // 既没有步骤也不在思考：不渲染这一行
+  if (!hasCitations && !hasTools && !running) return null
 
   return (
-    <Collapse
-      ghost
-      size="small"
-      className="thinking-trace"
-      defaultActiveKey={['trace']}
-      items={[
-        {
-          key: 'trace',
-          label: (
-            <span className="thinking-label">
-              <Text strong>思考过程</Text>
-              <Tag style={{ marginInlineStart: 6 }}>{stepCount} 步</Tag>
-            </span>
-          ),
-          children: <Timeline items={items} />,
-        },
-      ]}
-    />
+    <div className="self-start max-w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex items-center gap-[7px] text-[12.5px] select-none"
+        style={{ color: running ? 'var(--fg)' : 'var(--fg-muted)' }}
+      >
+        <span
+          className="w-1.5 h-1.5 rounded-full shrink-0"
+          style={{
+            background: running ? 'var(--accent)' : 'var(--fg-subtle)',
+            animation: running ? 'breathe 1.6s ease-in-out infinite' : 'none',
+          }}
+        />
+        <span>{running ? '思考中…' : `思考了 ${stepCount} 步`}</span>
+        {running && <span className="text-[11px]" style={{ color: 'var(--fg-subtle)', fontVariantNumeric: 'tabular-nums' }}>{elapsed.toFixed(1)}s</span>}
+        <span className="flex items-center" style={{ color: 'var(--fg-subtle)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s' }}>
+          {CHEVRON}
+        </span>
+      </button>
+
+      {open && (
+        <div
+          className="mt-[7px] ml-0.5 pl-3 text-[12.5px] leading-[1.75] rounded-lg py-2.5 pr-3"
+          style={{ borderLeft: '1px solid var(--border)', color: 'var(--fg-muted)' }}
+        >
+          {hasCitations && (
+            <div className="flex items-center gap-1.5">
+              <span style={{ color: 'var(--accent)' }}>检索知识库</span>
+              <span>命中 {citations!.length} 条相关片段</span>
+            </div>
+          )}
+          {hasTools && tools!.map((t) => (
+            <div key={t.id ?? t.name} className="flex items-center gap-1.5">
+              <span style={{ color: 'var(--fg)' }}>{t.name}</span>
+              <span style={{ color: 'var(--fg-subtle)' }}>
+                {t.status === 'running' ? '执行中…' : t.status === 'error' ? '执行出错' : '已完成'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
