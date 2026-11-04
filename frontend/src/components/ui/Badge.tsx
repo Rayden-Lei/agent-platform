@@ -28,10 +28,11 @@ interface Props {
   tone?: Tone | string
   children: ReactNode
   title?: string
+  className?: string
 }
 
 // forwardRef：会被 TooltipTrigger asChild 包住，Radix 的 Slot 需要能拿到 DOM 节点
-const Badge = forwardRef<HTMLSpanElement, Props>(function Badge({ tone = 'neutral', children, title }, ref) {
+const Badge = forwardRef<HTMLSpanElement, Props>(function Badge({ tone = 'neutral', children, title, className }, ref) {
   const key = (LEGACY[tone] ?? tone) as Tone
   const style = TONES[key] ?? TONES.neutral
   return (
@@ -40,7 +41,7 @@ const Badge = forwardRef<HTMLSpanElement, Props>(function Badge({ tone = 'neutra
       variant="outline"
       title={title}
       style={style}
-      className={cn('border-transparent rounded-full px-2 py-[1px] text-[11.5px] leading-[18px] font-normal')}
+      className={cn('border-transparent rounded-full px-2 py-[1px] text-[11.5px] leading-[18px] font-normal', className)}
     >
       {children}
     </ShadcnBadge>

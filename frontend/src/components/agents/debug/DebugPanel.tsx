@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Button, Tooltip, Typography } from 'antd'
-import { ClearOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { Eraser, PanelRightClose } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/shadcn/tooltip'
+import Button from '../../ui/Button'
 import ChatPanel from '../../chat/ChatPanel'
 import { CHAT_MESSAGE_MAX_CHARS, DEBUG_CAPABILITIES, type Msg } from '../../chat/types'
 import DebugDetailDrawer from './DebugDetailDrawer'
@@ -23,12 +24,30 @@ export default function DebugPanel({ messages, sending, compact, onSend, onStop,
   const [detail, setDetail] = useState<Msg | null>(null)
   const header = (
     <>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Typography.Text strong>调试 <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>对象：编辑器当前内容（含未保存修改）</Typography.Text></Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>引用的工具、知识库、模型本身的修改不经发布，立即影响线上</Typography.Text>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[13.5px] font-medium text-foreground">
+          调试 <span className="text-[12px] font-normal text-muted-foreground">对象：编辑器当前内容（含未保存修改）</span>
+        </span>
+        <span className="text-[12px] text-muted-foreground">引用的工具、知识库、模型本身的修改不经发布，立即影响线上</span>
       </div>
-      <Tooltip title="清空调试记录，重新开始"><Button size="small" icon={<ClearOutlined />} disabled={sending || !messages.length} onClick={onClear} /></Tooltip>
-      {onCollapse && <Tooltip title="收起调试区"><Button size="small" icon={<MenuUnfoldOutlined />} onClick={onCollapse} /></Tooltip>}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="sm" aria-label="清空调试记录" disabled={sending || !messages.length} onClick={onClear}>
+            <Eraser className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>清空调试记录，重新开始</TooltipContent>
+      </Tooltip>
+      {onCollapse && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" aria-label="收起调试区" onClick={onCollapse}>
+              <PanelRightClose className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>收起调试区</TooltipContent>
+        </Tooltip>
+      )}
     </>
   )
   return (

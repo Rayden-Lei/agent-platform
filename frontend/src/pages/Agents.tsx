@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { batchAgents, deleteAgent, getAgent, listAgents, listModels, OPTIONS_PAGE, publishAgent, type AgentDetail, type AgentRow, type ModelRow } from '../api'
@@ -37,17 +37,17 @@ export default function Agents() {
   useEffect(() => { listModels(OPTIONS_PAGE).then((p) => setModels(p.items)).catch(() => setModels([])) }, [])
 
   const act = async (fn: () => Promise<unknown>, fallback: string) => {
-    try { await fn(); list.reload() } catch (e) { message.error(errorText(e, fallback)) }
+    try { await fn(); list.reload() } catch (e) { toast.error(errorText(e, fallback)) }
   }
-  const openPublish = (a: AgentRow) => getAgent(a.id).then(setPublishing).catch((e) => message.error(errorText(e, '加载智能体失败')))
+  const openPublish = (a: AgentRow) => getAgent(a.id).then(setPublishing).catch((e) => toast.error(errorText(e, '加载智能体失败')))
   const onPublish = async (note?: string) => {
     if (!publishing) return
     try {
       const r = await publishAgent(publishing.id, note)
-      message.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
+      toast.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
       setPublishing(null)
       list.reload()
-    } catch (e) { message.error(errorText(e, '发布失败')); throw e }
+    } catch (e) { toast.error(errorText(e, '发布失败')); throw e }
   }
   const columns = useMemo(() => buildAgentColumns({
     sort: list.sort,

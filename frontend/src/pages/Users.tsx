@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Select, message } from 'antd'
+import { toast } from 'sonner'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
 import { batchUsers, deleteUser, listUsers, updateUser, type UserRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -37,10 +38,10 @@ export default function Users() {
   const [current, setCurrent] = useState<UserRow | null>(null)
   const list = usePagedList<UserRow>(listUsers, { filters, selectable: true, emptyText: <EmptyState description="没有匹配的用户" /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
-  useOpenParam((id) => { const row = list.items.find((u) => u.id === id); if (row) setCurrent(row); else message.warning('该用户不在当前列表里，请调整筛选') })
+  useOpenParam((id) => { const row = list.items.find((u) => u.id === id); if (row) setCurrent(row); else toast.warning('该用户不在当前列表里，请调整筛选') })
 
   const onToggle = async (u: UserRow) => { await updateUser(u.id, { is_active: !u.is_active }); list.reload() }
-  const onDelete = async (u: UserRow) => { try { await deleteUser(u.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onDelete = async (u: UserRow) => { try { await deleteUser(u.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const onEdit = (u: UserRow) => { setEditing(u); setFormOpen(true) }
   const selectedOthers = list.selectedKeys.filter((id) => id !== meId)
   const columns = useMemo(() => buildUserColumns({ meId, onOpen: setCurrent, onToggle, onEdit, onResetPassword: setResetting, onDelete }), [meId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -51,8 +52,20 @@ export default function Users() {
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />
-          <Select allowClear placeholder="角色" style={{ width: 110 }} value={filters.role} onChange={(v) => setFilters({ role: v })} options={statusOptions('role')} />
-          <Select allowClear placeholder="状态" style={{ width: 100 }} value={filters.is_active} onChange={(v) => setFilters({ is_active: v })} options={ACTIVE_OPTIONS} />
+          <Select value={filters.role ?? 'all'} onValueChange={(v) => setFilters({ role: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="角色"><SelectValue placeholder="角色" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部角色</SelectItem>
+              {statusOptions('role').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filters.is_active ?? 'all'} onValueChange={(v) => setFilters({ is_active: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              {ACTIVE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </FilterBar>
       }
       batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[

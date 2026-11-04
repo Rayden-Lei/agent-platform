@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react'
-import { Button, Descriptions, Skeleton, Space, Tabs } from 'antd'
-import { ArrowLeftOutlined } from '@ant-design/icons'
+import { ArrowLeft } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import ErrorState from '../common/ErrorState'
+import Button from '../ui/Button'
 import PageHeader, { type Crumb } from './PageHeader'
 
 // 详情页骨架：面包屑 / 标题 / 标签 / 关键信息一行 / 操作区 + 页签；页签面板是唯一滚动区；?tab= 深链。
@@ -34,27 +36,44 @@ export default function DetailPage({ crumbs, title, tags, meta, extra, tabs, def
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="detail-header" style={{ flexShrink: 0 }}>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="detail-header shrink-0">
         <PageHeader
           crumbs={crumbs}
-          title={loading ? <Skeleton.Input active size="small" style={{ width: 200 }} /> : title}
+          title={loading ? <Skeleton className="h-6 w-48" /> : title}
           tags={tags}
-          extra={<Space>{extra}<Button icon={<ArrowLeftOutlined />} onClick={back}>返回</Button></Space>}
+          extra={
+            <>
+              {extra}
+              <Button variant="secondary" size="md" icon={<ArrowLeft />} onClick={back}>返回</Button>
+            </>
+          }
         />
         {meta && meta.length > 0 && !loading && (
-          <Descriptions size="small" column={{ xs: 1, sm: 2, md: 4 }} items={meta.map((m, i) => ({ key: String(i), label: m.label, children: m.value }))} style={{ marginTop: 8 }} />
+          <dl className="m-0 mt-3 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2 md:grid-cols-4">
+            {meta.map((m, i) => (
+              <div key={i} className="min-w-0">
+                <dt className="text-[12px] text-muted-foreground">{m.label}</dt>
+                <dd className="m-0 truncate text-[13.5px] text-foreground">{m.value}</dd>
+              </div>
+            ))}
+          </dl>
         )}
       </div>
+
       {error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
-        <Tabs
-          activeKey={activeKey}
-          onChange={setTab}
-          items={tabs.map((t) => ({ key: t.key, label: t.label, children: <div className="detail-tab-body">{t.children}</div> }))}
-          className="detail-tabs"
-        />
+        <Tabs value={activeKey} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-3">
+          <TabsList className="shrink-0 justify-start">
+            {tabs.map((t) => <TabsTrigger key={t.key} value={t.key} className="flex-none px-3">{t.label}</TabsTrigger>)}
+          </TabsList>
+          {tabs.map((t) => (
+            <TabsContent key={t.key} value={t.key} className="detail-tab-body min-h-0 flex-1 overflow-auto">
+              {t.children}
+            </TabsContent>
+          ))}
+        </Tabs>
       )}
     </div>
   )

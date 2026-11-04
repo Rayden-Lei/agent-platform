@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Alert } from 'antd'
+import { TriangleAlert, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useSystemStatus } from '../../hooks/useSystemStatus'
 
@@ -17,25 +17,28 @@ export default function DegradedBanner() {
   const signature = useMemo(() => items.map((i) => i.item + ':' + i.message).join('|'), [items])
   const [dismissed, setDismissed] = useState<string | null>(() => sessionStorage.getItem('degraded-dismissed'))
   if (!items.length || dismissed === signature) return null
+
+  const close = () => {
+    sessionStorage.setItem('degraded-dismissed', signature)
+    setDismissed(signature)
+  }
+
   return (
-    <Alert
-      banner
-      type="warning"
-      showIcon
-      closable
-      onClose={() => { sessionStorage.setItem('degraded-dismissed', signature); setDismissed(signature) }}
-      message={
-        <span>
-          系统有 {items.length} 项能力在降级运行：
-          {items.map((i, idx) => (
-            <span key={idx} style={{ marginLeft: 8 }}>
-              {i.message}
-              {ENTRY[i.item] && <Link to={ENTRY[i.item].to} style={{ marginLeft: 4 }}>去{ENTRY[i.item].label}</Link>}
-              {idx < items.length - 1 && '；'}
-            </span>
-          ))}
-        </span>
-      }
-    />
+    <div className="flex shrink-0 items-start gap-2 border-b border-[rgba(217,119,6,.28)] bg-[rgba(217,119,6,.10)] px-4 py-1.5 text-[12.5px] sm:px-5">
+      <TriangleAlert className="mt-[3px] size-3.5 shrink-0 text-[#B45309]" />
+      <div className="min-w-0 flex-1 text-foreground">
+        系统有 {items.length} 项能力在降级运行：
+        {items.map((i, idx) => (
+          <span key={idx} className="ml-2">
+            {i.message}
+            {ENTRY[i.item] && <Link to={ENTRY[i.item].to} className="ml-1 text-primary hover:underline">去{ENTRY[i.item].label}</Link>}
+            {idx < items.length - 1 && '；'}
+          </span>
+        ))}
+      </div>
+      <button type="button" aria-label="关闭提示" onClick={close} className="rounded p-0.5 text-muted-foreground hover:bg-black/5">
+        <X className="size-3.5" />
+      </button>
+    </div>
   )
 }

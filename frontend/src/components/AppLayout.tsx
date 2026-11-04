@@ -1,7 +1,10 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
-import { Button, Drawer, Dropdown, Skeleton, message } from 'antd'
-import { DownOutlined, LogoutOutlined, MenuOutlined, UserOutlined } from '@ant-design/icons'
+import { Suspense, useEffect, useState } from 'react'
+import { toast } from 'sonner'
+import { ChevronDown, LogOut, Menu, User } from 'lucide-react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { Sheet, SheetContent } from '@/components/shadcn/sheet'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/shadcn/dropdown-menu'
 import { useAuth } from '../store/auth'
 import { useUnsaved } from '../store/unsaved'
 import { useTheme } from '../store/theme'
@@ -11,6 +14,7 @@ import SideNav from './layout/SideNav'
 import DegradedBanner from './layout/DegradedBanner'
 import ForcePasswordModal from './layout/ForcePasswordModal'
 import AppearanceMenu from './theme/AppearanceMenu'
+import Button from './ui/Button'
 import { useLiquidGlass } from '../hooks/useLiquidGlass'
 import { changeMyPassword } from '../api'
 import { useSessionSync } from '../hooks/useSessionSync'
@@ -43,7 +47,7 @@ export default function AppLayout() {
   const changePassword = async (oldPassword: string, newPassword: string) => {
     const r = await changeMyPassword({ old_password: oldPassword, new_password: newPassword })
     setAuth(r.token, r.user)
-    message.success('密码已修改')
+    toast.success('密码已修改')
     window.location.reload()
   }
 
@@ -56,90 +60,85 @@ export default function AppLayout() {
   }, [dirty])
 
   return (
-    <div className="relative h-full overflow-hidden flex" style={{ background: 'var(--bg)' }}>
+    <div className="relative flex h-full overflow-hidden" style={{ background: 'var(--bg)' }}>
       {/* 背景光斑与点阵：纯装饰，不接收事件 */}
       <div className="page-blobs" aria-hidden="true" />
       <div className="page-dots" aria-hidden="true" />
 
       {/* 侧栏：桌面固定，移动端抽屉 */}
       {isMobile ? (
-        <Drawer
-          placement="left"
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          width={224}
-          closable={false}
-          styles={{ body: { padding: 0, background: 'var(--bg-soft-2)' } }}
-          title={null}
-        >
-          <SideNav onNavigate={() => setDrawerOpen(false)} />
-        </Drawer>
+        <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+          <SheetContent side="left" className="w-[224px] p-0" style={{ background: 'var(--bg-soft-2)' }}>
+            <SideNav onNavigate={() => setDrawerOpen(false)} />
+          </SheetContent>
+        </Sheet>
       ) : (
         <div
           ref={sideRef}
-          className="lg shrink-0 h-full overflow-y-auto"
+          className="lg h-full shrink-0 overflow-y-auto"
           style={{ width: 212, borderRadius: 0, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
           <SideNav />
         </div>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0 relative z-[1]">
+      <div className="relative z-[1] flex min-w-0 flex-1 flex-col">
         {/* 顶栏 */}
         <header
           ref={headerRef}
-          className="lg shrink-0 flex items-center justify-between gap-3 px-4 sm:px-5"
+          className="lg flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5"
           style={{ height: 56, borderRadius: 0, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
             {isMobile && (
-              <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} aria-label="打开菜单" />
+              <Button variant="ghost" size="sm" aria-label="打开菜单" onClick={() => setDrawerOpen(true)}>
+                <Menu className="size-4" />
+              </Button>
             )}
-            <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--fg)' }}>
+            <span className="truncate text-[15px] font-semibold" style={{ color: 'var(--fg)' }}>
               {navTitle(location.pathname)}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
             <AppearanceMenu />
             {/* 用户信息：头像取用户名首字母，点开是个人中心与退出登录（docs/15 OP-03） */}
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: [
-                  { key: 'profile', icon: <UserOutlined />, label: '个人中心', onClick: () => navigate('/profile') },
-                  { type: 'divider' },
-                  { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: () => { logout(); navigate('/login') } },
-                ],
-              }}
-            >
-              <button
-                type="button"
-                aria-label="账号菜单"
-                className="flex items-center gap-2 h-9 px-1.5 rounded-lg transition-colors"
-              >
-                <span
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0"
-                  style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="账号菜单"
+                  className="flex h-9 items-center gap-2 rounded-lg px-1.5 transition-colors hover:bg-accent"
                 >
-                  {user?.username?.[0]?.toUpperCase()}
-                </span>
-                <span className="hidden sm:inline text-[13px]" style={{ color: 'var(--fg)' }}>{user?.username}</span>
-                <span className="hidden md:inline text-[12px]" style={{ color: 'var(--fg-subtle)' }}>
-                  {roleLabel[user?.role] || user?.role}
-                </span>
-                <DownOutlined style={{ fontSize: 10, color: 'var(--fg-subtle)' }} />
-              </button>
-            </Dropdown>
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>
+                    {user?.username?.[0]?.toUpperCase()}
+                  </span>
+                  <span className="hidden text-[13px] sm:inline" style={{ color: 'var(--fg)' }}>{user?.username}</span>
+                  <span className="hidden text-[12px] md:inline" style={{ color: 'var(--fg-subtle)' }}>
+                    {roleLabel[user?.role] || user?.role}
+                  </span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onSelect={() => navigate('/profile')}>
+                  <User className="size-3.5" />个人中心
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => { logout(); navigate('/login') }}>
+                  <LogOut className="size-3.5" />退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
         <DegradedBanner />
 
         {/* 内容区：外层负责占位与内边距（min-height: 0 保证 flex 子项可收缩），页面自身滚动由各页面内部处理 */}
-        <main className="flex-1 min-h-0 flex flex-col overflow-hidden" style={{ padding: isMobile ? 12 : 20 }}>
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <Suspense fallback={<Skeleton active paragraph={{ rows: 8 }} style={{ padding: 8 }} />}>
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ padding: isMobile ? 12 : 20 }}>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<div className="flex flex-col gap-2 p-2"><Skeleton className="h-5 w-40" /><Skeleton className="h-32 w-full" /><Skeleton className="h-32 w-full" /></div>}>
               <Outlet />
             </Suspense>
           </div>

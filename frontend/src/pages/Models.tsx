@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Select, message } from 'antd'
+import { toast } from 'sonner'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { batchModels, deleteModel, getModel, getModelUsage, listModels, testModel, toggleModel, type ModelRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -43,19 +44,19 @@ export default function Models() {
   const list = usePagedList<ModelRow>(listModels, { filters, selectable: canManage, emptyText: <EmptyState description="还没有接入模型。新增一个 OpenAI 兼容端点后，智能体才能对话。" action={canManage ? { label: '新增模型', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   // ?open= 深链：列表可能还没加载完或该模型不在当前筛选内，直接取详情打开
-  useOpenParam((id) => { const row = list.items.find((m) => m.id === id); if (row) setCurrent(row); else getModel(id).then(setCurrent).catch((e) => message.error(errorText(e, '模型不存在或无权查看'))) })
+  useOpenParam((id) => { const row = list.items.find((m) => m.id === id); if (row) setCurrent(row); else getModel(id).then(setCurrent).catch((e) => toast.error(errorText(e, '模型不存在或无权查看'))) })
 
   // 连通测试：结果直接提示；成功会关闭该模型的熔断，测完刷新一次系统状态
   const onTest = async (record: ModelRow) => {
     setTestingId(record.id)
     try {
       const res = await testModel(record.id)
-      if (res.data.ok) message.success(`连通正常：${res.data.reply || ''}`)
-      else message.error(`连通失败：${res.data.error || '未知错误'}`)
-    } catch (e) { message.error(errorText(e, '测试失败')) } finally { setTestingId(null); refresh() }
+      if (res.data.ok) toast.success(`连通正常：${res.data.reply || ''}`)
+      else toast.error(`连通失败：${res.data.error || '未知错误'}`)
+    } catch (e) { toast.error(errorText(e, '测试失败')) } finally { setTestingId(null); refresh() }
   }
   const onToggle = async (m: ModelRow) => { await toggleModel(m.id); list.reload() }
-  const onDelete = async (m: ModelRow) => { try { await deleteModel(m.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onDelete = async (m: ModelRow) => { try { await deleteModel(m.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const onEdit = (m: ModelRow) => { setEditing(m); setFormOpen(true) }
   const columns = useMemo(() => buildModelColumns({ sort: list.sort, breakers, usage: usage.data ?? {}, testingId, canManage, onOpen: setCurrent, onToggle, onTest, onEdit, onDelete }), [list.sort, breakers, usage.data, testingId, canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -65,8 +66,20 @@ export default function Models() {
       filters={
         <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 模型名" />
-          <Select allowClear placeholder="提供商" style={{ width: 130 }} value={filters.provider} onChange={(v) => setFilters({ provider: v })} options={statusOptions('provider')} />
-          <Select allowClear placeholder="状态" style={{ width: 100 }} value={filters.is_enabled} onChange={(v) => setFilters({ is_enabled: v })} options={ENABLED_OPTIONS} />
+          <Select value={filters.provider ?? 'all'} onValueChange={(v) => setFilters({ provider: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[130px] text-[13px]" aria-label="提供商"><SelectValue placeholder="提供商" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部提供商</SelectItem>
+              {statusOptions('provider').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              {ENABLED_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </FilterBar>
       }
       batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
