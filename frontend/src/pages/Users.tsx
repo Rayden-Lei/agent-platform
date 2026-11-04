@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Select, Table, message } from 'antd'
+import { Select, message } from 'antd'
 import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
 import { batchUsers, deleteUser, listUsers, updateUser, type UserRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -19,6 +19,8 @@ import UserForm from '../components/admin/UserForm'
 import ResetPasswordModal from '../components/admin/ResetPasswordModal'
 import UserDrawer from '../components/admin/UserDrawer'
 import { buildUserColumns } from '../components/admin/userColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
 import { errorText } from '../utils/errors'
 
 type Filters = { q?: string; role?: string; is_active?: string }
@@ -41,11 +43,11 @@ export default function Users() {
   const onDelete = async (u: UserRow) => { try { await deleteUser(u.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
   const onEdit = (u: UserRow) => { setEditing(u); setFormOpen(true) }
   const selectedOthers = list.selectedKeys.filter((id) => id !== meId)
-  const columns = useMemo(() => buildUserColumns({ sortProps: list.sortProps, meId, onOpen: setCurrent, onToggle, onEdit, onResetPassword: setResetting, onDelete }), [list.sortProps, meId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const columns = useMemo(() => buildUserColumns({ meId, onOpen: setCurrent, onToggle, onEdit, onResetPassword: setResetting, onDelete }), [meId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ListPage
-      header={<PageHeader icon={<TeamOutlined />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
+      header={<PageHeader icon={<TeamOutlined />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />
@@ -59,7 +61,24 @@ export default function Users() {
         { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${selectedOthers.length} 个用户？（自动跳过自己）`, run: () => batch.run(() => batchUsers(selectedOthers, 'delete'), '已删除') },
       ]} />}
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="没有匹配的用户" />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <UserForm open={formOpen} editing={editing} meId={meId} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
       <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onSaved={list.reload} />
       <UserDrawer user={current} onClose={() => setCurrent(null)} onEdit={onEdit} onResetPassword={setResetting} />

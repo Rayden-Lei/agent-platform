@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Select, Table, message } from 'antd'
+import { Select, message } from 'antd'
 import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { batchModels, deleteModel, getModel, getModelUsage, listModels, testModel, toggleModel, type ModelRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -20,6 +20,8 @@ import BatchResultModal from '../components/common/BatchResultModal'
 import ModelForm from '../components/models/ModelForm'
 import ModelDrawer from '../components/models/ModelDrawer'
 import { buildModelColumns } from '../components/models/modelColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
 import { errorText } from '../utils/errors'
 
 type Filters = { q?: string; provider?: string; is_enabled?: string }
@@ -55,11 +57,11 @@ export default function Models() {
   const onToggle = async (m: ModelRow) => { await toggleModel(m.id); list.reload() }
   const onDelete = async (m: ModelRow) => { try { await deleteModel(m.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
   const onEdit = (m: ModelRow) => { setEditing(m); setFormOpen(true) }
-  const columns = useMemo(() => buildModelColumns({ sortProps: list.sortProps, breakers, usage: usage.data ?? {}, testingId, canManage, onOpen: setCurrent, onToggle, onTest, onEdit, onDelete }), [list.sortProps, breakers, usage.data, testingId, canManage]) // eslint-disable-line react-hooks/exhaustive-deps
+  const columns = useMemo(() => buildModelColumns({ sort: list.sort, breakers, usage: usage.data ?? {}, testingId, canManage, onOpen: setCurrent, onToggle, onTest, onEdit, onDelete }), [list.sort, breakers, usage.data, testingId, canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ListPage
-      header={<PageHeader icon={<ThunderboltOutlined />} title="模型管理" description="LLM 接入配置；价格用于成本统计，连续失败会触发熔断，连通测试成功即恢复。" extra={canManage && <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模型</Button>} />}
+      header={<PageHeader icon={<ThunderboltOutlined />} title="模型管理" description="LLM 接入配置；价格用于成本统计，连续失败会触发熔断，连通测试成功即恢复。" extra={canManage && <Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模型</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 模型名" />
@@ -73,7 +75,24 @@ export default function Models() {
         { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个模型？`, run: () => batch.run(() => batchModels(list.selectedKeys, 'delete'), '已删除') },
       ]} />}
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="还没有接入模型。新增一个 OpenAI 兼容端点后，智能体才能对话。" action={canManage ? { label: '新增模型', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable={canManage}
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <ModelForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
       <ModelDrawer model={current} breaker={current ? breakers[current.id] : undefined} testing={testingId === current?.id} canManage={canManage} onClose={() => setCurrent(null)} onTest={onTest} onEdit={onEdit} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((m) => m.id === id)?.name} />

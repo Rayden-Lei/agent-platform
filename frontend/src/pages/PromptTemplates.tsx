@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Table, message } from 'antd'
+import { message } from 'antd'
 import { FileTextOutlined, PlusOutlined } from '@ant-design/icons'
 import { batchPromptTemplates, deletePromptTemplate, getPromptTemplate, listPromptTemplates, type PromptTemplateRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -16,6 +16,8 @@ import BatchResultModal from '../components/common/BatchResultModal'
 import TemplateForm from '../components/prompt/TemplateForm'
 import TemplateDrawer from '../components/prompt/TemplateDrawer'
 import { buildTemplateColumns } from '../components/prompt/templateColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
 import { errorText } from '../utils/errors'
 
 type Filters = { q?: string }
@@ -37,11 +39,11 @@ export default function PromptTemplates() {
   }
   const onDelete = async (r: PromptTemplateRow) => { try { await deletePromptTemplate(r.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
   const afterSave = () => { list.reload(); if (current) getPromptTemplate(current.id).then(setCurrent).catch(() => setCurrent(null)) }
-  const columns = useMemo(() => buildTemplateColumns({ sortProps: list.sortProps, onOpen: setCurrent, onEdit, onDelete }), [list.sortProps]) // eslint-disable-line react-hooks/exhaustive-deps
+  const columns = useMemo(() => buildTemplateColumns({ onOpen: setCurrent, onEdit, onDelete }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ListPage
-      header={<PageHeader icon={<FileTextOutlined />} title="提示词模板" description="带变量的系统提示词；内容或变量变化自动升版本。绑定的智能体保存草稿时按模板当前版本渲染，发布后对外生效。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模板</Button>} />}
+      header={<PageHeader icon={<FileTextOutlined />} title="提示词模板" description="带变量的系统提示词；内容或变量变化自动升版本。绑定的智能体保存草稿时按模板当前版本渲染，发布后对外生效。" extra={<Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模板</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索模板名称" />
@@ -49,7 +51,24 @@ export default function PromptTemplates() {
       }
       batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[{ key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个模板？仍被智能体绑定的会失败并列在结果里`, run: () => batch.run(() => batchPromptTemplates(list.selectedKeys), '已删除') }]} />}
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="还没有模板。把系统提示词沉淀成带变量的模板，多个智能体共用并按版本管理。" action={{ label: '新增模板', onClick: () => { setEditing(null); setFormOpen(true) } }} />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <TemplateForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={afterSave} />
       <TemplateDrawer template={current} onClose={() => setCurrent(null)} onEdit={onEdit} onChanged={afterSave} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((t) => t.id === id)?.name} />
