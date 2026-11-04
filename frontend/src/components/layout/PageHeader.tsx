@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Breadcrumb, Typography } from 'antd'
+import { ChevronRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 // 页头：面包屑 + 标题 + 说明 + 右侧操作区。列表页与详情页共用。
@@ -17,17 +17,27 @@ export default function PageHeader({ title, icon, crumbs, description, extra, ta
   return (
     <div className="page-header">
       {crumbs && crumbs.length > 0 && (
-        <Breadcrumb items={crumbs.map((c) => ({ title: c.to ? <Link to={c.to}>{c.label}</Link> : c.label }))} style={{ marginBottom: 6 }} />
+        <nav aria-label="面包屑" className="mb-1.5 flex items-center gap-1 text-[12.5px] text-muted-foreground">
+          {crumbs.map((c, i) => (
+            <span key={i} className="inline-flex items-center gap-1">
+              {i > 0 && <ChevronRight className="size-3 opacity-60" aria-hidden="true" />}
+              {c.to ? <Link to={c.to} className="hover:text-foreground hover:underline">{c.label}</Link> : c.label}
+            </span>
+          ))}
+        </nav>
       )}
       <div className="page-header-row">
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>{icon}{title}</h2>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="m-0 flex items-center gap-2 text-[19px] font-semibold">
+              {icon && <span className="flex items-center text-muted-foreground [&_svg]:size-[18px]">{icon}</span>}
+              {title}
+            </h2>
             {tags}
           </div>
-          {description && <Typography.Text type="secondary" style={{ fontSize: 13 }}>{description}</Typography.Text>}
+          {description && <p className="m-0 mt-1 text-[13px] text-muted-foreground">{description}</p>}
         </div>
-        {extra && <div style={{ flexShrink: 0 }}>{extra}</div>}
+        {extra && <div className="flex shrink-0 items-center gap-2">{extra}</div>}
       </div>
     </div>
   )

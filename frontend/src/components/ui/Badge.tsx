@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { forwardRef, type CSSProperties, type ReactNode } from 'react'
 import { cn } from 'cn'
 import { Badge as ShadcnBadge } from '@/components/shadcn/badge'
 
@@ -30,11 +30,13 @@ interface Props {
   title?: string
 }
 
-export default function Badge({ tone = 'neutral', children, title }: Props) {
+// forwardRef：会被 TooltipTrigger asChild 包住，Radix 的 Slot 需要能拿到 DOM 节点
+const Badge = forwardRef<HTMLSpanElement, Props>(function Badge({ tone = 'neutral', children, title }, ref) {
   const key = (LEGACY[tone] ?? tone) as Tone
   const style = TONES[key] ?? TONES.neutral
   return (
     <ShadcnBadge
+      ref={ref}
       variant="outline"
       title={title}
       style={style}
@@ -43,4 +45,6 @@ export default function Badge({ tone = 'neutral', children, title }: Props) {
       {children}
     </ShadcnBadge>
   )
-}
+})
+
+export default Badge
