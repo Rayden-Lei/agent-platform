@@ -26,7 +26,7 @@ export default function SearchInput({ value, onChange, placeholder = '搜索名�
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}
-        className="h-8 pr-7 pl-8 text-[13px]"
+        className="h-8 pr-7 pl-8 text-[13.5px]"
       />
       {text && (
         <button

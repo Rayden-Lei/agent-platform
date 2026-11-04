@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 
 // 数据表格：同一份列定义渲染两种形态 —— 桌面是表格、窄屏是卡片。
 // 服务端分页与排序（数据量大，前端不做全量排序）；行选择跨页保留。
@@ -52,6 +52,12 @@ export interface DataTableProps<T> {
   onSelectionChange?: (keys: number[]) => void
 
   onRowClick?: (row: T) => void
+
+  /** 行展开（审计日志看完整 JSON 这类）：返回 null 的行不可展开 */
+  expand?: {
+    render: (row: T) => ReactNode
+    expandable?: (row: T) => boolean
+  }
 }
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -115,7 +121,11 @@ export default function DataTable<T>({
   selectedKeys = [],
   onSelectionChange,
   onRowClick,
+  expand,
 }: DataTableProps<T>) {
+  const [expandedKeys, setExpandedKeys] = useState<Array<string | number>>([])
+  const canExpand = (row: T) => !!expand && (expand.expandable ? expand.expandable(row) : true)
+  const toggleExpand = (key: string | number) => setExpandedKeys((keys) => (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]))
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const pageNumbers = useMemo(() => {
     const out: number[] = []
@@ -176,9 +186,10 @@ export default function DataTable<T>({
     <div className="flex flex-col min-h-0 flex-1">
       {/* ---------- 桌面：表格 ---------- */}
       <div className="hidden md:block flex-1 min-h-0 overflow-auto rounded-xl" style={{ border: '1px solid var(--border)' }}>
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-[13.5px]">
           <thead className="sticky top-0 z-[2]">
             <tr style={{ background: 'var(--bg-soft-2)' }}>
+              {expand && <th className="w-8 px-2 py-2.5" style={{ borderBottom: '1px solid var(--border)' }} />}
               {selectable && (
                 <th className="w-10 px-3 py-2.5 text-left" style={{ borderBottom: '1px solid var(--border)' }}>
                   <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} label="全选" />
@@ -194,7 +205,7 @@ export default function DataTable<T>({
                       width: c.width,
                       textAlign: c.align ?? 'left',
                       color: 'var(--fg-muted)',
-                      fontSize: 11.5,
+                      fontSize: 12.5,
                       borderBottom: '1px solid var(--border)',
                       cursor: c.sortable ? 'pointer' : 'default',
                       userSelect: 'none',
@@ -219,6 +230,7 @@ export default function DataTable<T>({
             {loading
               ? skeletonRows.map((_, i) => (
                   <tr key={`sk-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                    {expand && <td className="px-2 py-3" />}
                     {selectable && <td className="px-3 py-3" />}
                     {columns.map((c) => (
                       <td key={c.key} className="px-3 py-3">
@@ -229,7 +241,9 @@ export default function DataTable<T>({
                 ))
               : rows.map((original) => {
                   const rid = String(rowKey(original))
+                  const expanded = expandedKeys.includes(rid)
                   return (
+                    <Fragment key={rid}>
                     <tr
                       key={rid}
                       className="transition-colors"
@@ -238,6 +252,24 @@ export default function DataTable<T>({
                       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                       onClick={() => onRowClick?.(original)}
                     >
+                      {expand && (
+                        <td className="px-2 py-2.5">
+                          {canExpand(original) ? (
+                            <button
+                              type="button"
+                              aria-label={expanded ? '收起详情' : '展开详情'}
+                              aria-expanded={expanded}
+                              onClick={(e) => { e.stopPropagation(); toggleExpand(rid) }}
+                              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"
+                                style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>
+                                <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                          ) : null}
+                        </td>
+                      )}
                       {selectable && (
                         <td className="px-3 py-2.5">
                           <Checkbox
@@ -260,6 +292,14 @@ export default function DataTable<T>({
                         </td>
                       ))}
                     </tr>
+                    {expand && expanded && (
+                      <tr style={{ background: 'var(--bg-soft-2)' }}>
+                        <td colSpan={columns.length + (selectable ? 1 : 0) + 1} className="px-4 py-3">
+                          {expand.render(original)}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
           </tbody>

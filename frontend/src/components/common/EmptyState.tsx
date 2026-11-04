@@ -13,7 +13,7 @@ export default function EmptyState({ description, action }: Props) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-10">
       <Inbox className="size-8 text-muted-foreground/50" aria-hidden="true" />
-      <div className="max-w-md text-center text-[13px] text-muted-foreground">{description}</div>
+      <div className="max-w-md text-center text-[14px] leading-relaxed text-muted-foreground">{description}</div>
       {action && <Button variant="primary" size="sm" onClick={action.onClick}>{action.label}</Button>}
     </div>
   )

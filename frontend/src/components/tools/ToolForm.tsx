@@ -1,48 +1,80 @@
 import { useEffect, useState } from 'react'
-import { Checkbox, Form, Input, InputNumber, Modal, Select, message } from 'antd'
+import { toast } from 'sonner'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
+import { Textarea } from '@/components/shadcn/textarea'
+import Drawer from '../ui/Drawer'
+import Button from '../ui/Button'
 import { createTool, updateTool, type ToolAuthType, type ToolConfig, type ToolInput, type ToolRow } from '../../api'
 import { statusOptions } from '../../constants/status'
 import ToolParamsEditor, { rowsFromSchema, schemaFromRows, type ParamRow } from './ToolParamsEditor'
 import { errorText } from '../../utils/errors'
 
-// 工具新增 / 编辑弹窗：HTTP 工具的方法 / 地址 / 请求头结构化录入，参数声明用表格；builtin 类型 config 恒为空对象。
+// 工具新增 / 编辑：HTTP 工具的方法 / 地址 / 请求头结构化录入，参数声明用表格；builtin 类型 config 恒为空对象。
 // 凭据走"鉴权"区（docs/15 RS-06）：加密托管、保存后任何地方都不回显；编辑时留空表示沿用，勾选"清除"才删除。
+// 字段多、HTTP 工具还要展开一整段请求配置 → 用抽屉（整高、正文滚动、按钮常驻），不用弹窗。
 interface Props { open: boolean; editing: ToolRow | null; onClose: () => void; onSaved: () => void }
 interface FormValues {
-  name: string; description: string; type: 'builtin' | 'http'; timeout: number; method?: string; url?: string; headersStr?: string; params?: ParamRow[]
-  allowedHosts?: string
-  authType: ToolAuthType; authLocation?: 'header' | 'query'; authName?: string; secret?: string; clearSecret?: boolean
+  name: string; description: string; type: 'builtin' | 'http'; timeout: number; method: string; url: string; headersStr: string; params: ParamRow[]
+  allowedHosts: string
+  authType: ToolAuthType; authLocation: 'header' | 'query'; authName: string; secret: string; clearSecret: boolean
 }
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m }))
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 const AUTH_TYPES = [
   { value: 'none', label: '不需要' }, { value: 'bearer', label: 'Bearer Token（Authorization 头）' },
   { value: 'api_key', label: 'API Key（自定义请求头或查询参数）' }, { value: 'basic', label: 'Basic（用户名:密码）' },
 ]
+const EMPTY: FormValues = {
+  name: '', description: '', type: 'builtin', timeout: 30, method: 'POST', url: '', headersStr: '', params: [], allowedHosts: '',
+  authType: 'none', authLocation: 'header', authName: '', secret: '', clearSecret: false,
+}
 
 export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
-  const [form] = Form.useForm<FormValues>()
+  const [values, setValues] = useState<FormValues>(EMPTY)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const hasSecret = !!editing?.auth?.has_secret
+
   useEffect(() => {
     if (!open) return
-    form.resetFields()
-    if (editing) {
-      const { parameters, url, method, headers, allowed_hosts } = editing.config || {}
-      form.setFieldsValue({
-        name: editing.name, description: editing.description, type: editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(), url,
-        headersStr: headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '', params: rowsFromSchema(parameters),
-        allowedHosts: (allowed_hosts || []).join('\n'),
-        authType: editing.auth?.type ?? 'none', authLocation: editing.auth?.location ?? undefined, authName: editing.auth?.name ?? undefined,
-      })
-    }
-  }, [open, editing, form])
+    setError(null)
+    if (!editing) { setValues(EMPTY); return }
+    const { parameters, url, method, headers, allowed_hosts } = editing.config || {}
+    setValues({
+      name: editing.name, description: editing.description, type: editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(),
+      url: url ?? '', headersStr: headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '',
+      params: rowsFromSchema(parameters), allowedHosts: (allowed_hosts || []).join('\n'),
+      authType: editing.auth?.type ?? 'none', authLocation: editing.auth?.location === 'query' ? 'query' : 'header',
+      authName: editing.auth?.name ?? '', secret: '', clearSecret: false,
+    })
+  }, [open, editing])
 
-  const onSubmit = async (values: FormValues) => {
+  const set = <K extends keyof FormValues>(key: K, v: FormValues[K]) => setValues((s) => ({ ...s, [key]: v }))
+
+  // 服务端同样会校验，这里只是提前给出可读提示
+  const validate = (v: FormValues): string | null => {
+    if (!v.name.trim()) return '请填写名称'
+    if (!v.description.trim()) return '请填写描述'
+    if (v.type !== 'http') return null
+    if (!v.url.trim()) return '请输入请求地址'
+    if (!/^https?:\/\/\S+$/i.test(v.url.trim())) return '请输入合法的 URL'
+    if (!v.allowedHosts.trim()) return 'HTTP 工具必须填写目标地址白名单'
+    if (v.authType === 'api_key' && !v.authName.trim()) return '请填写参数名'
+    if (v.authType !== 'none' && !hasSecret && !v.secret.trim()) return '请填写凭据'
+    return null
+  }
+
+  const onSubmit = async () => {
+    const invalid = validate(values)
+    if (invalid) { setError(invalid); return }
     let config: ToolConfig = {}
     if (values.type === 'http') {
       let headers: Record<string, string> = {}
       if (values.headersStr?.trim()) {
-        try { headers = JSON.parse(values.headersStr) } catch { message.error('请求头 JSON 格式错误'); return }
-        if (typeof headers !== 'object' || Array.isArray(headers)) { message.error('请求头必须是 JSON 对象'); return }
+        try { headers = JSON.parse(values.headersStr) } catch { setError('请求头 JSON 格式错误'); return }
+        if (typeof headers !== 'object' || Array.isArray(headers)) { setError('请求头必须是 JSON 对象'); return }
       }
       // 保留 config 里前端不认识的键（后端扩展字段），只覆盖结构化录入的几项
       const { parameters: _p, url: _u, method: _m, headers: _h, allowed_hosts: _a, ...rest } = editing?.config || {}
@@ -62,62 +94,162 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
     try {
       if (editing) await updateTool(editing.id, payload)
       else await createTool(payload)
-      message.success(editing ? '保存成功' : '创建成功')
+      toast.success(editing ? '保存成功' : '创建成功')
       onSaved()
       onClose()
-    } catch (e) { message.error(errorText(e, '保存失败')) } finally { setSubmitting(false) }
+    } catch (e) { setError(errorText(e, '保存失败')) } finally { setSubmitting(false) }
   }
 
   return (
-    <Modal title={editing ? `编辑工具：${editing.name}` : '新增工具'} open={open} onCancel={onClose} onOk={() => form.submit()} confirmLoading={submitting} destroyOnHidden width={760}>
-      <Form form={form} layout="vertical" onFinish={onSubmit} initialValues={{ type: 'builtin', timeout: 30, params: [], method: 'POST', authType: 'none', authLocation: 'header' }}>
-        <Form.Item name="name" label="名称" rules={[{ required: true }]} extra="模型按名称选择工具，用英文标识更稳定"><Input /></Form.Item>
-        <Form.Item name="description" label="描述" rules={[{ required: true }]} extra="模型据此判断何时调用，写清用途与输入输出"><Input.TextArea rows={2} /></Form.Item>
-        <Form.Item name="type" label="类型"><Select options={statusOptions('toolType')} disabled={!!editing} /></Form.Item>
-        <Form.Item noStyle shouldUpdate={(a, b) => a.type !== b.type}>
-          {({ getFieldValue }) => getFieldValue('type') === 'http' && (
-            <>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="method" label="方法" style={{ width: 120 }}><Select options={METHODS} /></Form.Item>
-                <Form.Item name="url" label="请求地址" style={{ flex: 1 }} rules={[{ required: true, message: '请输入请求地址' }, { type: 'url', message: '请输入合法的 URL' }]}><Input placeholder="https://api.example.com/v1/query" /></Form.Item>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width={720}
+      title={editing ? `编辑工具：${editing.name}` : '新增工具'}
+      footer={
+        <>
+          <Button variant="ghost" size="md" onClick={onClose}>取消</Button>
+          <Button variant="primary" size="md" disabled={submitting} onClick={onSubmit}>{submitting ? '保存中…' : '保存'}</Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tool-name">名称</Label>
+          <Input id="tool-name" value={values.name} onChange={(e) => set('name', e.target.value)} placeholder="例如：weather_query" />
+          <p className="m-0 text-[12px] text-muted-foreground">模型按名称选择工具，用英文标识更稳定</p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="tool-desc">描述</Label>
+          <Textarea id="tool-desc" rows={2} value={values.description} onChange={(e) => set('description', e.target.value)} placeholder="模型据此判断何时调用，写清用途与输入输出" className="resize-y text-[13px]" />
+        </div>
+
+        <div className="flex gap-3">
+          <div className="flex flex-1 flex-col gap-1.5">
+            <Label htmlFor="tool-type">类型</Label>
+            <Select value={values.type} disabled={!!editing} onValueChange={(v) => set('type', v as 'builtin' | 'http')}>
+              <SelectTrigger id="tool-type" className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {statusOptions('toolType').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex w-[130px] flex-col gap-1.5">
+            <Label htmlFor="tool-timeout">超时（秒）</Label>
+            <Input id="tool-timeout" type="number" min={1} max={300} value={values.timeout} onChange={(e) => set('timeout', Number(e.target.value))} />
+          </div>
+        </div>
+
+        {values.type === 'http' && (
+          <>
+            <div className="flex gap-3">
+              <div className="flex w-[120px] flex-col gap-1.5">
+                <Label htmlFor="tool-method">方法</Label>
+                <Select value={values.method} onValueChange={(v) => set('method', v)}>
+                  <SelectTrigger id="tool-method" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-              <Form.Item name="allowedHosts" label="目标地址白名单" rules={[{ required: true, message: 'HTTP 工具必须填写目标地址白名单' }]} extra="每行一个主机名（如 api.example.com），子域自动放行。不填的 HTTP 工具在对话与工作流里会被直接拒绝（2026-10-26 起），只有工具页的测试调用能跑（docs/16 P3a）">
-                <Input.TextArea rows={3} placeholder={'api.example.com\nv2.example.com'} />
-              </Form.Item>
-              <Form.Item name="headersStr" label="请求头（JSON 对象，可选）" extra="只放非敏感的请求头；Authorization、Token、Key 这类凭据在下方鉴权里配置（写进这里保存会被拒绝）"><Input.TextArea rows={3} placeholder='{"Content-Type": "application/json"}' /></Form.Item>
-              <ToolAuthFields hasSecret={!!editing?.auth?.has_secret} />
-              <Form.Item name="params" label="参数声明（模型按此以结构化参数调用）"><ToolParamsEditor /></Form.Item>
-            </>
-          )}
-        </Form.Item>
-        <Form.Item name="timeout" label="超时（秒）"><InputNumber min={1} max={300} /></Form.Item>
-      </Form>
-    </Modal>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <Label htmlFor="tool-url">请求地址</Label>
+                <Input id="tool-url" value={values.url} onChange={(e) => set('url', e.target.value)} placeholder="https://api.example.com/v1/query" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="tool-hosts">目标地址白名单</Label>
+              <Textarea id="tool-hosts" rows={3} value={values.allowedHosts} onChange={(e) => set('allowedHosts', e.target.value)} placeholder={'api.example.com\nv2.example.com'} className="resize-y font-mono text-[13px]" />
+              <p className="m-0 text-[12px] text-muted-foreground">每行一个主机名（如 api.example.com），子域自动放行。不填的 HTTP 工具在对话与工作流里会被直接拒绝（2026-10-26 起），只有工具页的测试调用能跑（docs/16 P3a）</p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="tool-headers">请求头（JSON 对象，可选）</Label>
+              <Textarea id="tool-headers" rows={3} value={values.headersStr} onChange={(e) => set('headersStr', e.target.value)} placeholder='{"Content-Type": "application/json"}' className="resize-y font-mono text-[13px]" />
+              <p className="m-0 text-[12px] text-muted-foreground">只放非敏感的请求头；Authorization、Token、Key 这类凭据在下方鉴权里配置（写进这里保存会被拒绝）</p>
+            </div>
+
+            <ToolAuthFields
+              values={values}
+              set={set}
+              hasSecret={hasSecret}
+            />
+
+            <div className="flex flex-col gap-1.5">
+              <Label>参数声明（模型按此以结构化参数调用）</Label>
+              <ToolParamsEditor value={values.params} onChange={(rows) => set('params', rows)} />
+            </div>
+          </>
+        )}
+
+        {error && <p className="m-0 text-[12.5px] text-destructive">{error}</p>}
+      </div>
+    </Drawer>
   )
 }
 
 // 鉴权区：api_key 要选位置与参数名；凭据用密码框，已配置时留空表示沿用（服务端同样校验：选了方式却没有凭据 400）
-function ToolAuthFields({ hasSecret }: { hasSecret: boolean }) {
+function ToolAuthFields({ values, set, hasSecret }: {
+  values: FormValues
+  set: <K extends keyof FormValues>(key: K, v: FormValues[K]) => void
+  hasSecret: boolean
+}) {
   return (
-    <>
-      <Form.Item name="authType" label="鉴权"><Select options={AUTH_TYPES} /></Form.Item>
-      <Form.Item noStyle shouldUpdate={(a, b) => a.authType !== b.authType}>
-        {({ getFieldValue }) => getFieldValue('authType') !== 'none' && (
-          <>
-            {getFieldValue('authType') === 'api_key' && (
-              <div style={{ display: 'flex', gap: 12 }}>
-                <Form.Item name="authLocation" label="位置" style={{ width: 140 }}><Select options={[{ value: 'header', label: '请求头' }, { value: 'query', label: '查询参数' }]} /></Form.Item>
-                <Form.Item name="authName" label="参数名" style={{ flex: 1 }} rules={[{ required: true, message: '请填写参数名' }]}><Input placeholder="X-API-Key" /></Form.Item>
+    <div className="flex flex-col gap-3 rounded-lg border border-border px-3 py-3">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="tool-auth-type">鉴权</Label>
+        <Select value={values.authType} onValueChange={(v) => set('authType', v as ToolAuthType)}>
+          <SelectTrigger id="tool-auth-type" className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {AUTH_TYPES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {values.authType !== 'none' && (
+        <>
+          {values.authType === 'api_key' && (
+            <div className="flex gap-3">
+              <div className="flex w-[140px] flex-col gap-1.5">
+                <Label htmlFor="tool-auth-location">位置</Label>
+                <Select value={values.authLocation} onValueChange={(v) => set('authLocation', v as 'header' | 'query')}>
+                  <SelectTrigger id="tool-auth-location" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="header">请求头</SelectItem>
+                    <SelectItem value="query">查询参数</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-            <Form.Item name="secret" label="凭据" extra="加密保存，之后任何页面与接口都不回显；调用时按上面的方式带上"
-              rules={hasSecret ? [] : [{ required: true, message: '请填写凭据' }]}>
-              <Input.Password autoComplete="new-password" placeholder={hasSecret ? '已配置，留空不修改' : getFieldValue('authType') === 'basic' ? '用户名:密码' : '粘贴 Token / Key'} />
-            </Form.Item>
-            {hasSecret && <Form.Item name="clearSecret" valuePropName="checked"><Checkbox>清除已保存的凭据</Checkbox></Form.Item>}
-          </>
-        )}
-      </Form.Item>
-    </>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <Label htmlFor="tool-auth-name">参数名</Label>
+                <Input id="tool-auth-name" value={values.authName} onChange={(e) => set('authName', e.target.value)} placeholder="X-API-Key" />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="tool-secret">凭据</Label>
+            <Input
+              id="tool-secret"
+              type="password"
+              autoComplete="new-password"
+              value={values.secret}
+              onChange={(e) => set('secret', e.target.value)}
+              placeholder={hasSecret ? '已配置，留空不修改' : values.authType === 'basic' ? '用户名:密码' : '粘贴 Token / Key'}
+            />
+            <p className="m-0 text-[12px] text-muted-foreground">加密保存，之后任何页面与接口都不回显；调用时按上面的方式带上</p>
+          </div>
+
+          {hasSecret && (
+            <div className="flex items-center gap-2">
+              <Checkbox id="tool-clear-secret" checked={values.clearSecret} onCheckedChange={(v) => set('clearSecret', v === true)} />
+              <Label htmlFor="tool-clear-secret" className="text-[13px] font-normal">清除已保存的凭据</Label>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }

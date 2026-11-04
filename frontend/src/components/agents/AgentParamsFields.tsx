@@ -1,4 +1,4 @@
-import { Collapse, Typography } from 'antd'
+import { Collapse, Form, Typography } from 'antd'
 import type { ModelParams } from '../../api'
 import ModelParamsFields from '../models/ModelParamsFields'
 
@@ -14,7 +14,7 @@ export default function AgentParamsFields({ inherited }: { inherited?: ModelPara
         label: '高级参数（留空继承模型默认）',
         children: (
           <>
-            <ModelParamsFields name="params" inherited={inherited ?? {}} />
+            <Form.Item name="params"><ModelParamsFields inherited={inherited ?? {}} /></Form.Item>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>模型的默认参数在模型页设置；不同厂商支持的取值范围不同。</Typography.Text>
           </>
         ),

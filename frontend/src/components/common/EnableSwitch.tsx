@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { message } from 'antd'
+import { toast } from 'sonner'
 import { errorText } from '../../utils/errors'
 
 // 列内启停开关：乐观更新，失败回滚并提示；请求中禁用防连点。
@@ -26,7 +26,7 @@ export default function EnableSwitch({ checked, onToggle, disabled, size = 'smal
     try {
       await onToggle()
     } catch (e) {
-      message.error(errorText(e, '操作失败'))
+      toast.error(errorText(e, '操作失败'))
     } finally {
       setOptimistic(null)
       setPending(false)

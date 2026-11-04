@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Button, Space, Typography, message } from 'antd'
-import { CopyOutlined } from '@ant-design/icons'
+import { toast } from 'sonner'
+import { Copy } from 'lucide-react'
+import Button from '../ui/Button'
 
 // JSON / 长文本展示：缩进、复制、超高折叠；取代散落的 <pre>{JSON.stringify(...)}</pre>。
 interface Props {
@@ -21,17 +22,17 @@ function toText(value: unknown): string {
 export default function JsonView({ value, maxHeight = 240, title }: Props) {
   const [expanded, setExpanded] = useState(false)
   const text = toText(value)
-  if (!text) return <Typography.Text type="secondary">（空）</Typography.Text>
+  if (!text) return <span className="text-[13px] text-muted-foreground">（空）</span>
   const long = text.split('\n').length > 12 || text.length > 800
-  const copy = () => navigator.clipboard?.writeText(text).then(() => message.success('已复制'))
+  const copy = () => navigator.clipboard?.writeText(text).then(() => toast.success('已复制'))
   return (
     <div className="json-view">
       <div className="json-view-bar">
-        <span style={{ fontSize: 12, color: '#6b7280' }}>{title}</span>
-        <Space size={4}>
-          {long && <Button size="small" type="link" onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '展开'}</Button>}
-          <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} />
-        </Space>
+        <span className="text-[12px] text-muted-foreground">{title}</span>
+        <div className="flex items-center gap-1">
+          {long && <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '展开'}</Button>}
+          <Button size="sm" variant="ghost" aria-label="复制" onClick={copy}><Copy className="size-3.5" /></Button>
+        </div>
       </div>
       <pre style={{ maxHeight: expanded ? undefined : maxHeight }}>{text}</pre>
     </div>
