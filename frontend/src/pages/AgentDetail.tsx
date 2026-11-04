@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Button, Popconfirm, Space, Tag, message } from 'antd'
-import { DeleteOutlined, EditOutlined, MessageOutlined, RocketOutlined, ShareAltOutlined } from '@ant-design/icons'
+import { toast } from 'sonner'
+import { MessageSquare, Pencil, Rocket, Share2, Trash2 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { deleteAgent, getAgent, listApiKeys, offlineAgent, publishAgent } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
@@ -21,6 +21,9 @@ import AgentStatsTab from '../components/agents/AgentStatsTab'
 import AgentVersionsTab from '../components/agents/AgentVersionsTab'
 import AgentConversationsTab from '../components/agents/AgentConversationsTab'
 import RunsTable from '../components/runs/RunsTable'
+import Badge from '../components/ui/Badge'
+import Button from '../components/ui/Button'
+import InlineConfirm from '../components/ui/InlineConfirm'
 import { errorText } from '../utils/errors'
 import { formatDateTime } from '../utils/time'
 
@@ -42,17 +45,17 @@ export default function AgentDetail() {
   const publish = async (note?: string) => {
     try {
       const r = await publishAgent(agentId, note)
-      message.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
+      toast.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
       setPublishOpen(false)
       reload(true)
       share.reload(true) // 分享的"已发布"与预检随线上版本变
-    } catch (e) { message.error(errorText(e, '发布失败')); throw e }
+    } catch (e) { toast.error(errorText(e, '发布失败')); throw e }
   }
   const takeOffline = async () => {
-    try { await offlineAgent(agentId); message.success('已下线：对话、分享链接、API Key 与工作流都不能再调用它'); reload(true); share.reload(true) } catch (e) { message.error(errorText(e, '下线失败')) }
+    try { await offlineAgent(agentId); toast.success('已下线：对话、分享链接、API Key 与工作流都不能再调用它'); reload(true); share.reload(true) } catch (e) { toast.error(errorText(e, '下线失败')) }
   }
   const remove = async () => {
-    try { await deleteAgent(agentId); message.success('已删除'); navigate('/agents') } catch (e) { message.error(errorText(e, '删除失败')) }
+    try { await deleteAgent(agentId); toast.success('已删除'); navigate('/agents') } catch (e) { toast.error(errorText(e, '删除失败')) }
   }
 
   return (
@@ -61,12 +64,12 @@ export default function AgentDetail() {
         crumbs={[{ label: '智能体', to: '/agents' }, { label: agent?.name ?? `#${agentId}` }]}
         title={agent?.name ?? ''}
         tags={agent && (
-          <Space size={4}>
+          <span className="inline-flex flex-wrap items-center gap-1.5">
             <StatusTag domain="agent" value={agent.status} />
-            {agent.published_version && <Tag>线上 v{agent.published_version}</Tag>}
-            {agent.has_unpublished_changes && <Tag color="gold">未发布修改</Tag>}
-            {agent.prompt_template_outdated && <Tag color="orange">模板有新版本</Tag>}
-          </Space>
+            {agent.published_version && <Badge tone="neutral">线上 v{agent.published_version}</Badge>}
+            {agent.has_unpublished_changes && <Badge tone="warning">未发布修改</Badge>}
+            {agent.prompt_template_outdated && <Badge tone="warning">模板有新版本</Badge>}
+          </span>
         )}
         meta={agent ? [
           { label: '模型', value: <ResourceLink type="model" id={agent.model_id} name={agent.model_name} /> },
@@ -79,24 +82,40 @@ export default function AgentDetail() {
         onRetry={() => reload()}
         backTo="/agents"
         extra={agent && (
-          <Space>
-            <Button type="primary" icon={<MessageOutlined />} disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?agent=${agent.id}`)}>对话</Button>
-            <Button icon={<ShareAltOutlined />} onClick={() => navigate('?tab=channels')}>分享</Button>
-            {(agent.status !== 'published' || agent.has_unpublished_changes) && <Button icon={<RocketOutlined />} onClick={() => setPublishOpen(true)}>{agent.status === 'offline' && !agent.has_unpublished_changes ? '重新上线' : '发布'}</Button>}
-            {agent.status === 'published' && <Popconfirm title="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" onConfirm={takeOffline}><Button>下线</Button></Popconfirm>}
-            <Button icon={<EditOutlined />} onClick={() => navigate(`/agents/${agent.id}/edit`)}>编辑</Button>
-            <Popconfirm title="确定删除？会话、消息与运行记录会一并删除" onConfirm={remove}><Button danger icon={<DeleteOutlined />}>删除</Button></Popconfirm>
-          </Space>
+          <>
+            <Button variant="primary" size="md" disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?agent=${agent.id}`)}>
+              <MessageSquare className="size-3.5" />对话
+            </Button>
+            <Button variant="secondary" size="md" onClick={() => navigate('?tab=channels')}>
+              <Share2 className="size-3.5" />分享
+            </Button>
+            {(agent.status !== 'published' || agent.has_unpublished_changes) && (
+              <Button variant="secondary" size="md" onClick={() => setPublishOpen(true)}>
+                <Rocket className="size-3.5" />{agent.status === 'offline' && !agent.has_unpublished_changes ? '重新上线' : '发布'}
+              </Button>
+            )}
+            {agent.status === 'published' && (
+              <InlineConfirm message="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" confirmLabel="下线" onConfirm={takeOffline}>
+                <Button variant="secondary" size="md">下线</Button>
+              </InlineConfirm>
+            )}
+            <Button variant="secondary" size="md" onClick={() => navigate(`/agents/${agent.id}/edit`)}>
+              <Pencil className="size-3.5" />编辑
+            </Button>
+            <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" onConfirm={remove}>
+              <Button variant="danger" size="md"><Trash2 className="size-3.5" />删除</Button>
+            </InlineConfirm>
+          </>
         )}
         tabs={agent ? [
           { key: 'overview', label: '概览', children: <AgentOverview agent={agent} /> },
           {
             key: 'channels', label: '发布渠道', children: (
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <div className="flex flex-col gap-3">
                 <ShareLinkCard share={share.share} error={share.error} saving={share.saving} onRetry={() => share.reload()} onSave={share.save} onReset={share.reset} />
                 <ApiAccessPanel agent={agent} baseUrl={baseUrl} baseUrlConfigured={baseUrlConfigured} />
                 <AgentKeysCard keys={keys.data?.items ?? null} total={keys.data?.total} error={keys.error} onRetry={() => keys.reload()} onCreate={() => setKeyFormOpen(true)} />
-              </Space>
+              </div>
             ),
           },
           { key: 'stats', label: '运行统计', children: <AgentStatsTab agentId={agent.id} /> },

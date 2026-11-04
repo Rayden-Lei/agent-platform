@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
-import { Button, Space, Typography } from 'antd'
-import { CheckOutlined, CloseOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Check, RotateCw, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getRun } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
@@ -10,6 +9,7 @@ import ResourceLink from '../components/common/ResourceLink'
 import TokenUsage from '../components/common/TokenUsage'
 import RunOverview from '../components/runs/RunOverview'
 import NodeLogTable from '../components/runs/NodeLogTable'
+import Button from '../components/ui/Button'
 import { useReview } from '../components/runs/useReview'
 import { formatDateTime, formatDuration } from '../utils/time'
 import { formatCost } from '../utils/format'
@@ -31,7 +31,7 @@ export default function RunDetail() {
 
   const meta = run ? [
     { label: '归属', value: run.run_type === 'chat' ? <ResourceLink type="agent" id={run.agent_id} name={run.agent_name} /> : <ResourceLink type="workflow" id={run.workflow_id} name={run.workflow_name} /> },
-    { label: '触发', value: <span><StatusTag domain="runSource" value={run.source} /> {run.username}</span> },
+    { label: '触发', value: <span className="inline-flex items-center gap-1.5"><StatusTag domain="runSource" value={run.source} /> {run.username}</span> },
     { label: '开始', value: formatDateTime(run.started_at) },
     { label: '耗时', value: run.finished_at ? formatDuration(run.latency_ms) : (live ? '进行中' : '-') },
   ] : []
@@ -40,34 +40,38 @@ export default function RunDetail() {
     <DetailPage
       crumbs={[{ label: '运行记录', to: '/runs' }, { label: `#${runId}` }]}
       title={`运行 #${runId}`}
-      tags={run && <Space size={4}><StatusTag domain="runType" value={run.run_type} /><StatusTag domain="run" value={run.status} /></Space>}
+      tags={run && <span className="inline-flex items-center gap-1"><StatusTag domain="runType" value={run.run_type} /><StatusTag domain="run" value={run.status} /></span>}
       meta={meta}
       loading={loading && !run}
       error={error}
       onRetry={() => reload()}
       backTo="/runs"
       extra={
-        <Space>
+        <span className="inline-flex items-center gap-2">
           {run?.status === 'awaiting_review' && (
             <>
-              <Button type="primary" icon={<CheckOutlined />} loading={reviewing === run.id} onClick={() => review(run, 'approved')}>通过</Button>
-              <Button danger icon={<CloseOutlined />} loading={reviewing === run.id} onClick={() => review(run, 'rejected')}>拒绝</Button>
+              <Button variant="primary" size="md" icon={<Check />} disabled={reviewing === run.id} onClick={() => review(run, 'approved')}>
+                {reviewing === run.id ? '提交中…' : '通过'}
+              </Button>
+              <Button variant="danger" size="md" icon={<X />} disabled={reviewing === run.id} onClick={() => review(run, 'rejected')}>拒绝</Button>
             </>
           )}
-          {run?.conversation_id && <Button onClick={() => navigate(`/chat?conversation=${run.conversation_id}${run.agent_id ? `&agent=${run.agent_id}` : ''}`)}>查看会话</Button>}
-          <Button icon={<ReloadOutlined />} onClick={() => reload()}>{live ? '自动刷新中' : '刷新'}</Button>
-        </Space>
+          {run?.conversation_id && (
+            <Button size="md" variant="secondary" onClick={() => navigate(`/chat?conversation=${run.conversation_id}${run.agent_id ? `&agent=${run.agent_id}` : ''}`)}>查看会话</Button>
+          )}
+          <Button size="md" variant="secondary" icon={<RotateCw />} onClick={() => reload()}>{live ? '自动刷新中' : '刷新'}</Button>
+        </span>
       }
       tabs={run ? [
         { key: 'overview', label: '概览', children: <RunOverview run={run} /> },
         { key: 'nodes', label: `节点日志${run.nodes.length ? `（${run.nodes.length}）` : ''}`, children: <NodeLogTable nodes={run.nodes} /> },
         {
           key: 'tokens', label: 'Token 与成本', children: (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="flex flex-col gap-3">
               <TokenUsage usage={run.token_usage} cost={run.cost} />
-              <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+              <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
                 成本 {formatCost(run.cost)} 是运行收尾时按所用模型{run.model_name ? `「${run.model_name}」` : ''}当时的单价折算的快照，之后改单价不会追溯；工作流运行没有绑定模型，不计成本。
-              </Typography.Paragraph>
+              </p>
             </div>
           ),
         },

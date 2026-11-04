@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Button, Popconfirm, Space, Tag, Typography, message } from 'antd'
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { toast } from 'sonner'
+import { Pencil, Trash2 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { deleteKB, getKB, getUploadPolicy, listKBAccessChanges, updateKBAccess, type KbAccessInput } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
@@ -15,6 +15,9 @@ import DocTable from '../components/kb/DocTable'
 import SearchEval from '../components/kb/SearchEval'
 import KbStats from '../components/kb/KbStats'
 import KbAccessTab from '../components/kb/KbAccessTab'
+import Badge from '../components/ui/Badge'
+import Button from '../components/ui/Button'
+import InlineConfirm from '../components/ui/InlineConfirm'
 import { statusLabel } from '../constants/status'
 import { errorText } from '../utils/errors'
 import { formatNumber } from '../utils/format'
@@ -32,15 +35,15 @@ export default function KbDetail() {
   const changes = useAsyncData(() => listKBAccessChanges(kbId, { page: 1, page_size: 20 }), [kbId], { errorText: '加载变更记录失败' })
   const [editing, setEditing] = useState(false)
   const [savingAccess, setSavingAccess] = useState(false)
-  const remove = async () => { try { await deleteKB(kbId); message.success('已删除'); navigate('/knowledge-bases') } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const remove = async () => { try { await deleteKB(kbId); toast.success('已删除'); navigate('/knowledge-bases') } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const saveAccess = async (policy: KbAccessInput) => {
     setSavingAccess(true)
     try {
       await updateKBAccess(kbId, policy)
-      message.success('访问权限已保存，立即生效')
+      toast.success('访问权限已保存，立即生效')
       reload(true)
       changes.reload(true)
-    } catch (e) { message.error(errorText(e, '保存失败')) } finally { setSavingAccess(false) }
+    } catch (e) { toast.error(errorText(e, '保存失败')) } finally { setSavingAccess(false) }
   }
 
   return (
@@ -48,9 +51,24 @@ export default function KbDetail() {
       <DetailPage
         crumbs={[{ label: '知识库', to: '/knowledge-bases' }, { label: kb?.name ?? `#${kbId}` }]}
         title={kb?.name ?? ''}
-        tags={kb && <Space size={4}><StatusTag domain="visibility" value={kb.is_public} />{!kb.is_public && (kb.visible_roles || []).map((r) => <Tag key={r}>{statusLabel('role', r)}</Tag>)}<Tag>{kb.embedding_model}</Tag></Space>}
+        tags={kb && (
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <StatusTag domain="visibility" value={kb.is_public} />
+            {!kb.is_public && (kb.visible_roles || []).map((r) => <Badge key={r} tone="neutral">{statusLabel('role', r)}</Badge>)}
+            <Badge tone="accent">{kb.embedding_model}</Badge>
+          </span>
+        )}
         meta={kb ? [
-          { label: '文档', value: <span>{kb.document_count}{kb.failed_count > 0 && <Tag color="error" style={{ marginLeft: 6 }}>失败 {kb.failed_count}</Tag>}{kb.processing_count > 0 && <Tag color="processing" style={{ marginLeft: 6 }}>处理中 {kb.processing_count}</Tag>}</span> },
+          {
+            label: '文档',
+            value: (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {kb.document_count}
+                {kb.failed_count > 0 && <Badge tone="danger">失败 {kb.failed_count}</Badge>}
+                {kb.processing_count > 0 && <Badge tone="info">处理中 {kb.processing_count}</Badge>}
+              </span>
+            ),
+          },
           { label: '切片 / Token', value: `${formatNumber(kb.chunk_count)} / ${formatNumber(kb.token_count)}` },
           { label: '切片参数', value: `${kb.chunk_size} / 重叠 ${kb.chunk_overlap}` },
           { label: '创建人', value: kb.created_by_username || '-' },
@@ -60,13 +78,25 @@ export default function KbDetail() {
         onRetry={() => reload()}
         backTo="/knowledge-bases"
         extra={kb && (
-          <Space>
-            <Button icon={<EditOutlined />} onClick={() => setEditing(true)}>编辑</Button>
-            <Popconfirm title="确定删除？文档与切片会一并删除" onConfirm={remove}><Button danger icon={<DeleteOutlined />}>删除</Button></Popconfirm>
-          </Space>
+          <>
+            <Button variant="secondary" size="md" onClick={() => setEditing(true)}>
+              <Pencil className="size-3.5" />编辑
+            </Button>
+            <InlineConfirm message="确定删除？文档与切片会一并删除" onConfirm={remove}>
+              <Button variant="danger" size="md"><Trash2 className="size-3.5" />删除</Button>
+            </InlineConfirm>
+          </>
         )}
         tabs={kb ? [
-          { key: 'documents', label: `文档（${kb.document_count}）`, children: <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}><EmbeddingAlert /><DocTable kbId={kb.id} uploadPolicy={uploadPolicy} onChanged={() => reload(true)} /></div> },
+          {
+            key: 'documents', label: `文档（${kb.document_count}）`,
+            children: (
+              <div className="flex flex-col gap-3">
+                <EmbeddingAlert />
+                <DocTable kbId={kb.id} uploadPolicy={uploadPolicy} onChanged={() => reload(true)} />
+              </div>
+            ),
+          },
           { key: 'search', label: '检索评测', children: <SearchEval kbId={kb.id} /> },
           { key: 'stats', label: '统计', children: <KbStats kb={kb} /> },
           {
@@ -77,15 +107,17 @@ export default function KbDetail() {
           },
           {
             key: 'agents', label: `引用（${kb.agents.length}）`, children: kb.agents.length ? (
-              <Space direction="vertical">
-                <Typography.Text type="secondary">草稿或线上版本绑定了该知识库的智能体；改权限或重新解析会影响它们的检索结果。</Typography.Text>
+              <div className="flex flex-col gap-2">
+                <p className="m-0 text-[12.5px] text-muted-foreground">草稿或线上版本绑定了该知识库的智能体；改权限或重新解析会影响它们的检索结果。</p>
                 {kb.agents.map((a) => (
-                  <span key={a.id}>
-                    <ResourceLink type="agent" id={a.id} name={a.name} showIcon /> <StatusTag domain="agent" value={a.status} />
-                    {a.in_live && <Tag style={{ marginLeft: 4 }}>线上版本</Tag>}{a.in_draft && <Tag>草稿</Tag>}
+                  <span key={a.id} className="inline-flex flex-wrap items-center gap-1.5">
+                    <ResourceLink type="agent" id={a.id} name={a.name} showIcon />
+                    <StatusTag domain="agent" value={a.status} />
+                    {a.in_live && <Badge tone="neutral">线上版本</Badge>}
+                    {a.in_draft && <Badge tone="neutral">草稿</Badge>}
                   </span>
                 ))}
-              </Space>
+              </div>
             ) : <EmptyState description="还没有智能体绑定该知识库；在智能体表单里选择即可" />,
           },
         ] : []}
