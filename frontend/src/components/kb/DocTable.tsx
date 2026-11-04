@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Button, Popconfirm, Progress, Select, Space, Table, Tag, Tooltip, Typography, Upload, message } from 'antd'
-import { FileTextOutlined, PlayCircleOutlined, RedoOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons'
+import { toast } from 'sonner'
+import { FileText, Play, RotateCw, Settings, Upload } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/shadcn/tooltip'
 import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow, type UploadPolicy } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
 import { useBatchAction } from '../../hooks/useBatchAction'
@@ -13,6 +15,10 @@ import EmptyState from '../common/EmptyState'
 import SearchInput from '../common/SearchInput'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
+import DataTable, { type DataColumn } from '../table/DataTable'
+import Button from '../ui/Button'
+import Badge from '../ui/Badge'
+import InlineConfirm from '../ui/InlineConfirm'
 import ChunkDrawer from './ChunkDrawer'
 import { PROCESSING_STATUSES, docProgress, humanSeconds } from './docProgress'
 import { errorText } from '../../utils/errors'
@@ -33,39 +39,58 @@ function precheck(file: File, policy?: UploadPolicy | null): string | null {
 }
 const PROCESSING = PROCESSING_STATUSES
 
+// 入库进度条：shadcn 没有 progress 组件，这里用语义色自己画一条（高度固定、宽度按百分比）
+function ProgressBar({ percent }: { percent: number }) {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+    </div>
+  )
+}
+
 // 状态单元格：处理中给进度条与速度，终态给状态标签 + 总耗时；超过阈值没心跳标"疑似中断"
 function StatusCell({ doc }: { doc: DocumentRow }) {
   const p = docProgress(doc)
   if (p.stalled) {
     return (
-      <Space size={6} wrap>
+      <span className="flex flex-wrap items-center gap-1.5">
         <StatusTag domain="document" value={doc.status} />
-        <Tooltip title="后端可能被重启或向量服务卡住了；点「继续处理」从已入库的片接着做"><Tag color="warning">疑似中断 {humanSeconds(p.stalledSeconds)}无进展</Tag></Tooltip>
-        {p.percent !== null && <Typography.Text type="secondary" style={{ fontSize: 12 }}>停在 {doc.chunk_count.toLocaleString()} / {(doc.chunk_total ?? 0).toLocaleString()} 片</Typography.Text>}
-      </Space>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span><Badge tone="warning">疑似中断 {humanSeconds(p.stalledSeconds)}无进展</Badge></span>
+          </TooltipTrigger>
+          <TooltipContent>后端可能被重启或向量服务卡住了；点「继续处理」从已入库的片接着做</TooltipContent>
+        </Tooltip>
+        {p.percent !== null && <span className="text-[12px] text-muted-foreground">停在 {doc.chunk_count.toLocaleString()} / {(doc.chunk_total ?? 0).toLocaleString()} 片</span>}
+      </span>
     )
   }
   if (doc.status === 'chunking' && p.percent !== null) {
     return (
-      <div style={{ minWidth: 220 }}>
-        <Progress percent={p.percent} size="small" status="active" format={(v) => `${v}%`} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      <div className="flex min-w-[220px] flex-col gap-1">
+        <ProgressBar percent={p.percent} />
+        <span className="text-[12px] text-muted-foreground">
           {doc.chunk_count.toLocaleString()} / {(doc.chunk_total ?? 0).toLocaleString()} 片
           {p.rate !== null && ` · ${p.rate.toFixed(1)} 片/秒`}
           {p.etaSeconds !== null && ` · 剩余约 ${humanSeconds(p.etaSeconds)}`}
-        </Typography.Text>
+        </span>
       </div>
     )
   }
   if (PROCESSING.has(doc.status)) {
-    return <Space size={6}><StatusTag domain="document" value={doc.status} /><Typography.Text type="secondary" style={{ fontSize: 12 }}>{doc.status === 'parsing' ? '读取并切片中' : '已上传，排队等待处理（同一时间只处理一篇）'}</Typography.Text></Space>
+    return (
+      <span className="flex flex-wrap items-center gap-1.5">
+        <StatusTag domain="document" value={doc.status} />
+        <span className="text-[12px] text-muted-foreground">{doc.status === 'parsing' ? '读取并切片中' : '已上传，排队等待处理（同一时间只处理一篇）'}</span>
+      </span>
+    )
   }
   return (
-    <Space size={6}>
+    <span className="flex flex-wrap items-center gap-1.5">
       <StatusTag domain="document" value={doc.status} />
-      {p.elapsedSeconds !== null && <Typography.Text type="secondary" style={{ fontSize: 12 }}>耗时 {humanSeconds(p.elapsedSeconds)}</Typography.Text>}
-      {doc.status === 'failed' && doc.chunk_total ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>已入库 {doc.chunk_count.toLocaleString()} / {doc.chunk_total.toLocaleString()} 片，可继续</Typography.Text> : null}
-    </Space>
+      {p.elapsedSeconds !== null && <span className="text-[12px] text-muted-foreground">耗时 {humanSeconds(p.elapsedSeconds)}</span>}
+      {doc.status === 'failed' && doc.chunk_total ? <span className="text-[12px] text-muted-foreground">已入库 {doc.chunk_count.toLocaleString()} / {doc.chunk_total.toLocaleString()} 片，可继续</span> : null}
+    </span>
   )
 }
 
@@ -76,8 +101,10 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
   const [status, setStatus] = useState<string | undefined>()
   const [q, setQ] = useState<string | undefined>()
   const [chunkDoc, setChunkDoc] = useState<DocumentRow | null>(null)
+  const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const filters = useMemo(() => ({ status, q }), [status, q])
-  const list = usePagedList<DocumentRow>((params) => listDocs(kbId, params), { filters, pageSize: 10, selectable: true, emptyText: <EmptyState description={status || q ? '没有匹配的文档' : '还没有文档，点右上角上传（PDF / Word / Markdown / TXT）'} /> })
+  const list = usePagedList<DocumentRow>((params) => listDocs(kbId, params), { filters, pageSize: 10, selectable: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload(); onChanged?.() })
   const processing = list.items.some((d) => PROCESSING.has(d.status))
 
@@ -88,64 +115,141 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
   }, [processing, list.reload, onChanged])
 
   const act = async (fn: () => Promise<unknown>, okText: string, fallback: string) => {
-    try { await fn(); message.success(okText); list.reload(); onChanged?.() } catch (e) { message.error(errorText(e, fallback)) }
+    try { await fn(); toast.success(okText); list.reload(); onChanged?.() } catch (e) { toast.error(errorText(e, fallback)) }
   }
 
+  // 一次选多个文件时按顺序传：并发上传几个大文件会互相抢带宽，进度也没法读
+  const onPick = async (files: FileList | null) => {
+    if (!files?.length) return
+    for (const file of Array.from(files)) {
+      const problem = precheck(file, uploadPolicy)
+      if (problem) { toast.error(problem); continue }
+      setUploading({ name: file.name, percent: 0 })
+      try {
+        await uploadDoc(kbId, file, (percent) => setUploading({ name: file.name, percent }))
+        toast.success(`${file.name} 上传完成，已进入处理队列`)
+      } catch (e) { toast.error(errorText(e, `${file.name} 上传失败`)) }
+    }
+    setUploading(null)
+    if (fileRef.current) fileRef.current.value = ''
+    list.reload(); onChanged?.()
+  }
+
+  const empty = <EmptyState description={status || q ? '没有匹配的文档' : '还没有文档，点右上角上传（PDF / Word / Markdown / TXT）'} />
+
+  const columns: DataColumn<DocumentRow>[] = [
+    { key: 'name', header: '文件名', primary: true, sortable: true, width: 220, cell: (d) => <span className="block truncate font-medium">{d.name}</span> },
+    { key: 'file_type', header: '类型', width: 80, hideOnMobile: true, cell: (d) => d.file_type.toUpperCase() },
+    { key: 'status', header: '状态 / 进度', sortable: true, width: 260, cell: (d) => <StatusCell doc={d} /> },
+    {
+      key: 'chunk_count', header: '切片', width: 110, align: 'right', sortable: true, hideOnMobile: true,
+      cell: (d) => (d.chunk_total && d.chunk_total !== d.chunk_count ? `${d.chunk_count.toLocaleString()} / ${d.chunk_total.toLocaleString()}` : d.chunk_count.toLocaleString()),
+    },
+    {
+      key: 'error', header: '失败原因', hideOnMobile: true,
+      cell: (d) => (d.error ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="block truncate text-[13px] text-destructive">{d.error}</span>
+          </TooltipTrigger>
+          <TooltipContent>{d.error}</TooltipContent>
+        </Tooltip>
+      ) : '-'),
+    },
+    { key: 'created_at', header: '上传时间', width: 170, sortable: true, hideOnMobile: true, cell: (d) => <TimeCell value={d.created_at} /> },
+    {
+      key: 'actions', header: '操作', width: 330, pinRight: true,
+      cell: (d) => (
+        <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <Button size="sm" variant="secondary" icon={<FileText className="size-3.5" />} disabled={d.status !== 'ready'} onClick={() => setChunkDoc(d)}>切片</Button>
+          {canResume(d) && (
+            <InlineConfirm message={`从已入库的第 ${d.chunk_count.toLocaleString()} 片接着处理（切片参数没变时不重来）？`} onConfirm={() => act(() => resumeDoc(kbId, d.id), '已排队继续处理', '继续处理失败')}>
+              <Button size="sm" variant="primary" icon={<Play className="size-3.5" />}>继续处理</Button>
+            </InlineConfirm>
+          )}
+          {/* 处理中不能重新解析：后端 400，这里直接置灰 */}
+          {PROCESSING.has(d.status) ? (
+            <Button size="sm" variant="secondary" icon={<RotateCw className="size-3.5" />} disabled>重新解析</Button>
+          ) : (
+            <InlineConfirm message="重新解析会清掉旧切片并按当前切片参数重建" onConfirm={() => act(() => reprocessDoc(kbId, d.id), '已排队重新解析', '重新解析失败')}>
+              <Button size="sm" variant="secondary" icon={<RotateCw className="size-3.5" />}>重新解析</Button>
+            </InlineConfirm>
+          )}
+          <InlineConfirm message="确定删除该文档？" onConfirm={() => act(() => deleteDoc(kbId, d.id), '已删除', '删除失败')}>
+            <Button size="sm" variant="danger">删除</Button>
+          </InlineConfirm>
+        </span>
+      ),
+    },
+  ]
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <FilterBar onReset={() => { setStatus(undefined); setQ(undefined) }} onRefresh={list.reload} loading={list.loading}
+    <div className="flex flex-col gap-2">
+      <FilterBar
+        onReset={() => { setStatus(undefined); setQ(undefined) }}
+        onRefresh={list.reload}
+        loading={list.loading}
         extra={
-          <Upload showUploadList={false} multiple accept={uploadPolicy?.extensions.map((e) => '.' + e).join(',')}
-            beforeUpload={(file) => { const problem = precheck(file, uploadPolicy); if (problem) { message.error(problem); return Upload.LIST_IGNORE } return true }}
-            customRequest={async ({ file, onSuccess, onError, onProgress }) => {
-            // 大文件上传要一两分钟：把浏览器到服务端的进度报给 antd（按钮上的加载态），完成后进后台队列
-            try { await uploadDoc(kbId, file as File, (percent) => onProgress?.({ percent })); message.success(`${(file as File).name} 上传完成，已进入处理队列`); list.reload(); onChanged?.(); onSuccess?.({}) } catch (e) { message.error(errorText(e, `${(file as File).name} 上传失败`)); onError?.(e as Error) }
-          }}>
-            <Button type="primary" size="small" icon={<UploadOutlined />}>上传文档</Button>
-          </Upload>
-        }>
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept={uploadPolicy?.extensions.map((e) => '.' + e).join(',')}
+              onChange={(e) => onPick(e.target.files)}
+            />
+            <Button variant="primary" size="sm" disabled={!!uploading} icon={<Upload className="size-3.5" />} onClick={() => fileRef.current?.click()}>
+              {uploading ? `上传中 ${uploading.percent}%` : '上传文档'}
+            </Button>
+          </>
+        }
+      >
         <SearchInput value={q} onChange={setQ} placeholder="搜索文件名" width={200} />
-        <Select allowClear placeholder="状态" style={{ width: 110 }} value={status} onChange={setStatus} options={statusOptions('document')} />
-        {processing && <span style={{ fontSize: 12, color: '#2563eb' }}>有文档处理中，每 3 秒自动刷新</span>}
-        <Tooltip title="调整并发向量化请求数、每批切片数等导入参数（管理员可改）">
-          <Link to="/system-settings"><Button size="small" type="link" icon={<SettingOutlined />}>导入设置</Button></Link>
+        <Select value={status ?? 'all'} onValueChange={(v) => setStatus(v === 'all' ? undefined : v)}>
+          <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="状态">
+            <SelectValue placeholder="状态" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部状态</SelectItem>
+            {statusOptions('document').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {processing && <span className="text-[12px] text-primary">有文档处理中，每 3 秒自动刷新</span>}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link to="/system-settings" className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[12.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
+              <Settings className="size-3.5" />导入设置
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent>调整并发向量化请求数、每批切片数等导入参数（管理员可改）</TooltipContent>
         </Tooltip>
       </FilterBar>
+
       <BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
         { key: 'reprocess', label: '批量重新解析', confirm: `重新解析选中的 ${list.selectedKeys.length} 个文档？旧切片会被清掉`, run: () => batch.run(() => batchDocs(kbId, list.selectedKeys, 'reprocess'), '已排队重新解析') },
         { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个文档？`, run: () => batch.run(() => batchDocs(kbId, list.selectedKeys, 'delete'), '已删除') },
       ]} />
-      <Table
-        size="small"
-        rowKey="id"
-        {...list.tableProps}
-        scroll={{ x: 'max-content' }}
-        columns={[
-          { title: '文件名', dataIndex: 'name', key: 'name', ...list.sortProps('name'), ellipsis: true },
-          { title: '类型', dataIndex: 'file_type', width: 80, render: (v: string) => v.toUpperCase() },
-          { title: '状态 / 进度', dataIndex: 'status', key: 'status', width: 260, ...list.sortProps('status'), render: (_: string, d) => <StatusCell doc={d} /> },
-          { title: '切片', dataIndex: 'chunk_count', key: 'chunk_count', width: 110, align: 'right', ...list.sortProps('chunk_count'), render: (v: number, d) => (d.chunk_total && d.chunk_total !== v ? `${v.toLocaleString()} / ${d.chunk_total.toLocaleString()}` : v.toLocaleString()) },
-          { title: '失败原因', dataIndex: 'error', ellipsis: true, render: (v: string | null) => (v ? <Tooltip title={v}><span style={{ color: '#dc2626' }}>{v}</span></Tooltip> : '-') },
-          { title: '上传时间', dataIndex: 'created_at', key: 'created_at', width: 170, ...list.sortProps('created_at'), render: (v: string | null) => <TimeCell value={v} /> },
-          {
-            title: '操作', key: 'actions', width: 330, fixed: 'right',
-            render: (_, d) => (
-              <Space size={4}>
-                <Button size="small" icon={<FileTextOutlined />} disabled={d.status !== 'ready'} onClick={() => setChunkDoc(d)}>切片</Button>
-                {canResume(d) && (
-                  <Popconfirm title={`从已入库的第 ${d.chunk_count.toLocaleString()} 片接着处理（切片参数没变时不重来）？`} onConfirm={() => act(() => resumeDoc(kbId, d.id), '已排队继续处理', '继续处理失败')}>
-                    <Button size="small" type="primary" ghost icon={<PlayCircleOutlined />}>继续处理</Button>
-                  </Popconfirm>
-                )}
-                <Popconfirm title="重新解析会清掉旧切片并按当前切片参数重建" onConfirm={() => act(() => reprocessDoc(kbId, d.id), '已排队重新解析', '重新解析失败')} disabled={PROCESSING.has(d.status)}>
-                  <Button size="small" icon={<RedoOutlined />} disabled={PROCESSING.has(d.status)}>重新解析</Button>
-                </Popconfirm>
-                <Popconfirm title="确定删除该文档？" onConfirm={() => act(() => deleteDoc(kbId, d.id), '已删除', '删除失败')}><Button size="small" danger>删除</Button></Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
+
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(d) => d.id}
+        loading={list.loading}
+        error={list.error}
+        empty={empty}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
       />
+
       <ChunkDrawer kbId={kbId} doc={chunkDoc} onClose={() => setChunkDoc(null)} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((d) => d.id === id)?.name} />
     </div>

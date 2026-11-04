@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
-import { Popover } from 'antd'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import type { Citation } from './types'
 
 // 匹配回答里的引用标记 [1]、[2]、[1, 2]，但不匹配 markdown 链接 [text](url)。
@@ -28,34 +28,33 @@ function CitationPopover({ citation, index }: { citation?: Citation; index: numb
   const text = citation?.content ? String(citation.content) : ''
   const clipped = text.length > 240 ? text.slice(0, 240) + '…' : text
   return (
-    <div style={{ maxWidth: 320 }}>
-      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{citation?.doc_name || '来源 ' + index}</span>
+    <div className="max-w-[320px]">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-[13px] font-semibold">{citation?.doc_name || '来源 ' + index}</span>
         {typeof citation?.score === 'number' && (
-          <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-            相关度 {citation.score.toFixed(2)}
-          </span>
+          <span className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-primary">相关度 {citation.score.toFixed(2)}</span>
         )}
       </div>
-      <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.7 }}>{clipped || '无内容'}</div>
+      <div className="text-[12.5px] leading-[1.7] text-muted-foreground">{clipped || '无内容'}</div>
     </div>
   )
 }
 
 // 一组引用角标：按编号从 1 开始取 citations 中对应来源，逐个包上 Popover
+// 触屏没有悬停，所以点按也要能看到出处（docs/15 CH-14）：Popover 默认点击触发，悬停由外层 Tooltip 语义不需要另配
 function CitationMark({ indices, citations }: { indices: number[]; citations: Citation[] }) {
   return (
     <>
       {indices.map((idx) => {
         const citation = citations[idx - 1]
         return (
-          <Popover
-            key={idx}
-            trigger={['hover', 'click']} // 触屏没有悬停，点按也要能看到出处（docs/15 CH-14）
-            placement="top"
-            content={<CitationPopover citation={citation} index={idx} />}
-          >
-            <sup className="citation-mark">{idx}</sup>
+          <Popover key={idx}>
+            <PopoverTrigger asChild>
+              <sup className="citation-mark">{idx}</sup>
+            </PopoverTrigger>
+            <PopoverContent align="center" className="w-auto p-3">
+              <CitationPopover citation={citation} index={idx} />
+            </PopoverContent>
           </Popover>
         )
       })}

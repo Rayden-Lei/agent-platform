@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Select, Space, Switch, Typography } from 'antd'
-import { CheckCircleFilled, CloseCircleFilled } from '@ant-design/icons'
+import { CircleCheck, CircleX } from 'lucide-react'
 import type { KbAccess, KbAccessChange, KbAccessInput, KnowledgeBaseDetail } from '../../api'
 import { statusOptions } from '../../constants/status'
 import ResourceLink from '../common/ResourceLink'
+import Button from '../ui/Button'
+import Badge from '../ui/Badge'
+import { Switch } from '@/components/shadcn/switch'
+import { Label } from '@/components/shadcn/label'
 import KbAccessLog from './KbAccessLog'
 
 // 知识库详情的"访问权限"页签（docs/15 KB-01）：改规则（保存即生效，不用重新解析）、各身份能否检索的直白说明、
@@ -36,41 +39,83 @@ export default function KbAccessTab({ kb, myRole, saving, onSave, changes, chang
   // 非管理员不能把自己排除在外：服务端同样拦（400），这里提前说明原因
   const shutsMeOut = myRole !== 'admin' && !isPublic && !roles.includes(myRole || '')
   const blindAgents = kb.access.caller ? [] : kb.agents.filter((a) => a.in_live && a.status === 'published')
+  const toggleRole = (role: string) => setRoles((cur) => (cur.includes(role) ? cur.filter((r) => r !== role) : [...cur, role]))
 
   return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+    <div className="flex flex-col gap-3">
       {blindAgents.length > 0 && (
-        <Alert type="warning" showIcon message="以下已发布的智能体线上版本绑定了本库，但调用者检索不到它"
-          description={<Space wrap>{blindAgents.map((a) => <ResourceLink key={a.id} type="agent" id={a.id} name={a.name} showIcon />)}</Space>} />
+        <div className="flex flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Badge tone="warning">注意</Badge>
+            <span className="text-[13.5px]">以下已发布的智能体线上版本绑定了本库，但调用者检索不到它</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {blindAgents.map((a) => <ResourceLink key={a.id} type="agent" id={a.id} name={a.name} showIcon />)}
+          </div>
+        </div>
       )}
-      <Card size="small" title="访问规则">
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Space><Switch checked={isPublic} onChange={setIsPublic} /><span>公开（所有角色可见）</span></Space>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-4 py-2.5">
+          <h3 className="m-0 text-[13.5px] font-semibold">访问规则</h3>
+        </div>
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <Switch id="kb-public" checked={isPublic} onCheckedChange={setIsPublic} />
+            <Label htmlFor="kb-public" className="font-normal">公开（所有角色可见）</Label>
+          </div>
+
           {!isPublic && (
-            <div>
-              <div style={{ marginBottom: 6 }}>可见角色（管理员始终可见）</div>
-              <Select mode="multiple" style={{ width: 360, maxWidth: '100%' }} value={roles} onChange={setRoles} placeholder="选择可访问的角色" options={statusOptions('role')} />
+            <div className="flex flex-col gap-1.5">
+              <Label>可见角色（管理员始终可见）</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {statusOptions('role').map((r) => {
+                  const on = roles.includes(r.value)
+                  return (
+                    <Button key={r.value} size="sm" variant={on ? 'primary' : 'secondary'} onClick={() => toggleRole(r.value)}>
+                      {r.label}
+                    </Button>
+                  )
+                })}
+              </div>
             </div>
           )}
-          {shutsMeOut && <Alert type="error" showIcon message="不能把自己的角色排除在外：保存后你将看不到、也改不回这个知识库" />}
-          <Space>
-            <Button type="primary" loading={saving} disabled={!dirty || shutsMeOut} onClick={() => onSave({ is_public: isPublic, visible_roles: isPublic ? [] : roles })}>保存</Button>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>保存后立即生效，已入库的切片不用重新解析</Typography.Text>
-          </Space>
-        </Space>
-      </Card>
-      <Card size="small" title="现在谁能检索">
-        <Space direction="vertical" size={8}>
+
+          {shutsMeOut && (
+            <p className="m-0 rounded-lg border border-destructive/35 bg-card px-3 py-2 text-[12.5px] text-destructive">
+              不能把自己的角色排除在外：保存后你将看不到、也改不回这个知识库
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" size="md" disabled={saving || !dirty || shutsMeOut} onClick={() => onSave({ is_public: isPublic, visible_roles: isPublic ? [] : roles })}>
+              {saving ? '保存中…' : '保存'}
+            </Button>
+            <span className="text-[12.5px] text-muted-foreground">保存后立即生效，已入库的切片不用重新解析</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-4 py-2.5">
+          <h3 className="m-0 text-[13.5px] font-semibold">现在谁能检索</h3>
+        </div>
+        <div className="flex flex-col gap-2 px-4 py-3">
           {WHO.map((w) => (
-            <span key={w.key}>
-              {kb.access[w.key] ? <CheckCircleFilled style={{ color: '#16a34a' }} /> : <CloseCircleFilled style={{ color: '#dc2626' }} />}
-              <Typography.Text strong style={{ margin: '0 8px' }}>{w.label}</Typography.Text>
-              <Typography.Text type="secondary">{kb.access[w.key] ? w.yes : w.no}</Typography.Text>
-            </span>
+            <div key={w.key} className="flex items-start gap-2 text-[13.5px]">
+              {kb.access[w.key]
+                ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-label="可以" />
+                : <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" aria-label="不可以" />}
+              <span className="min-w-0">
+                <span className="font-medium">{w.label}</span>
+                <span className="ml-2 text-muted-foreground">{kb.access[w.key] ? w.yes : w.no}</span>
+              </span>
+            </div>
           ))}
-        </Space>
-      </Card>
+        </div>
+      </section>
+
       <KbAccessLog changes={changes} total={changesTotal} error={changesError} onRetry={onRetryChanges} />
-    </Space>
+    </div>
   )
 }

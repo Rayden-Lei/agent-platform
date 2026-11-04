@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { FileTextOutlined, PlusOutlined } from '@ant-design/icons'
 import { batchPromptTemplates, deletePromptTemplate, getPromptTemplate, listPromptTemplates, type PromptTemplateRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -31,13 +31,13 @@ export default function PromptTemplates() {
   const [current, setCurrent] = useState<PromptTemplateRow | null>(null)
   const list = usePagedList<PromptTemplateRow>(listPromptTemplates, { filters, selectable: true, emptyText: <EmptyState description="还没有模板。把系统提示词沉淀成带变量的模板，多个智能体共用并按版本管理。" action={{ label: '新增模板', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
-  useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getPromptTemplate(id).then(setCurrent).catch((e) => message.error(errorText(e, '模板不存在'))) })
+  useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getPromptTemplate(id).then(setCurrent).catch((e) => toast.error(errorText(e, '模板不存在'))) })
 
   // 列表不下发 content，编辑前先取详情
   const onEdit = async (r: PromptTemplateRow) => {
-    try { setEditing(r.content !== undefined ? r : await getPromptTemplate(r.id)); setFormOpen(true) } catch (e) { message.error(errorText(e, '加载模板失败')) }
+    try { setEditing(r.content !== undefined ? r : await getPromptTemplate(r.id)); setFormOpen(true) } catch (e) { toast.error(errorText(e, '加载模板失败')) }
   }
-  const onDelete = async (r: PromptTemplateRow) => { try { await deletePromptTemplate(r.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onDelete = async (r: PromptTemplateRow) => { try { await deletePromptTemplate(r.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const afterSave = () => { list.reload(); if (current) getPromptTemplate(current.id).then(setCurrent).catch(() => setCurrent(null)) }
   const columns = useMemo(() => buildTemplateColumns({ onOpen: setCurrent, onEdit, onDelete }), []) // eslint-disable-line react-hooks/exhaustive-deps
 

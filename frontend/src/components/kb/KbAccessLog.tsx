@@ -1,4 +1,4 @@
-import { Card, List, Skeleton, Typography } from 'antd'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import type { KbAccessChange, KbAccessInput } from '../../api'
 import { statusLabel } from '../../constants/status'
 import { formatDateTime } from '../../utils/time'
@@ -23,20 +23,33 @@ const describe = (p: KbAccessInput | null) => {
 export default function KbAccessLog({ changes, total, error, onRetry }: Props) {
   const shown = changes?.length ?? 0
   return (
-    <Card size="small" title="变更记录" extra={total !== undefined && total > shown ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>显示最近 {shown} 条，共 {total} 条</Typography.Text> : null}>
-      {error ? <ErrorState compact message={error} onRetry={onRetry} /> : !changes ? <Skeleton active /> : changes.length === 0 ? (
-        <EmptyState description="还没有记录：2026-10-05 起记录建库与每次修改，之前建的库从下一次修改开始有记录" />
-      ) : (
-        <List size="small" dataSource={changes} renderItem={(c) => (
-          <List.Item>
-            <span>
-              <Typography.Text type="secondary" style={{ marginRight: 12 }}>{formatDateTime(c.created_at)}</Typography.Text>
-              <Typography.Text strong style={{ marginRight: 12 }}>{c.username || '-'}</Typography.Text>
-              {c.action === 'create' ? `建库，初始为${describe(c.after)}` : `${describe(c.before)} → ${describe(c.after)}`}
-            </span>
-          </List.Item>
-        )} />
-      )}
-    </Card>
+    <section className="rounded-xl border border-border bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+        <h3 className="m-0 text-[13.5px] font-semibold">变更记录</h3>
+        {total !== undefined && total > shown && (
+          <span className="text-[12.5px] text-muted-foreground">显示最近 {shown} 条，共 {total} 条</span>
+        )}
+      </div>
+      <div className="px-4 py-3">
+        {error ? <ErrorState compact message={error} onRetry={onRetry} /> : !changes ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        ) : changes.length === 0 ? (
+          <EmptyState description="还没有记录：2026-10-05 起记录建库与每次修改，之前建的库从下一次修改开始有记录" />
+        ) : (
+          <ul className="m-0 list-none p-0">
+            {changes.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-3 border-b border-border py-2 text-[13.5px] last:border-b-0">
+                <span className="text-[12.5px] text-muted-foreground">{formatDateTime(c.created_at)}</span>
+                <span className="font-medium">{c.username || '-'}</span>
+                <span>{c.action === 'create' ? `建库，初始为${describe(c.after)}` : `${describe(c.before)} → ${describe(c.after)}`}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   )
 }

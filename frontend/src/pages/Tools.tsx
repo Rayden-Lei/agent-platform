@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Select, message } from 'antd'
+import { toast } from 'sonner'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { PlusOutlined, ToolOutlined } from '@ant-design/icons'
 import { batchTools, deleteTool, getTool, listTools, toggleTool, type ToolRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -38,10 +39,10 @@ export default function Tools() {
   const [testing, setTesting] = useState<ToolRow | null>(null)
   const list = usePagedList<ToolRow>(listTools, { filters, selectable: canManage, emptyText: <EmptyState description="还没有工具。内置工具由服务提供，HTTP 工具把任意接口声明成模型可调用的能力。" action={canManage ? { label: '新增工具', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
-  useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getTool(id).then(setCurrent).catch((e) => message.error(errorText(e, '工具不存在'))) })
+  useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getTool(id).then(setCurrent).catch((e) => toast.error(errorText(e, '工具不存在'))) })
 
   const onToggle = async (t: ToolRow) => { await toggleTool(t.id); list.reload() }
-  const onDelete = async (t: ToolRow) => { try { await deleteTool(t.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+  const onDelete = async (t: ToolRow) => { try { await deleteTool(t.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const onEdit = (t: ToolRow) => { setEditing(t); setFormOpen(true) }
   const columns = useMemo(() => buildToolColumns({ canManage, onOpen: setCurrent, onToggle, onTest: setTesting, onEdit, onDelete }), [canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -51,8 +52,20 @@ export default function Tools() {
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 描述" />
-          <Select allowClear placeholder="类型" style={{ width: 110 }} value={filters.type} onChange={(v) => setFilters({ type: v })} options={statusOptions('toolType')} />
-          <Select allowClear placeholder="状态" style={{ width: 100 }} value={filters.is_enabled} onChange={(v) => setFilters({ is_enabled: v })} options={ENABLED_OPTIONS} />
+          <Select value={filters.type ?? 'all'} onValueChange={(v) => setFilters({ type: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部类型</SelectItem>
+              {statusOptions('toolType').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              {ENABLED_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </FilterBar>
       }
       batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[
