@@ -11,6 +11,7 @@ import Button from '../ui/Button'
 import type { AgentShare, AgentShareInput, ShareAccessMode } from '../../api'
 
 // 分享链接的访问与限额设置（docs/15 3.6）：访问方式、访问密码、有效期、三个限额、访客能力。整体覆盖保存，开关状态沿用当前值。
+// 本组件含三个内部小部件（互斥分段按钮 Segment、带单位数字 NumberField、HTTP 工具确认弹窗），超出行数约定属已知取舍。
 // 密码三态：不设（有旧密码时清除）/ 保留现有 / 设置新密码；改密码或访问方式会让已打开页面的访客重新进入。数据与保存由页面注入。
 type PasswordMode = 'none' | 'keep' | 'set'
 interface Values {

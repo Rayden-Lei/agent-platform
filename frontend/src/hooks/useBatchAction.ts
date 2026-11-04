@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import type { BatchResult } from '../api'
 import { errorText } from '../utils/errors'
 
@@ -13,11 +13,11 @@ export function useBatchAction(onFinished?: () => void) {
     setRunning(true)
     try {
       const res = await fn()
-      if (res.failed.length === 0) message.success(`${successText}（${res.succeeded.length} 项）`)
+      if (res.failed.length === 0) toast.success(`${successText}（${res.succeeded.length} 项）`)
       else setResult(res)
       onFinished?.()
     } catch (e) {
-      message.error(errorText(e, '批量操作失败'))
+      toast.error(errorText(e, '批量操作失败'))
     } finally {
       setRunning(false)
     }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { PlayCircleOutlined, CheckCircleOutlined, RobotOutlined, ToolOutlined, BranchesOutlined, DatabaseOutlined, CodeOutlined, ApiOutlined, SyncOutlined, AuditOutlined, ForkOutlined, MergeCellsOutlined } from '@ant-design/icons'
+import { Play, CircleCheck, Bot, Wrench, GitBranch, Database, Code, Plug, RefreshCw, ScrollText, Split, Merge } from 'lucide-react'
 
 // 工作流编辑器的节点库常量、节点摘要、画布 ↔ 后端 graph 的序列化。
 // 画布数据与后端契约的映射：节点 {id, type, config, position}，连线 {from, to, when}。
@@ -13,18 +13,18 @@ export interface PaletteItem {
 }
 
 export const PALETTE: PaletteItem[] = [
-  { type: 'start', label: '开始', color: '#15803d', icon: <PlayCircleOutlined />, description: '流程入口' },
-  { type: 'end', label: '结束', color: '#b91c1c', icon: <CheckCircleOutlined />, description: '流程出口' },
-  { type: 'agent', label: '智能体', color: '#1e40af', icon: <RobotOutlined />, description: '调用智能体' },
-  { type: 'tool', label: '工具', color: '#0e7490', icon: <ToolOutlined />, description: '调用工具' },
-  { type: 'condition', label: '条件', color: '#b45309', icon: <BranchesOutlined />, description: '条件分支' },
-  { type: 'kb_retrieval', label: '知识库检索', color: '#0d9488', icon: <DatabaseOutlined />, description: '检索知识库' },
-  { type: 'code', label: '代码执行', color: '#334155', icon: <CodeOutlined />, description: '执行 Python' },
-  { type: 'http', label: 'HTTP请求', color: '#2563eb', icon: <ApiOutlined />, description: '调用接口' },
-  { type: 'loop', label: '循环', color: '#0891b2', icon: <SyncOutlined />, description: '按次数/条件循环' },
-  { type: 'human_review', label: '人工审核', color: '#d97706', icon: <AuditOutlined />, description: '暂停等待人工确认' },
-  { type: 'parallel', label: '并行', color: '#7c3aed', icon: <ForkOutlined />, description: '扇出多条分支并发执行' },
-  { type: 'join', label: '汇聚', color: '#6d28d9', icon: <MergeCellsOutlined />, description: '等待全部分支完成' },
+  { type: 'start', label: '开始', color: '#15803d', icon: <Play />, description: '流程入口' },
+  { type: 'end', label: '结束', color: '#b91c1c', icon: <CircleCheck />, description: '流程出口' },
+  { type: 'agent', label: '智能体', color: '#1e40af', icon: <Bot />, description: '调用智能体' },
+  { type: 'tool', label: '工具', color: '#0e7490', icon: <Wrench />, description: '调用工具' },
+  { type: 'condition', label: '条件', color: '#b45309', icon: <GitBranch />, description: '条件分支' },
+  { type: 'kb_retrieval', label: '知识库检索', color: '#0d9488', icon: <Database />, description: '检索知识库' },
+  { type: 'code', label: '代码执行', color: '#334155', icon: <Code />, description: '执行 Python' },
+  { type: 'http', label: 'HTTP请求', color: '#2563eb', icon: <Plug />, description: '调用接口' },
+  { type: 'loop', label: '循环', color: '#0891b2', icon: <RefreshCw />, description: '按次数/条件循环' },
+  { type: 'human_review', label: '人工审核', color: '#d97706', icon: <ScrollText />, description: '暂停等待人工确认' },
+  { type: 'parallel', label: '并行', color: '#7c3aed', icon: <Split />, description: '扇出多条分支并发执行' },
+  { type: 'join', label: '汇聚', color: '#6d28d9', icon: <Merge />, description: '等待全部分支完成' },
 ]
 
 export const paletteOf = (type: string) => PALETTE.find((p) => p.type === type)

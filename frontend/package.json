@@ -9,11 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ant-design/icons": "^5.5.1",
     "@ant-design/plots": "2.6.8",
     "@hookform/resolvers": "^7.0.2",
     "@xyflow/react": "^12.3.5",
-    "antd": "^5.21.0",
     "axios": "^1.7.7",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
@@ -21,6 +19,7 @@
     "dayjs": "1.11.13",
     "katex": "^0.19.1",
     "lucide-react": "^1.67.0",
+    "qrcode.react": "^4.2.0",
     "radix-ui": "^1.8.1",
     "react": "^18.3.1",
     "react-day-picker": "^10.0.2",

@@ -1,4 +1,4 @@
-import { RobotOutlined } from '@ant-design/icons'
+import { Bot } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { activeNavKey, visibleNavItems } from '../../constants/nav'
 import { useAuth } from '../../store/auth'
@@ -23,7 +23,7 @@ export default function SideNav({ onNavigate }: Props) {
           className="w-[26px] h-[26px] rounded-[7px] flex items-center justify-center shrink-0 text-[13px]"
           style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
         >
-          <RobotOutlined />
+          <Bot />
         </div>
         <div className="text-[13.5px] font-semibold leading-tight" style={{ color: 'var(--fg)' }}>
           智枢<span style={{ color: 'var(--fg-subtle)' }}>·</span>智能体平台

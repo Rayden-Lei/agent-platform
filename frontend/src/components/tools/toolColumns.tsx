@@ -1,4 +1,4 @@
-import { ExperimentOutlined } from '@ant-design/icons'
+import { FlaskConical } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { ToolRow } from '../../api'
 import type { DataColumn } from '../table/DataTable'
@@ -67,7 +67,7 @@ export function buildToolColumns({ canManage, onOpen, onToggle, onTest, onEdit, 
       key: 'actions', header: '操作', width: 200, pinRight: true,
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="secondary" icon={<ExperimentOutlined />} onClick={() => onTest(r)}>测试</Button>
+          <Button size="sm" variant="secondary" icon={<FlaskConical />} onClick={() => onTest(r)}>测试</Button>
           <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onEdit(r)}>编辑</Button>
           <InlineConfirm message="确定删除？绑定了该工具的智能体会失去这项能力" onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger" disabled={!canManage}>删除</Button>

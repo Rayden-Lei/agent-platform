@@ -1,4 +1,5 @@
 import { Copy, ExternalLink, QrCode, RefreshCw } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/shadcn/alert'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { Switch } from '@/components/shadcn/switch'
@@ -87,9 +88,15 @@ export default function ShareLinkCard({ share, error, saving, onRetry, onSave, o
                 <PopoverTrigger asChild>
                   <Button size="sm" icon={<QrCode className="size-3.5" />}>二维码</Button>
                 </PopoverTrigger>
-                <PopoverContent align="start" className="w-[260px]">
-                  <p className="m-0 mb-1.5 text-[12px] text-muted-foreground">手机上打开这个链接即可体验（可直接选中复制）</p>
-                  <code className="block select-all break-all rounded-md bg-secondary px-2 py-1.5 font-mono text-[12px] leading-relaxed text-foreground">{url}</code>
+                <PopoverContent align="start" className="w-[248px] p-3">
+                  <div className="flex flex-col items-center gap-2">
+                    {/* 白底保证任何主题下都能扫：二维码靠深色模块与白底的反差 */}
+                    <div className="rounded-lg bg-white p-2">
+                      <QRCodeSVG value={url} size={180} level="M" marginSize={0} aria-label="分享链接二维码" />
+                    </div>
+                    <p className="m-0 text-center text-[12px] text-muted-foreground">手机扫码打开，或选中下面的链接复制</p>
+                    <code className="block w-full select-all break-all rounded-md bg-secondary px-2 py-1.5 font-mono text-[11.5px] leading-snug text-foreground">{url}</code>
+                  </div>
                 </PopoverContent>
               </Popover>
               <a

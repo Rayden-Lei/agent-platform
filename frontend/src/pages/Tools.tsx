@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
-import { PlusOutlined, ToolOutlined } from '@ant-design/icons'
+import { Plus, Wrench } from 'lucide-react'
 import { batchTools, deleteTool, getTool, listTools, toggleTool, type ToolRow } from '../api'
 import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
@@ -48,7 +48,7 @@ export default function Tools() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<ToolOutlined />} title="工具管理" description="内置工具与 HTTP 接口工具；参数声明决定模型如何结构化调用，停用后智能体与工作流都不再使用。" extra={canManage && <Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增工具</Button>} />}
+      header={<PageHeader icon={<Wrench />} title="工具管理" description="内置工具与 HTTP 接口工具；参数声明决定模型如何结构化调用，停用后智能体与工作流都不再使用。" extra={canManage && <Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增工具</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 描述" />

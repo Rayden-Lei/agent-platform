@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { getAvailableAgent, listAvailableAgents, OPTIONS_PAGE, type AgentBrief } from '../api'
 import { errorText } from '../utils/errors'
 
@@ -16,7 +16,7 @@ export function useAvailableAgents(selectedId?: number) {
   useEffect(() => {
     listAvailableAgents(OPTIONS_PAGE)
       .then((p) => { setAgents(p.items); setRemote(p.total > p.items.length) })
-      .catch((e) => message.error(errorText(e, '加载智能体失败')))
+      .catch((e) => toast.error(errorText(e, '加载智能体失败')))
       .finally(() => setLoaded(true))
   }, [])
 
@@ -28,7 +28,7 @@ export function useAvailableAgents(selectedId?: number) {
     const handle = setTimeout(() => {
       listAvailableAgents({ ...OPTIONS_PAGE, q: search || undefined })
         .then((p) => { if (mine === seq.current) setAgents((prev) => keepSelected(p.items, prev, selectedId)) })
-        .catch((e) => message.error(errorText(e, '搜索智能体失败')))
+        .catch((e) => toast.error(errorText(e, '搜索智能体失败')))
     }, 300)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,7 +38,7 @@ export function useAvailableAgents(selectedId?: number) {
     if (!loaded || !selectedId || agents.some((a) => a.id === selectedId)) return
     getAvailableAgent(selectedId)
       .then((a) => setAgents((prev) => (prev.some((x) => x.id === a.id) ? prev : [a, ...prev])))
-      .catch((e) => message.error(errorText(e, '这个智能体当前不可用')))
+      .catch((e) => toast.error(errorText(e, '这个智能体当前不可用')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, selectedId])
 

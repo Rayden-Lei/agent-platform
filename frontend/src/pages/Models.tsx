@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
-import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Plus, Zap } from 'lucide-react'
 import { batchModels, deleteModel, getModel, getModelUsage, listModels, testModel, toggleModel, type ModelRow } from '../api'
 import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
@@ -62,7 +62,7 @@ export default function Models() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<ThunderboltOutlined />} title="模型管理" description="LLM 接入配置；价格用于成本统计，连续失败会触发熔断，连通测试成功即恢复。" extra={canManage && <Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模型</Button>} />}
+      header={<PageHeader icon={<Zap />} title="模型管理" description="LLM 接入配置；价格用于成本统计，连续失败会触发熔断，连通测试成功即恢复。" extra={canManage && <Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模型</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 模型名" />

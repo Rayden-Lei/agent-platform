@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { RequestError, clearShareToken, createShareSession, getShareInfo, getShareToken, type ShareInfo } from '../api'
 import { clearLoginAndRedirect } from '../api/client'
 
@@ -58,7 +58,7 @@ export function useShareAccess(code: string) {
   // 访客请求 401：丢掉本地令牌，重新取资料再进入（分享可能已关闭或改了访问方式）
   const reenter = useCallback((detail?: string) => {
     clearShareToken(code)
-    message.warning(detail || '访问凭证已失效，请重新进入')
+    toast.warning(detail || '访问凭证已失效，请重新进入')
     load()
   }, [code, load])
   // "仅登录"：去登录页，登录后回到本链接；平台登录态已失效的一并清掉

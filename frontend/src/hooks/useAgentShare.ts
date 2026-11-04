@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { getAgentShare, resetAgentShare, updateAgentShare, type AgentShare, type AgentShareInput } from '../api'
 import { errorText } from '../utils/errors'
 import { useAsyncData } from './useAsyncData'
@@ -14,10 +14,10 @@ export function useAgentShare(agentId: number) {
     setSaving(true)
     try {
       setData(await updateAgentShare(agentId, input))
-      message.success(okText)
+      toast.success(okText)
       return true
     } catch (e) {
-      message.error(errorText(e, '保存分享配置失败'))
+      toast.error(errorText(e, '保存分享配置失败'))
       return false
     } finally {
       setSaving(false)
@@ -26,8 +26,8 @@ export function useAgentShare(agentId: number) {
   const reset = async () => {
     try {
       setData(await resetAgentShare(agentId))
-      message.success('已换新链接：旧链接与已打开的访客立即失效')
-    } catch (e) { message.error(errorText(e, '重置链接失败')) }
+      toast.success('已换新链接：旧链接与已打开的访客立即失效')
+    } catch (e) { toast.error(errorText(e, '重置链接失败')) }
   }
   return { share, loading, error, reload, saving, save, reset }
 }

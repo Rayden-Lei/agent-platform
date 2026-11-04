@@ -51,7 +51,7 @@ function SearchSelect({ value, onChange, placeholder, options, width }: {
   return (
     <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQ('') }}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="secondary" style={{ width }} className={current ? 'justify-between' : 'justify-between text-muted-foreground'} aria-label={placeholder}>
+        <Button size="sm" variant="secondary" style={{ width }} className={"h-8 justify-between text-[13px]" + (current ? "" : " text-muted-foreground")} aria-label={placeholder}>
           <span className="truncate">{current?.label ?? placeholder}</span>
           <ChevronDown className="size-3.5 opacity-60" />
         </Button>
