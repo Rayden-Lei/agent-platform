@@ -78,22 +78,21 @@ export default function AppLayout() {
           className="relative h-full shrink-0"
           style={{ width: 212, background: solidBg, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
-          <GlassSurface enabled={glass}>
-            <div className="h-full w-full overflow-y-auto">
-              <SideNav />
-            </div>
-          </GlassSurface>
+          <GlassSurface enabled={glass} />
+          <div className="relative h-full overflow-y-auto">
+            <SideNav />
+          </div>
         </div>
       )}
 
       <div className="relative z-[1] flex min-w-0 flex-1 flex-col">
         {/* 顶栏 */}
         <header
-          className="relative flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5"
+          className="relative flex shrink-0 items-center"
           style={{ height: 56, background: solidBg, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
-          <GlassSurface enabled={glass}>
-            <div className="flex h-full w-full items-center justify-between gap-3 px-4 sm:px-5">
+          <GlassSurface enabled={glass} />
+          <div className="relative flex w-full items-center justify-between gap-3 px-4 sm:px-5">
           <div className="flex min-w-0 items-center gap-2">
             {isMobile && (
               <Button variant="ghost" size="sm" aria-label="打开菜单" onClick={() => setDrawerOpen(true)}>
@@ -136,8 +135,7 @@ export default function AppLayout() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-            </div>
-          </GlassSurface>
+          </div>
         </header>
 
         <DegradedBanner />
