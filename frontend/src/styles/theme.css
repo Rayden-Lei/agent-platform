@@ -258,9 +258,10 @@
   height: 100%;
   width: 100%;
   gap: 0;
-  /* 库把 .glass 设成 inline-flex，内容包裹层是 flex 子项、默认收缩成内容宽度
-     （顶栏 1228 宽时内容层只有 341），整行内容会挤在左边。改成 flex 并让内容层撑满。 */
-  display: flex;
+  /* 库把 .glass 设成 inline-flex（写在元素内联样式上，必须 !important 才能覆盖），
+     内容包裹层是 flex 子项、默认收缩成内容宽度（顶栏 1228 宽时内容层只有 341），
+     整行内容会挤在左边。改成 flex 并让内容层撑满。 */
+  display: flex !important;
   background-color: color-mix(in srgb, var(--bg-elev) 62%, transparent);
   /* 库把投影写在元素内联样式上，只能 !important 覆盖：铺满侧栏时那 40px 阴影是一大团黑边 */
   box-shadow: none !important;
@@ -269,9 +270,11 @@
   overflow: visible !important;
 }
 
-/* 内容包裹层是 .glass 的最后一个子节点，撑满才和面板同宽 */
+/* 内容包裹层是 .glass 的最后一个子节点。库默认 align-items:center、高度随内容，
+   侧栏会出现「导航只占上半截、垂直居中」的问题，所以宽高都要撑满。 */
 .lg-surface > .glass > div:last-child {
   width: 100%;
+  height: 100%;
 }
 /* ============================================================
    基础排版
