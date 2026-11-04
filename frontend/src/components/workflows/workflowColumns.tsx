@@ -1,14 +1,16 @@
-import { Button, Popconfirm, Space, Tag, Tooltip } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
-import { CopyOutlined, EditOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { Copy, Pencil, Play } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { WorkflowRow } from '../../api'
+import type { DataColumn } from '../table/DataTable'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import InlineConfirm from '../ui/InlineConfirm'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import { paletteOf } from '../../pages/workflow/palette'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/shadcn/tooltip'
 
 interface Options {
-  sortProps: (field: string) => { sorter: true; sortOrder: 'ascend' | 'descend' | null }
   onRun: (wf: WorkflowRow) => void
   onDuplicate: (wf: WorkflowRow) => void
   onDelete: (wf: WorkflowRow) => void
@@ -20,31 +22,44 @@ export function nodeTypeSummary(types: Record<string, number>): string {
 }
 
 // 工作流列表列定义：名称进详情页；节点列显示数量与类型构成；近 7 天运行可跳运行记录。
-export function buildWorkflowColumns({ sortProps, onRun, onDuplicate, onDelete }: Options): ColumnsType<WorkflowRow> {
+export function buildWorkflowColumns({ onRun, onDuplicate, onDelete }: Options): DataColumn<WorkflowRow>[] {
   return [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 60, ...sortProps('id') },
-    { title: '名称', dataIndex: 'name', key: 'name', ...sortProps('name'), ellipsis: true, render: (v: string, r) => <Link to={`/workflows/${r.id}`}>{v}</Link> },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string | null) => v || '-' },
-    { title: '状态', dataIndex: 'status', key: 'status', width: 90, ...sortProps('status'), render: (v: string) => <StatusTag domain="workflow" value={v} /> },
-    { title: '版本', dataIndex: 'version', width: 70, render: (v: number) => `v${v}` },
+    { key: 'id', header: 'ID', width: 64, sortable: true, cell: (r) => <span className="text-muted-foreground">{r.id}</span> },
     {
-      title: '节点', dataIndex: 'node_count', width: 90, align: 'right',
-      render: (v: number, r) => (v ? <Tooltip title={nodeTypeSummary(r.node_types)}><span style={{ cursor: 'help' }}>{v}</span></Tooltip> : <Tag>空图</Tag>),
+      key: 'name', header: '名称', primary: true, sortable: true, width: 220,
+      cell: (r) => <Link to={`/workflows/${r.id}`} onClick={(e) => e.stopPropagation()} className="font-medium hover:underline" style={{ color: 'var(--fg)' }}>{r.name}</Link>,
     },
-    { title: '定时任务', dataIndex: 'schedules_count', width: 90, align: 'right', render: (v: number) => (v ? <span>{v}</span> : '-') },
-    { title: '近 7 天运行', dataIndex: 'runs_7d', width: 110, align: 'right', render: (v: number, r) => (v ? <Link to={`/runs?workflow_id=${r.id}`}>{v}</Link> : '0') },
-    { title: '最近运行', dataIndex: 'last_run_at', width: 110, render: (v: string | null) => <TimeCell value={v} mode="relative" /> },
-    { title: '创建人', dataIndex: 'created_by_username', width: 100, render: (v: string | null) => v || '-' },
-    { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 170, ...sortProps('updated_at'), render: (v: string | null) => <TimeCell value={v} /> },
+    { key: 'description', header: '描述', hideOnMobile: true, cell: (r) => r.description || <span className="text-muted-foreground">-</span> },
+    { key: 'status', header: '状态', width: 92, sortable: true, cell: (r) => <StatusTag domain="workflow" value={r.status} /> },
+    { key: 'version', header: '版本', width: 70, hideOnMobile: true, cell: (r) => `v${r.version}` },
     {
-      title: '操作', key: 'actions', width: 280, fixed: 'right',
-      render: (_, r) => (
-        <Space size={4}>
-          <Link to={`/workflows/${r.id}/edit`}><Button size="small" icon={<EditOutlined />}>编辑</Button></Link>
-          <Button size="small" icon={<PlayCircleOutlined />} disabled={!r.node_count} onClick={() => onRun(r)}>运行</Button>
-          <Button size="small" icon={<CopyOutlined />} onClick={() => onDuplicate(r)}>复制</Button>
-          <Popconfirm title="确定删除？关联的定时任务会一并删除" onConfirm={() => onDelete(r)}><Button size="small" danger>删除</Button></Popconfirm>
-        </Space>
+      key: 'node_count', header: '节点', width: 90, align: 'right', hideOnMobile: true,
+      cell: (r) => (r.node_count ? (
+        <Tooltip>
+          <TooltipTrigger asChild><span className="cursor-help underline decoration-dotted underline-offset-2">{r.node_count}</span></TooltipTrigger>
+          <TooltipContent>{nodeTypeSummary(r.node_types)}</TooltipContent>
+        </Tooltip>
+      ) : <Badge tone="neutral">空图</Badge>),
+    },
+    { key: 'schedules_count', header: '定时任务', width: 92, align: 'right', hideOnMobile: true, cell: (r) => (r.schedules_count || '-') },
+    {
+      key: 'runs_7d', header: '近 7 天运行', width: 110, align: 'right', hideOnMobile: true,
+      cell: (r) => (r.runs_7d ? <Link to={`/runs?workflow_id=${r.id}`} className="text-primary hover:underline">{r.runs_7d}</Link> : <span className="text-muted-foreground">0</span>),
+    },
+    { key: 'last_run_at', header: '最近运行', width: 110, hideOnMobile: true, cell: (r) => <TimeCell value={r.last_run_at} mode="relative" /> },
+    { key: 'created_by_username', header: '创建人', width: 100, hideOnMobile: true, cell: (r) => r.created_by_username || <span className="text-muted-foreground">-</span> },
+    { key: 'updated_at', header: '更新时间', width: 168, sortable: true, hideOnMobile: true, cell: (r) => <TimeCell value={r.updated_at} /> },
+    {
+      key: 'actions', header: '操作', width: 300, pinRight: true,
+      cell: (r) => (
+        <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <Link to={`/workflows/${r.id}/edit`}><Button size="sm" variant="ghost" icon={<Pencil />}>编辑</Button></Link>
+          <Button size="sm" variant="secondary" icon={<Play />} disabled={!r.node_count} onClick={() => onRun(r)}>运行</Button>
+          <Button size="sm" variant="secondary" icon={<Copy />} onClick={() => onDuplicate(r)}>复制</Button>
+          <InlineConfirm message="确定删除？关联的定时任务会一并删除" onConfirm={() => onDelete(r)}>
+            <Button size="sm" variant="danger">删除</Button>
+          </InlineConfirm>
+        </span>
       ),
     },
   ]

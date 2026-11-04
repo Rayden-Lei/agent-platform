@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
-import { Table } from 'antd'
-import { HistoryOutlined } from '@ant-design/icons'
+import { History } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { getRunsSummary, listRuns, type RunRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -13,6 +12,7 @@ import RunFilters, { type RunFilterValues } from '../components/runs/RunFilters'
 import RunStatCards from '../components/runs/RunStatCards'
 import { buildRunColumns } from '../components/runs/runColumns'
 import { useReview } from '../components/runs/useReview'
+import DataTable from '../components/table/DataTable'
 import { exportCsv } from '../utils/csv'
 import { statusLabel } from '../constants/status'
 import { formatDateTime } from '../utils/time'
@@ -23,16 +23,12 @@ const DEFAULTS: RunFilterValues = { run_type: undefined, status: undefined, sour
 export default function Runs() {
   const navigate = useNavigate()
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
-  const list = usePagedList<RunRow>(listRuns, {
-    filters,
-    defaultSort: { field: 'id', order: 'desc' },
-    emptyText: <EmptyState description="当前筛选下没有运行记录。运行记录由对话、工作流运行与定时任务自动产生。" />,
-  })
+  const list = usePagedList<RunRow>(listRuns, { filters, defaultSort: { field: 'id', order: 'desc' } })
   // 统计不随 status 变化：状态卡本身就是按状态切分的
   const summaryFilters = useMemo(() => ({ ...filters, status: undefined }), [filters])
   const summary = useAsyncData(() => getRunsSummary(summaryFilters), [JSON.stringify(summaryFilters)], { errorText: '加载统计失败' })
   const { reviewing, review } = useReview(() => { list.reload(); summary.reload(true) })
-  const columns = useMemo(() => buildRunColumns({ sortProps: list.sortProps, onReview: review, reviewing }), [list.sortProps, review, reviewing])
+  const columns = useMemo(() => buildRunColumns({ onReview: review, reviewing }), [review, reviewing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportPage = () => exportCsv('运行记录', [
     { title: 'ID', value: (r: RunRow) => r.id },
@@ -51,16 +47,25 @@ export default function Runs() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<HistoryOutlined />} title="运行记录" description="对话与工作流的每次运行留痕；统计随筛选联动，成本为各运行收尾时的快照合计。" />}
+      header={<PageHeader icon={<History />} title="运行记录" description="对话与工作流的每次运行留痕；统计随筛选联动，成本为各运行收尾时的快照合计。" />}
       stats={<RunStatCards summary={summary.data} loading={summary.loading && !summary.data} activeStatus={filters.status} onPickStatus={(status) => setFilters({ status })} />}
       filters={<RunFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={() => { list.reload(); summary.reload(true) }} onExport={exportPage} loading={list.loading} />}
     >
-      <Table
-        rowKey="id"
-        {...list.tableProps}
+      <DataTable
         columns={columns}
-        scroll={{ x: 'max-content' }}
-        onRow={(r) => ({ onClick: () => navigate(`/runs/${r.id}`), style: { cursor: 'pointer' } })}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="当前筛选下没有运行记录。运行记录由对话、工作流运行与定时任务自动产生。" />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        onRowClick={(r) => navigate(`/runs/${r.id}`)}
       />
     </ListPage>
   )

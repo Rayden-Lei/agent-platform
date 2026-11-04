@@ -29,13 +29,13 @@ export default function PageHeader({ title, icon, crumbs, description, extra, ta
       <div className="page-header-row">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h2 className="m-0 flex items-center gap-2 text-[19px] font-semibold">
-              {icon && <span className="flex items-center text-muted-foreground [&_svg]:size-[18px]">{icon}</span>}
+            <h2 className="m-0 flex items-center gap-2 text-[20px] font-semibold">
+              {icon && <span className="flex items-center text-muted-foreground [&_svg]:size-[19px]">{icon}</span>}
               {title}
             </h2>
             {tags}
           </div>
-          {description && <p className="m-0 mt-1 text-[13px] text-muted-foreground">{description}</p>}
+          {description && <p className="m-0 mt-1 text-[14px] leading-relaxed text-muted-foreground">{description}</p>}
         </div>
         {extra && <div className="flex shrink-0 items-center gap-2">{extra}</div>}
       </div>

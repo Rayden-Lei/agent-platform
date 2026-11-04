@@ -1,5 +1,5 @@
-import type { ColumnsType } from 'antd/es/table'
 import type { AuditLogRow } from '../../api'
+import type { DataColumn } from '../table/DataTable'
 import { AUDIT_RESOURCE_TYPE } from '../../constants/resources'
 import ResourceLink from '../common/ResourceLink'
 import StatusTag from '../common/StatusTag'
@@ -17,25 +17,23 @@ export function auditSummary(detail: Record<string, unknown> | null | undefined,
   return parts.join(' · ') + (entries.length > max ? ` · 还有 ${entries.length - max} 项` : '')
 }
 
-interface Options { sortProps: (field: string) => { sorter: true; sortOrder: 'ascend' | 'descend' | null } }
-
 // 审计日志列定义：操作 / 资源用字典标签；资源 ID 能映射到页面的就给链接；摘要一行，详情展开看 JSON。
-export function buildAuditColumns({ sortProps }: Options): ColumnsType<AuditLogRow> {
+export function buildAuditColumns(): DataColumn<AuditLogRow>[] {
   return [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 80, ...sortProps('id') },
-    { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 170, ...sortProps('created_at'), render: (v: string | null) => <TimeCell value={v} /> },
-    { title: '用户', dataIndex: 'username', width: 120, render: (v: string) => v || <span style={{ color: '#9ca3af' }}>匿名</span> },
-    { title: '操作', dataIndex: 'action', width: 110, render: (v: string) => <StatusTag domain="auditAction" value={v} /> },
-    { title: '资源', dataIndex: 'resource', width: 110, render: (v: string) => <StatusTag domain="auditResource" value={v} /> },
+    { key: 'id', header: 'ID', width: 80, sortable: true, cell: (r) => <span className="text-muted-foreground">{r.id}</span> },
+    { key: 'created_at', header: '时间', width: 170, sortable: true, cell: (r) => <TimeCell value={r.created_at} /> },
+    { key: 'username', header: '用户', width: 120, cell: (r) => r.username || <span className="text-muted-foreground">匿名</span> },
+    { key: 'action', header: '操作', width: 110, cell: (r) => <StatusTag domain="auditAction" value={r.action} /> },
+    { key: 'resource', header: '资源', width: 110, hideOnMobile: true, cell: (r) => <StatusTag domain="auditResource" value={r.resource} /> },
     {
-      title: '资源 ID', dataIndex: 'resource_id', width: 110,
-      render: (v: number | null, r) => {
-        if (v === null || v === undefined) return '-'
+      key: 'resource_id', header: '资源 ID', width: 110, hideOnMobile: true,
+      cell: (r) => {
+        if (r.resource_id === null || r.resource_id === undefined) return '-'
         const type = AUDIT_RESOURCE_TYPE[r.resource]
-        return type ? <ResourceLink type={type} id={v} name={`#${v}`} /> : `#${v}`
+        return type ? <ResourceLink type={type} id={r.resource_id} name={`#${r.resource_id}`} /> : `#${r.resource_id}`
       },
     },
-    { title: '摘要', dataIndex: 'detail', ellipsis: true, render: (v: Record<string, unknown>) => auditSummary(v) },
-    { title: 'IP', dataIndex: 'ip', width: 130, render: (v: string | null) => v || '-' },
+    { key: 'summary', header: '摘要', hideOnMobile: true, cell: (r) => <span className="block max-w-[320px] truncate text-muted-foreground">{auditSummary(r.detail)}</span> },
+    { key: 'ip', header: 'IP', width: 130, hideOnMobile: true, cell: (r) => r.ip || '-' },
   ]
 }

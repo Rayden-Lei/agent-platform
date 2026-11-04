@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Button, Select, Table, message } from 'antd'
-import { ApartmentOutlined, PlusOutlined } from '@ant-design/icons'
+import { toast } from 'sonner'
+import { Network, Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { batchWorkflows, deleteWorkflow, duplicateWorkflow, listWorkflows, type WorkflowRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -16,6 +16,9 @@ import BatchActionBar from '../components/common/BatchActionBar'
 import BatchResultModal from '../components/common/BatchResultModal'
 import RunWorkflowModal from '../components/workflows/RunWorkflowModal'
 import { buildWorkflowColumns } from '../components/workflows/workflowColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { errorText } from '../utils/errors'
 
 type Filters = { q?: string; status?: string }
@@ -26,30 +29,85 @@ export default function Workflows() {
   const navigate = useNavigate()
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
   const [running, setRunning] = useState<WorkflowRow | null>(null)
-  const list = usePagedList<WorkflowRow>(listWorkflows, {
-    filters,
-    selectable: true,
-    emptyText: <EmptyState description="还没有工作流。用画布把智能体、工具、条件与人工审核编排成流程，可手动运行、定时触发或被智能体调用。" action={{ label: '新建工作流', onClick: () => navigate('/workflows/new') }} />,
-  })
+  const list = usePagedList<WorkflowRow>(listWorkflows, { filters, selectable: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
-  const remove = async (wf: WorkflowRow) => { try { await deleteWorkflow(wf.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
+
+  const openCreate = () => navigate('/workflows/new')
+  const remove = async (wf: WorkflowRow) => { try { await deleteWorkflow(wf.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
   const duplicate = async (wf: WorkflowRow) => {
-    try { const copy = await duplicateWorkflow(wf.id); message.success(`已复制为「${copy.name}」`); list.reload() } catch (e) { message.error(errorText(e, '复制失败')) }
+    try {
+      const copy = await duplicateWorkflow(wf.id)
+      toast.success(`已复制为「${copy.name}」`)
+      list.reload()
+    } catch (e) { toast.error(errorText(e, '复制失败')) }
   }
-  const columns = useMemo(() => buildWorkflowColumns({ sortProps: list.sortProps, onRun: setRunning, onDuplicate: duplicate, onDelete: remove }), [list.sortProps]) // eslint-disable-line react-hooks/exhaustive-deps
+  const columns = useMemo(
+    () => buildWorkflowColumns({ onRun: setRunning, onDuplicate: duplicate, onDelete: remove }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+  const empty = (
+    <EmptyState
+      description="还没有工作流。用画布把智能体、工具、条件与人工审核编排成流程，可手动运行、定时触发或被智能体调用。"
+      action={{ label: '新建工作流', onClick: openCreate }}
+    />
+  )
 
   return (
     <ListPage
-      header={<PageHeader icon={<ApartmentOutlined />} title="工作流" description="节点编排的可执行流程；发布后可被定时任务、智能体与 API 调用。" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/workflows/new')}>新建工作流</Button>} />}
+      header={
+        <PageHeader
+          icon={<Network />}
+          title="工作流"
+          description="节点编排的可执行流程；发布后可被定时任务、智能体与 API 调用。"
+          extra={<Button variant="primary" size="md" icon={<Plus />} onClick={openCreate}>新建工作流</Button>}
+        />
+      }
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索工作流名称" />
-          <Select allowClear placeholder="状态" style={{ width: 110 }} value={filters.status} onChange={(v) => setFilters({ status: v })} options={statusOptions('workflow')} />
+          <Select value={filters.status ?? 'all'} onValueChange={(v) => setFilters({ status: v === 'all' ? undefined : v })}>
+            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="状态">
+              <SelectValue placeholder="状态" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部状态</SelectItem>
+              {statusOptions('workflow').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </FilterBar>
       }
-      batch={<BatchActionBar count={list.selectedKeys.length} onClear={list.clearSelection} running={batch.running} actions={[{ key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个工作流？关联的定时任务会一并删除`, run: () => batch.run(() => batchWorkflows(list.selectedKeys), '已删除') }]} />}
+      batch={
+        <BatchActionBar
+          count={list.selectedKeys.length}
+          onClear={list.clearSelection}
+          running={batch.running}
+          actions={[{
+            key: 'delete', label: '批量删除', danger: true,
+            confirm: `删除选中的 ${list.selectedKeys.length} 个工作流？关联的定时任务会一并删除`,
+            run: () => batch.run(() => batchWorkflows(list.selectedKeys), '已删除'),
+          }]}
+        />
+      }
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={empty}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <RunWorkflowModal workflow={running} onClose={() => setRunning(null)} onDone={list.reload} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((w) => w.id === id)?.name} />
     </ListPage>

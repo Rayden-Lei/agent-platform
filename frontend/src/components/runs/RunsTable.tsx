@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
-import { Table } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { listRuns, type RunRow } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
 import EmptyState from '../common/EmptyState'
+import DataTable from '../table/DataTable'
 import { buildRunColumns } from './runColumns'
 import { useReview } from './useReview'
 
@@ -16,17 +16,29 @@ interface Props {
 
 export default function RunsTable({ filters, hideOwner = true, pageSize = 10 }: Props) {
   const navigate = useNavigate()
-  const list = usePagedList<RunRow>(listRuns, { filters, pageSize, defaultSort: { field: 'id', order: 'desc' }, emptyText: <EmptyState description="还没有运行记录" /> })
+  const list = usePagedList<RunRow>(listRuns, { filters, pageSize, defaultSort: { field: 'id', order: 'desc' } })
   const { reviewing, review } = useReview(list.reload)
-  const columns = useMemo(() => buildRunColumns({ sortProps: list.sortProps, onReview: review, reviewing, hideOwner }), [list.sortProps, review, reviewing, hideOwner])
+  const columns = useMemo(
+    () => buildRunColumns({ onReview: review, reviewing, hideOwner }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [review, reviewing, hideOwner],
+  )
   return (
-    <Table
-      rowKey="id"
-      size="small"
-      {...list.tableProps}
+    <DataTable
       columns={columns}
-      scroll={{ x: 'max-content' }}
-      onRow={(r) => ({ onClick: () => navigate(`/runs/${r.id}`), style: { cursor: 'pointer' } })}
+      rows={list.items}
+      rowKey={(r) => r.id}
+      loading={list.loading}
+      error={list.error}
+      empty={<EmptyState description="还没有运行记录" />}
+      onRetry={list.reload}
+      page={list.page}
+      pageSize={list.pageSize}
+      total={list.total}
+      onPageChange={list.load}
+      sort={list.sort}
+      onSortChange={list.setSort}
+      onRowClick={(r) => navigate(`/runs/${r.id}`)}
     />
   )
 }

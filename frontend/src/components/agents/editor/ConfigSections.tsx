@@ -48,7 +48,7 @@ export default function ConfigSections({ form, models, kbOptions, toolOptions, t
         <Form.Item name="model_id" label="模型" rules={[{ required: true }]}>
           <Select showSearch optionFilterProp="label" options={models.map((m) => ({ value: m.id, label: m.is_enabled ? m.name : `${m.name}（已停用）`, disabled: !m.is_enabled }))} />
         </Form.Item>
-        <ModelParamsFields name="params" inherited={models.find((m) => m.id === modelId)?.default_params ?? {}} />
+        <Form.Item name="params"><ModelParamsFields inherited={models.find((m) => m.id === modelId)?.default_params ?? {}} /></Form.Item>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>留空继承模型默认；不同厂商支持的取值范围不同。</Typography.Text>
       </Section>
       <Section id="prompt" title="提示词">

@@ -8,16 +8,17 @@ import { Button as ShadcnButton } from '@/components/shadcn/button'
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md'
 
-interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
+interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant
   size?: Size
   icon?: ReactNode
   block?: boolean
+  className?: string
 }
 
 const SIZES: Record<Size, string> = {
   sm: 'h-7 px-2.5 text-[12.5px] gap-1 rounded-lg',
-  md: 'h-9 px-3.5 text-[13px] gap-1.5 rounded-lg',
+  md: 'h-8 px-3.5 text-[13.5px] gap-1.5 rounded-lg',
 }
 
 const VARIANTS: Record<Variant, string> = {
@@ -28,7 +29,7 @@ const VARIANTS: Record<Variant, string> = {
 }
 
 const Button = forwardRef<HTMLButtonElement, Props>(function Button(
-  { variant = 'secondary', size = 'sm', icon, block, children, disabled, ...rest },
+  { variant = 'secondary', size = 'sm', icon, block, children, disabled, className, ...rest },
   ref,
 ) {
   return (
@@ -36,7 +37,7 @@ const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       ref={ref}
       type="button"
       disabled={disabled}
-      className={cn('font-medium', SIZES[size], VARIANTS[variant], block && 'w-full')}
+      className={cn('font-medium', SIZES[size], VARIANTS[variant], block && 'w-full', className)}
       {...rest}
     >
       {icon && <span className="flex items-center text-[13px]">{icon}</span>}

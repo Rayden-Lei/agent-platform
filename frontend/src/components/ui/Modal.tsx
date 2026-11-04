@@ -25,9 +25,11 @@ interface Props {
   children: ReactNode
   /** 正文区域的额外类名（例如表单间距） */
   bodyClassName?: string
+  /** 点遮罩 / 按 ESC 能否关闭。一次性凭证这类"关了就拿不回来"的内容要设为 false */
+  dismissible?: boolean
 }
 
-export default function Modal({ open, title, description, onClose, footer, size = 'md', children, bodyClassName }: Props) {
+export default function Modal({ open, title, description, onClose, footer, size = 'md', children, bodyClassName, dismissible = true }: Props) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose() }}>
       <DialogContent
@@ -35,6 +37,9 @@ export default function Modal({ open, title, description, onClose, footer, size 
           'flex max-h-[calc(100dvh-3rem)] flex-col gap-0 p-0',
           WIDTH[size],
         )}
+        onEscapeKeyDown={dismissible ? undefined : (e) => e.preventDefault()}
+        onInteractOutside={dismissible ? undefined : (e) => e.preventDefault()}
+        onPointerDownOutside={dismissible ? undefined : (e) => e.preventDefault()}
       >
         <DialogHeader className="shrink-0 border-b border-border px-5 py-3.5">
           <DialogTitle className="text-[15px]">{title}</DialogTitle>
