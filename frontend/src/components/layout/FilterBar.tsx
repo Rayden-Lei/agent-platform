@@ -19,11 +19,11 @@ export default function FilterBar({ children, onReset, onRefresh, onExport, load
       <div className="flex flex-wrap items-center gap-2">{children}</div>
       <div className="flex items-center gap-1">
         {extra}
-        {onReset && <Button variant="ghost" size="sm" onClick={onReset}>重置</Button>}
+        {onReset && <Button variant="ghost" size="md" onClick={onReset}>重置</Button>}
         {onRefresh && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="sm" aria-label="刷新" disabled={loading} onClick={onRefresh}>
+              <Button variant="ghost" size="md" aria-label="刷新" disabled={loading} onClick={onRefresh}>
                 <RotateCw className={loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
               </Button>
             </TooltipTrigger>
@@ -33,7 +33,7 @@ export default function FilterBar({ children, onReset, onRefresh, onExport, load
         {onExport && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="sm" aria-label="导出当前页 CSV" onClick={onExport}>
+              <Button variant="ghost" size="md" aria-label="导出当前页 CSV" onClick={onExport}>
                 <Download className="size-3.5" />
               </Button>
             </TooltipTrigger>

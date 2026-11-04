@@ -110,7 +110,7 @@ export default function ShareLinkCard({ share, error, saving, onRetry, onSave, o
                 <ExternalLink className="size-3.5" aria-hidden="true" />
                 新窗口预览
               </a>
-              <InlineConfirm message="换一个新地址，旧链接与已打开页面的访客立即失效" confirmLabel="重置" onConfirm={() => { void onReset() }}>
+              <InlineConfirm message="换一个新地址，旧链接与已打开页面的访客立即失效" confirmLabel="重置" danger onConfirm={() => { void onReset() }}>
                 <Button size="sm" variant="danger" icon={<RefreshCw className="size-3.5" />}>重置链接</Button>
               </InlineConfirm>
             </div>

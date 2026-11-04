@@ -40,7 +40,7 @@ const toValues = (s: AgentShare): Values => ({
 // 互斥选项：原来 antd 的 Radio.Group，用语义 token 的分段按钮表达
 function Segment<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-border p-0.5">
+    <div className="inline-flex flex-wrap items-center gap-1 self-start rounded-lg border border-border p-0.5">
       {options.map((o) => (
         <button
           key={o.value}

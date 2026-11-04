@@ -96,7 +96,7 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
   return (
     <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}>
       <Select value={values.run_type ?? 'all'} onValueChange={(v) => onChange({ run_type: v === 'all' ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
+        <SelectTrigger size="sm" className="w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部类型</SelectItem>
           {statusOptions('runType').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
@@ -104,7 +104,7 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
       </Select>
 
       <Select value={values.status ?? 'all'} onValueChange={(v) => onChange({ status: v === 'all' ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[120px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+        <SelectTrigger size="sm" className="w-[120px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部状态</SelectItem>
           {statusOptions('run').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
@@ -112,7 +112,7 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
       </Select>
 
       <Select value={values.source ?? 'all'} onValueChange={(v) => onChange({ source: v === 'all' ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[120px] text-[13px]" aria-label="触发来源"><SelectValue placeholder="触发来源" /></SelectTrigger>
+        <SelectTrigger size="sm" className="w-[120px] text-[13px]" aria-label="触发来源"><SelectValue placeholder="触发来源" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部来源</SelectItem>
           {statusOptions('runSource').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
