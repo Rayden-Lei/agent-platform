@@ -51,7 +51,7 @@ export default function AppearanceMenu() {
 
       {open && (
         <div
-          className="absolute right-0 top-11 w-[268px] rounded-xl p-3.5 z-50"
+          className="absolute right-0 top-11 w-[268px] rounded-xl p-3.5 z-50 max-sm:fixed max-sm:top-[60px] max-sm:right-3 max-sm:w-[calc(100vw-24px)]"
           style={{
             background: 'var(--bg-elev)',
             border: '1px solid var(--border)',

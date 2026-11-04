@@ -55,9 +55,10 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
     >
       <div
         className="relative"
-        style={{ borderRadius: 'var(--radius-lg)', padding: '10px 12px', ...(glass ? null : { background: 'var(--bg-elev)', border: '1px solid var(--border-strong)' }) }}
+        style={{ borderRadius: 'var(--radius-lg)', background: glass ? 'transparent' : 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}
       >
-        <GlassSurface enabled={glass} cornerRadius={12} />
+        <GlassSurface enabled={glass} behind cornerRadius={12} />
+        <div className="relative" style={{ padding: '10px 12px' }}>
         <textarea
           ref={areaRef}
           value={text}
@@ -125,6 +126,7 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
               {ICON_SEND}
             </button>
           )}
+        </div>
         </div>
       </div>
     </div>
