@@ -1,44 +1,43 @@
-import { Card, Tag, Typography } from 'antd'
-import { FileTextOutlined } from '@ant-design/icons'
 import type { Citation } from './types'
 
-const { Paragraph } = Typography
+// 引用来源：回答下方按命中顺序列出知识片段，点标题看全文。
+// 迁移期改为自绘卡片，不再用 antd Card；相关度用百分比展示，比原始 score 好读。
+interface Props {
+  citations?: Citation[]
+}
 
-// 引用来源卡片区：把回答命中的知识库片段逐条列成卡片，展示文档名、相关度与内容摘要；
-// 没有引用时返回 null 不渲染
-export default function ContextCards({ citations }: { citations?: Citation[] }) {
+export default function ContextCards({ citations }: Props) {
   if (!Array.isArray(citations) || citations.length === 0) return null
-
   return (
-    <div className="context-cards">
-      <div className="context-cards-header">
-        <FileTextOutlined /> 引用来源（{citations.length}）
+    <div className="flex flex-col gap-1.5 self-stretch">
+      <div className="flex items-center gap-1.5 text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+        </svg>
+        引用来源 {citations.length} 条
       </div>
       {citations.map((c, i) => (
-        <Card
-          key={i}
-          size="small"
-          className="context-card"
-          title={
-            <span className="context-card-title">
-              <span className="context-card-index">[{i + 1}]</span>
-              {c.doc_name || '文档 ' + (i + 1)}
-            </span>
-          }
-          extra={
-            typeof c.score === 'number' ? (
-              <Tag color="blue" style={{ marginInlineEnd: 0 }}>相关度 {c.score.toFixed(2)}</Tag>
-            ) : null
-          }
+        <details
+          key={c.chunk_id ?? i}
+          className="rounded-lg overflow-hidden"
+          style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)' }}
         >
-          {/* 内容最多展示 2 行，可点击“展开”查看全文 */}
-          <Paragraph
-            style={{ marginBottom: 0, fontSize: 12.5, color: '#475569' }}
-            ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}
+          <summary
+            className="flex items-center gap-2 px-3 py-2 cursor-pointer text-[12.5px]"
+            style={{ color: 'var(--fg)' }}
           >
-            {c.content || '无内容'}
-          </Paragraph>
-        </Card>
+            <span className="shrink-0 font-semibold" style={{ color: 'var(--accent)' }}>[{i + 1}]</span>
+            <span className="truncate">{c.doc_name || '未命名片段'}</span>
+            {typeof c.score === 'number' && (
+              <span className="ml-auto shrink-0 text-[11px]" style={{ color: 'var(--fg-subtle)', fontVariantNumeric: 'tabular-nums' }}>
+                {(c.score * 100).toFixed(0)}%
+              </span>
+            )}
+          </summary>
+          <div className="px-3 pb-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--fg-muted)' }}>
+            {c.content || '（无内容）'}
+          </div>
+        </details>
       ))}
     </div>
   )

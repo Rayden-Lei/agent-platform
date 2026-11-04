@@ -1,30 +1,35 @@
-import { Button, Space, Typography } from 'antd'
-import { CopyOutlined } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import AnswerMarkdown from './AnswerMarkdown'
 import ContextCards from './ContextCards'
 import ThinkingTrace from './ThinkingTrace'
-import ToolChips from './ToolChips'
+import ToolList from './ToolList'
 import type { ChatCapabilities, Msg } from './types'
 import { copyText } from '../../utils/clipboard'
 import { formatCost, formatNumber } from '../../utils/format'
 import { formatDuration, fromNow } from '../../utils/time'
 
-const { Text } = Typography
+// 助手消息：不再套气泡，直接平铺在页面上（长回答读起来更舒服）。
+// 顺序：头像与名称 → 思考过程（折叠一行）→ 工具调用（细线清单）→ 回答正文 → 引用来源 → 脚注。
+// streaming 为 true 且正文为空时展示"思考中…"占位。能看到哪些过程信息由 capabilities 决定（D-19）。
+interface Props {
+  msg: Msg
+  streaming?: boolean
+  capabilities: ChatCapabilities
+  onShowDetails?: (msg: Msg) => void
+  agentName?: string
+  onRegenerate?: () => void
+}
 
-// 助手消息气泡：按“思考过程 → 工具调用 → 回答正文 → 引用来源卡片 → 脚注（Token 用量 / 时间 / 复制 / 运行记录）”的顺序拼装；
-// streaming 为 true 且正文为空时展示“思考中…”占位。能看到哪些过程信息由 capabilities 决定（D-19），组件本身不读登录态，
-// 登录对话页、装配页调试、分享访客页各自传入
-interface Props { msg: Msg; streaming?: boolean; capabilities: ChatCapabilities; onShowDetails?: (msg: Msg) => void }
+const ICON = {
+  copy: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" /></svg>,
+  retry: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1015.5-6.2M21 3v6h-6" /></svg>,
+}
 
-export default function AssistantMessage({ msg, streaming, capabilities, onShowDetails }: Props) {
+export default function AssistantMessage({ msg, streaming, capabilities, onShowDetails, agentName = '智枢', onRegenerate }: Props) {
   const hasContent = msg.content.length > 0
-  // http 下没有剪贴板：此前 navigator.clipboard 为空时点了没有任何反应，现在会提示手动复制
-  const copy = () => copyText(msg.content)
   const usageText = capabilities.showUsage && msg.usage?.total_tokens
     ? `Token ${formatNumber(msg.usage.total_tokens)}（输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} / 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}）`
     : ''
-  // 调试脚注：首字 / 总耗时 / 检索耗时 / 成本，数值来自 done 事件（与运行记录一致）
   const m = capabilities.showDebugMeta ? msg.metrics : undefined
   const debugText = m
     ? [m.first_token_ms != null ? `首字 ${formatDuration(m.first_token_ms)}` : '', `总 ${formatDuration(m.latency_ms)}`,
@@ -32,29 +37,49 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
     : ''
 
   return (
-    <div className="assistant-msg">
-      {/* 思考过程时间线：检索命中条数 + 工具步骤 + 生成回答（只有步骤与状态，不含工具入参与片段内容） */}
-      <ThinkingTrace citations={msg.citations} tools={msg.tools} running={streaming} />
-      {/* 工具调用标签条；showToolDetails 关掉时只显示工具名 */}
-      <ToolChips tools={msg.tools} showDetails={capabilities.showToolDetails} />
+    <div className="flex flex-col gap-2.5 max-w-full">
+      {/* 头像与名称：头像取智能体名首字，颜色由主题 accent 决定 */}
+      <div className="flex items-center gap-2">
+        <span
+          className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+          aria-hidden="true"
+        >
+          {agentName.slice(0, 1)}
+        </span>
+        <span className="text-[11.5px] tracking-wide" style={{ color: 'var(--fg-subtle)' }}>{agentName}</span>
+      </div>
+
+      <ThinkingTrace citations={msg.citations} tools={msg.tools} running={streaming && !hasContent} />
+      <ToolList tools={msg.tools} showDetails={capabilities.showToolDetails} />
+
       {hasContent ? (
         <AnswerMarkdown content={msg.content} citations={capabilities.showCitations ? msg.citations : undefined} />
       ) : streaming ? (
-        <div className="assistant-typing">思考中…</div>
+        <div className="text-[13px]" style={{ color: 'var(--fg-subtle)' }}>正在生成回答…</div>
       ) : null}
+
       {capabilities.showCitations && <ContextCards citations={msg.citations} />}
+
       {!streaming && (hasContent || msg.usage) && (
-        <div className="usage-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-0.5">
+          <span className="text-[12px] leading-relaxed" style={{ color: 'var(--fg-subtle)' }}>
             {debugText && <>{debugText}<br /></>}
             {usageText}
             {msg.createdAt ? `${usageText ? ' · ' : ''}${fromNow(msg.createdAt)}` : ''}
-          </Text>
-          <Space size={4}>
-            {capabilities.showDebugMeta && onShowDetails && (msg.trace?.length || msg.prompt) && <Button size="small" type="link" onClick={() => onShowDetails(msg)}>详情</Button>}
-            {msg.runId && capabilities.showRunLink && <Link to={`/runs/${msg.runId}`} style={{ fontSize: 12 }}>运行记录</Link>}
-            <Button size="small" type="text" icon={<CopyOutlined />} onClick={copy} aria-label="复制回答" title="复制回答" />
-          </Space>
+          </span>
+          <span className="flex items-center gap-1">
+            {capabilities.showDebugMeta && onShowDetails && (msg.trace?.length || msg.prompt) && (
+              <button type="button" onClick={() => onShowDetails(msg)} className="text-[12px] px-1.5 py-1 rounded" style={{ color: 'var(--accent)' }}>详情</button>
+            )}
+            {msg.runId && capabilities.showRunLink && (
+              <Link to={`/runs/${msg.runId}`} className="text-[12px] px-1.5 py-1 rounded hover:underline" style={{ color: 'var(--accent)' }}>运行记录</Link>
+            )}
+            {onRegenerate && (
+              <button type="button" onClick={onRegenerate} className="p-1.5 rounded-lg" style={{ color: 'var(--fg-muted)' }} title="重新生成" aria-label="重新生成">{ICON.retry}</button>
+            )}
+            <button type="button" onClick={() => copyText(msg.content)} className="p-1.5 rounded-lg" style={{ color: 'var(--fg-muted)' }} title="复制回答" aria-label="复制回答">{ICON.copy}</button>
+          </span>
         </div>
       )}
     </div>

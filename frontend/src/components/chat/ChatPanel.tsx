@@ -16,24 +16,52 @@ interface Props {
   inputPlaceholder?: string
   maxLength?: number
   capabilities?: Partial<ChatCapabilities>
+  agentName?: string
+  modelName?: string
   onSend: (text: string) => void
   onStop: () => void
   onRegenerate: () => void
-  onShowDetails?: (msg: Msg) => void // 调试面板：回答脚注的"详情"
+  onShowDetails?: (msg: Msg) => void
 }
 
-export default function ChatPanel({ header, messages, sending, loading, emptyHint, isMobile, inputDisabled, inputPlaceholder, maxLength, capabilities, onSend, onStop, onRegenerate, onShowDetails }: Props) {
+export default function ChatPanel({
+  header, messages, sending, loading, emptyHint, isMobile, inputDisabled, inputPlaceholder,
+  maxLength, capabilities, agentName, modelName, onSend, onStop, onRegenerate, onShowDetails,
+}: Props) {
   const caps = { ...MINIMAL_CAPABILITIES, ...capabilities }
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', border: '1px solid #e5e7eb', borderRadius: 8, minWidth: 0, minHeight: 0, background: '#fff' }}>
+    <div
+      className="flex-1 flex flex-col min-w-0 min-h-0 rounded-xl overflow-hidden"
+      style={{ background: 'var(--bg-elev)', border: '1px solid var(--border)' }}
+    >
       {header && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>{header}</div>
+        <div
+          className="shrink-0 flex items-center gap-2 px-4"
+          style={{ paddingTop: 10, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}
+        >
+          {header}
+        </div>
       )}
-      <MessageList messages={messages} sending={sending} isMobile={isMobile} loading={loading} emptyHint={emptyHint} capabilities={caps} onShowDetails={onShowDetails} />
+      <MessageList
+        messages={messages}
+        sending={sending}
+        isMobile={isMobile}
+        loading={loading}
+        emptyHint={emptyHint}
+        capabilities={caps}
+        agentName={agentName}
+        onShowDetails={onShowDetails}
+        onRegenerate={caps.allowRegenerate ? onRegenerate : undefined}
+      />
       <ChatInput
-        disabled={inputDisabled} sending={sending} placeholder={inputPlaceholder} maxLength={maxLength} compact={isMobile}
-        canRegenerate={caps.allowRegenerate && messages.some((m) => m.role === 'user')}
-        onSend={onSend} onStop={onStop} onRegenerate={onRegenerate}
+        disabled={inputDisabled}
+        sending={sending}
+        placeholder={inputPlaceholder}
+        maxLength={maxLength}
+        compact={isMobile}
+        modelName={modelName}
+        onSend={onSend}
+        onStop={onStop}
       />
     </div>
   )
