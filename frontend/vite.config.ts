@@ -1,3 +1,4 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -28,6 +29,12 @@ const ALLOWED_HOSTS = (process.env.VITE_ALLOWED_HOSTS || '').split(',').map((h) 
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), frameAncestors()],
+  // shadcn 组件的源码里统一用 @/ 前缀引用（@/lib/utils 等），这里补上同一套别名
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,

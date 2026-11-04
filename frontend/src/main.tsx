@@ -10,6 +10,8 @@ import './styles/theme.css'
 import './styles.css'
 import './utils/time' // 初始化 dayjs 中文与相对时间插件
 import ThemeProvider from './components/theme/ThemeProvider'
+import { Toaster } from './components/shadcn/sonner'
+import { TooltipProvider } from './components/shadcn/tooltip'
 import { useTheme } from './store/theme'
 
 // antd 主题桥接：过渡期 antd 组件仍在使用，把当前配色映射到 antd token，
@@ -60,11 +62,15 @@ function AntdBridge({ children }: { children: React.ReactNode }) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <ThemeProvider>
-    <AntdBridge>
-      {/* 使用 history 路由，配合 App.tsx 中的 <Routes> 定义页面导航 */}
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </AntdBridge>
+    {/* shadcn 的提示与浮层需要两个全局 Provider：Tooltip 统一延迟，Toaster 挂在最外层 */}
+    <TooltipProvider delayDuration={200}>
+      <AntdBridge>
+        {/* 使用 history 路由，配合 App.tsx 中的 <Routes> 定义页面导航 */}
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AntdBridge>
+      <Toaster position="top-center" />
+    </TooltipProvider>
   </ThemeProvider>,
 )
