@@ -169,6 +169,17 @@ html, body, #root {
 .markdown-body th { background: #f8fafc; }
 .markdown-body a { color: var(--accent); }
 
+/* 数学公式：katex 自带样式，这里只约束超宽公式横向滚动，避免撑破消息区 */
+.markdown-body .katex { font-size: 1.02em; }
+.markdown-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; margin: 8px 0; }
+/* 行内代码在深色主题下要跟着换色，原来写死了浅底深字 */
+.markdown-body code { background: var(--bg-soft); color: var(--fg); }
+.markdown-body pre { background: var(--bg-soft-2); color: var(--fg); border: 1px solid var(--border); }
+.markdown-body pre code { background: transparent; color: inherit; }
+.markdown-body blockquote { border-left-color: var(--border-strong); color: var(--fg-muted); }
+.markdown-body th, .markdown-body td { border-color: var(--border); }
+.markdown-body th { background: var(--bg-soft-2); }
+
 /* ===== 对话页 ===== */
 .assistant-bubble {
   background: #fff;

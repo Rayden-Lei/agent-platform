@@ -1,12 +1,18 @@
-// 助手回答的 Markdown 渲染组件：把正文里的 [n] 引用标记转换成可悬浮查看来源详情的角标链接
+// 助手回答的 Markdown 渲染组件：把正文里的 [n] 引用标记转换成可悬浮查看来源详情的角标链接。
+// 同时支持数学公式（remark-math + rehype-katex）：模型常把算式写成 \[ ... \] 或 $...$，
+// 不渲染的话用户会看到 "\times" 这种 LaTeX 源码。
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Popover, Tag } from 'antd'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
+import { Popover } from 'antd'
 import type { Citation } from './types'
 
 // 匹配回答里的引用标记 [1]、[2]、[1, 2]，但不匹配 markdown 链接 [text](url)。
 // 仅当存在 citations 时才开启转换，避免无来源时误改正文。
+// 注意：数学公式的 \[ ... \] 定界符会被这里误判成 [数字]，所以下面先做保护再替换。
 const CITE_PATTERN = /(?<!\])\[(\d+(?:\s*,\s*\d+)*)\](?!\()/g
 
 // 把正文里的 [1]、[1, 2] 等引用标记替换为 citation:// 协议链接，交给下方 a 渲染分支转成角标
@@ -17,7 +23,7 @@ function toCitationLinks(content: string): string {
   })
 }
 
-// 引用角标的悬浮卡片：展示来源文档名、相关度得分与内容片段（超长截断）
+// 引用角标的悬浮卡片：展示来源文档名、相关度与内容片段（超长截断）
 function CitationPopover({ citation, index }: { citation?: Citation; index: number }) {
   const text = citation?.content ? String(citation.content) : ''
   const clipped = text.length > 240 ? text.slice(0, 240) + '…' : text
@@ -26,10 +32,12 @@ function CitationPopover({ citation, index }: { citation?: Citation; index: numb
       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>{citation?.doc_name || '来源 ' + index}</span>
         {typeof citation?.score === 'number' && (
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>相关度 {citation.score.toFixed(2)}</Tag>
+          <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+            相关度 {citation.score.toFixed(2)}
+          </span>
         )}
       </div>
-      <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.7 }}>{clipped || '无内容'}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.7 }}>{clipped || '无内容'}</div>
     </div>
   )
 }
@@ -56,7 +64,7 @@ function CitationMark({ indices, citations }: { indices: number[]; citations: Ci
 }
 
 // 主组件：仅在存在 citations 时把 [n] 转成引用链接，避免污染无来源的正文；
-// 通过 react-markdown 渲染 GFM 语法，并自定义 a 渲染器拦截 citation:// 链接
+// 通过 react-markdown 渲染 GFM + 数学公式，并自定义 a 渲染器拦截 citation:// 链接
 export default function AnswerMarkdown({ content, citations }: { content: string; citations?: Citation[] }) {
   const hasCitations = Array.isArray(citations) && citations.length > 0
   const transformed = useMemo(() => {
@@ -67,7 +75,8 @@ export default function AnswerMarkdown({ content, citations }: { content: string
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false, output: 'html' }]]}
         components={{
           a({ href, children }) {
             // 拦截 citation:// 链接：拆出编号列表渲染成引用角标；普通链接照常新窗口打开

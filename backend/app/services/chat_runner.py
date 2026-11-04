@@ -129,6 +129,17 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
     async for chunk, _meta in llm_stream:
         if isinstance(chunk, AIMessageChunk):
             call_id = chunk.id or "_"
+
+            # 推理内容（思维链）：DeepSeek 系放 additional_kwargs.reasoning_content，
+            # 部分兼容端点用 reasoning / thinking。它不是回答正文，单独走 reasoning 事件，
+            # 前端折叠展示；没有就是空串，不发事件。
+            extra = getattr(chunk, "additional_kwargs", None) or {}
+            reasoning_delta = extra.get("reasoning_content") or extra.get("reasoning") or extra.get("thinking") or ""
+            if isinstance(reasoning_delta, str) and reasoning_delta:
+                reasoning_event = events.emit("reasoning", content=reasoning_delta, call_id=call_id)
+                apply_event(state, reasoning_event)
+                yield reasoning_event
+
             delta = chunk.content if isinstance(chunk.content, str) else ""
             if delta:
                 if state.first_token_ms is None:

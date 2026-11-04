@@ -37,6 +37,9 @@ class StreamState:
     """
 
     content: str = ""
+    # 模型推理内容（思维链）。DeepSeek 系在 additional_kwargs.reasoning_content 里给，
+    # 这里累积成整段，落库与展示都用它；不参与 token 统计（厂商已算进 completion_tokens）
+    reasoning: str = ""
     tool_calls: list = field(default_factory=list)
     citations: list = field(default_factory=list)
     usage_by_call: dict = field(default_factory=dict)
@@ -75,6 +78,7 @@ def apply_event(state: StreamState, event: dict, *, stored_result: str | None = 
 
     各分支的累积规则与注意事项：
     - delta：拼接正文。事件是逐 token 的，落库只存拼好的整段，不存事件本身（一轮几百条，体积不划算）。
+    - reasoning：拼接推理内容（思维链），规则同 delta；不是所有模型都给，没有就一直是空串。
     - citations：整段替换。一次检索给的是完整列表，不存在增量。
     - tool_call：按 id 去重后追加，status 先记 running；同 id 再来时只更新 name / args。
       LangChain 可能先给完整 chunk（tool_calls）再给 ToolMessage 分支拼出来的参数，两次都建条目
@@ -92,6 +96,9 @@ def apply_event(state: StreamState, event: dict, *, stored_result: str | None = 
     type_ = event.get("type")
     if type_ == "delta":
         state.content += event.get("content") or ""
+    elif type_ == "reasoning":
+        # 推理内容是逐 token 增量，与 delta 一样拼接；前端展开"思考过程"时看这段
+        state.reasoning += event.get("content") or ""
     elif type_ == "citations":
         state.citations = event.get("citations") or []
     elif type_ == "tool_call":
