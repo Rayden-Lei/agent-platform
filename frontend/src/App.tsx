@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './store/auth'
 import { loginPathFor } from './utils/redirect'
@@ -31,7 +31,7 @@ const SharePage = lazy(() => import('./pages/SharePage'))
 const Profile = lazy(() => import('./pages/Profile'))
 
 // 路由守卫：未登录（无 token）时重定向到 /login 并带上当前页（登录后回来，docs/15 OP-02），已登录则渲染受保护的子路由
-function RequireAuth({ children }: { children: JSX.Element }) {
+function RequireAuth({ children }: { children: ReactNode }) {
   const { token } = useAuth()
   const location = useLocation()
   if (!token) return <Navigate to={loginPathFor(location.pathname + location.search)} replace />
