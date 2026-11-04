@@ -1,31 +1,25 @@
 import LiquidGlass from 'liquid-glass-react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 
-// 液态玻璃面板（liquid-glass-react）。
+// 液态玻璃底衬（liquid-glass-react）。
 //
-// 层次必须是：页面背景 → 玻璃（模糊 + 折射 + 淡色）→ 内容。内容要放在玻璃里面，
-// 否则拿不到内层折射与高光；容器上也不能再压一层不透明底色，那会让 backdrop-filter
-// 采样到白板，折射等于失效。
+// 只画玻璃本身，不接管内容：绝对定位铺在容器底下，内容留在调用方的正常文档流里（需 relative）。
+// 这样「开玻璃 / 关玻璃」两种模式的布局完全一致——之前把内容塞进绝对定位层，
+// 关掉玻璃后内容回到流里，位置就和开启时对不上了。
 //
-// 定位：库内部用 translate(-50%,-50%) 居中，所以 top/left 必须给 50% 并配 100% 尺寸，
-// 写成 0px 会与那个位移叠加、把整层推出去半个身位（表现为糊成一片马赛克）。
-// 绝对定位是为了不参与父级 flex 布局——库会额外渲染 3 个与内容并列的遮罩节点，
-// 留在文档流里会多出几个 flex 子项把布局撑坏。
-// behind：高度由内容决定的容器（如聊天输入框）用这个模式。内容进绝对定位层会让父级
-// 失去流内高度、直接塌成 0，所以这时玻璃只做底衬，内容留在调用方的文档流里（需 relative）。
+// 玻璃只能做底衬，还因为它有 5 处内联样式/默认行为会打架：
+//   translate(-50%,-50%) 居中、overflow:hidden 裁切浮层、box-shadow 大投影、
+//   display:inline-flex 让内容层收缩、内容层高度不撑满。
+// 这些在 theme.css 的 .lg-surface 里逐个覆盖；不接管内容就不用再和它们纠缠。
 interface Props {
-  children?: ReactNode
   enabled?: boolean
-  behind?: boolean
   cornerRadius?: number
   className?: string
   style?: CSSProperties
 }
 
-export default function GlassSurface({ children, enabled = true, behind = false, cornerRadius = 0, className, style }: Props) {
-  if (!enabled) {
-    return behind ? null : <div className={className} style={style}>{children}</div>
-  }
+export default function GlassSurface({ enabled = true, cornerRadius = 0, className, style }: Props) {
+  if (!enabled) return null
   return (
     <LiquidGlass
       cornerRadius={cornerRadius}
@@ -34,15 +28,16 @@ export default function GlassSurface({ children, enabled = true, behind = false,
       className={`lg-surface ${className ?? ''}`}
       style={{
         position: 'absolute',
+        // 必须是 50%：库内部用 translate(-50%,-50%) 居中，写 0px 会和那个位移叠加、偏出半个身位
         top: '50%',
         left: '50%',
         width: '100%',
         height: '100%',
-        ...(behind ? { pointerEvents: 'none' as const } : null),
+        pointerEvents: 'none',
         ...style,
       }}
     >
-      {behind ? null : children}
+      {null}
     </LiquidGlass>
   )
 }

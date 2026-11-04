@@ -57,7 +57,7 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
         className="relative"
         style={{ borderRadius: 'var(--radius-lg)', background: glass ? 'transparent' : 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}
       >
-        <GlassSurface enabled={glass} behind cornerRadius={12} />
+        <GlassSurface enabled={glass} cornerRadius={12} />
         <div className="relative" style={{ padding: '10px 12px' }}>
         <textarea
           ref={areaRef}

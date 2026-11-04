@@ -250,8 +250,12 @@
 
 /* ============================================================
    液态玻璃面板（components/theme/GlassSurface.tsx）
-   库只提供模糊与折射、不带底色；底色加在库内层的 .glass 上，
-   这样采样的是页面本身，折射才有效。容器上不要另加不透明背景。
+
+   层次：页面 → 模糊层 .glass__warp → 淡色 → 内容。
+   淡色必须加在模糊层「自己」身上，不能加在 .glass 上：
+   .glass 的背景画在 warp 下面，warp 的 backdrop-filter 会把那层底色也一起采样，
+   等于在糊一块白板，折射完全看不出来（顶栏“玻璃没生效”就是这个原因）。
+   元素自身的 background 是在 backdrop-filter 之后画的，所以加在 warp 上是对的。
    ============================================================ */
 
 .lg-surface > .glass {
@@ -262,12 +266,17 @@
      内容包裹层是 flex 子项、默认收缩成内容宽度（顶栏 1228 宽时内容层只有 341），
      整行内容会挤在左边。改成 flex 并让内容层撑满。 */
   display: flex !important;
-  background-color: color-mix(in srgb, var(--bg-elev) 62%, transparent);
+  background-color: transparent;
   /* 库把投影写在元素内联样式上，只能 !important 覆盖：铺满侧栏时那 40px 阴影是一大团黑边 */
   box-shadow: none !important;
   /* 库内层写死 overflow: hidden，会把顶栏里向下展开的浮层（外观设置面板等）直接裁掉，
      表现为“弹窗打不开”。圆角为 0 的全幅面板本来也不需要裁切。 */
   overflow: visible !important;
+}
+
+/* 淡色加在模糊层身上：先糊背景、再叠淡色，玻璃才有通透感 */
+.lg-surface > .glass > .glass__warp {
+  background-color: color-mix(in srgb, var(--bg-elev) 46%, transparent);
 }
 
 /* 内容包裹层是 .glass 的最后一个子节点。库默认 align-items:center、高度随内容，
