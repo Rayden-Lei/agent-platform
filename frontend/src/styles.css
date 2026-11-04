@@ -106,53 +106,13 @@ html, body, #root {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
-/* ===== 表格内部滚动，分页固定底部 =====
-   只传 scroll.x 时 antd 的滚动容器是 .ant-table-content（内联 overflow: auto hidden，要 !important 才能改成纵向也滚），
-   没有 .ant-table-header / .ant-table-body；表头用 position: sticky 钉在容器顶部。 */
+/* ===== 表格容器 =====
+   ListPage 用它做"只有表体滚动、页头与分页固定"的 flex 链；表格本身的滚动由 DataTable 内部负责。 */
 .fixed-table-wrapper {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.fixed-table-wrapper .ant-table-wrapper {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.fixed-table-wrapper .ant-spin-nested-loading,
-.fixed-table-wrapper .ant-spin-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.fixed-table-wrapper .ant-table {
-  flex: 1;
-  min-height: 0;
-}
-.fixed-table-wrapper .ant-table-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.fixed-table-wrapper .ant-table-content {
-  flex: 1;
-  min-height: 0;
-  overflow: auto !important;
-}
-.fixed-table-wrapper .ant-table-thead > tr > th {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-}
-.fixed-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-right,
-.fixed-table-wrapper .ant-table-thead > tr > th.ant-table-cell-fix-left {
-  z-index: 4;
-}
-.fixed-table-wrapper .ant-table-pagination {
-  flex-shrink: 0;
-  margin: 16px 0 0;
 }
 /* ===== Markdown 渲染 ===== */
 .markdown-body { line-height: 1.65; word-break: break-word; }
@@ -197,11 +157,7 @@ html, body, #root {
 
 /* 思考过程折叠面板 */
 .thinking-trace { background: #f8fafc; border-radius: 8px; }
-.thinking-trace .ant-collapse-header { padding: 8px 10px !important; }
-.thinking-trace .ant-collapse-content-box { padding: 8px 10px 4px !important; }
 .thinking-label { display: inline-flex; align-items: center; }
-.thinking-trace .ant-timeline-item { padding-bottom: 10px; }
-.thinking-trace .ant-timeline-item:last-child { padding-bottom: 0; }
 
 /* 工具芯片 */
 .tool-chips { margin: 0; }
@@ -250,9 +206,6 @@ html, body, #root {
   padding-top: 2px;
 }
 .context-card { border-radius: 8px; }
-.context-card .ant-card-head { min-height: 34px; padding: 0 10px; }
-.context-card .ant-card-head-title { padding: 8px 0; font-size: 13px; }
-.context-card .ant-card-body { padding: 8px 10px; }
 .context-card-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .context-card-index { color: var(--accent); font-weight: 600; }
 
@@ -260,10 +213,11 @@ html, body, #root {
 
 /* 触屏（手指点按）：消息上的操作与引用角标的可点区域放大到 44×44 左右（docs/07 第 11 节；鼠标设备不变） */
 @media (pointer: coarse) {
-  .usage-footer .ant-btn { min-width: 44px; min-height: 44px; }
+  /* 按钮的可点区域：shadcn Button 用 min-h/min-w 撑开，不再依赖 antd 的 .ant-btn */
+  .usage-footer button { min-width: 44px; min-height: 44px; }
   .usage-footer a { display: inline-flex; align-items: center; min-height: 44px; }
   .citation-mark { display: inline-block; padding: 6px 6px; margin: -6px -2px; }
-  .chat-input-bar .ant-btn { min-width: 44px; min-height: 44px; }
+  .chat-input-bar button { min-width: 44px; min-height: 44px; }
 }
 
 /* ===== 页面深度优化：列表页 / 详情页骨架 ===== */
@@ -276,10 +230,9 @@ html, body, #root {
 .stat-card-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .detail-header { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 16px 14px; }
 .detail-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.detail-tabs > .ant-tabs-nav { flex-shrink: 0; margin-bottom: 0; }
-.detail-tabs > .ant-tabs-content-holder { flex: 1; min-height: 0; overflow: auto; }
+
 .detail-tab-body { padding: 12px 2px; }
-.chart-card .ant-card-head { min-height: 40px; }
+
 .json-view { border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
 .json-view-bar { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 2px 10px; border-bottom: 1px solid #e5e7eb; }
 .json-view pre { margin: 0; padding: 10px 12px; font-size: 12.5px; overflow: auto; white-space: pre-wrap; word-break: break-all; }

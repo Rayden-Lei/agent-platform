@@ -7,11 +7,11 @@ type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'accent' | 'info'
 
 const TONES: Record<Tone, CSSProperties> = {
   neutral: { background: 'var(--bg-soft)', color: 'var(--fg-muted)' },
-  success: { background: 'rgba(22,163,74,.14)', color: '#15803D' },
-  warning: { background: 'rgba(217,119,6,.16)', color: '#B45309' },
-  danger: { background: 'rgba(220,38,38,.13)', color: '#B91C1C' },
+  success: { background: 'var(--success-soft)', color: 'var(--success)' },
+  warning: { background: 'var(--warning-soft)', color: 'var(--warning)' },
+  danger: { background: 'var(--danger-soft)', color: 'var(--danger)' },
   accent: { background: 'var(--accent-soft)', color: 'var(--accent)' },
-  info: { background: 'rgba(37,99,235,.13)', color: '#1D4ED8' },
+  info: { background: 'var(--info-soft)', color: 'var(--info)' },
 }
 
 // antd Tag 的语义色名 -> 新 tone；StatusTag 等既有组件传进来的是这些名字

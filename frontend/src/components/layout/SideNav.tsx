@@ -48,7 +48,7 @@ export default function SideNav({ onNavigate }: Props) {
               }}
             >
               <span
-                className="text-[15px] flex items-center shrink-0"
+                className="text-[15px] flex items-center shrink-0 [&>svg]:size-[15px]"
                 style={{ color: active ? 'var(--accent)' : 'var(--fg-subtle)' }}
               >
                 {item.icon}
