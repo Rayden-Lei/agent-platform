@@ -52,6 +52,8 @@ export interface Msg {
   id?: number
   role: 'user' | 'assistant'
   content: string
+  // 模型的推理内容（思维链）。不是所有模型都给；有值时"思考过程"展开区显示它
+  reasoning?: string
   citations?: Citation[]
   tools?: ToolStep[]
   usage?: ChatUsage

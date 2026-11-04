@@ -44,6 +44,8 @@ export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React
       const newCid = await transport({ message: msg, conversation_id: conversationId }, {
         onCitations: (citations) => patchLast((last) => { last.citations = citations }),
         onDelta: (content) => patchLast((last) => { last.content += content }),
+        // 推理内容是独立的流，进来时正文通常还没开始；接住它才能在"思考过程"里展示真实思维链
+        onReasoning: (content) => patchLast((last) => { last.reasoning = (last.reasoning || '') + content }),
         onToolCall: (tc) => patchLast((last) => {
           last.tools = [...(last.tools || []), { id: tc.id, name: tc.name || '工具', args: tc.arguments ?? {}, status: 'running' as const }]
         }),

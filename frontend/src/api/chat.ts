@@ -71,6 +71,8 @@ export interface DebugMetrics {
 export interface ChatStreamHandlers {
   onCitations?: (citations: any[]) => void
   onDelta?: (content: string) => void
+  // 推理内容（思维链）增量。DeepSeek 系模型会给，其他模型可能完全没有，没有时不会回调
+  onReasoning?: (content: string) => void
   onToolCall?: (tc: { id?: string; name?: string; arguments?: any }) => void
   onToolResult?: (tr: { tool_call_id?: string; content?: string }) => void
   onError?: (message: string) => void
@@ -158,6 +160,9 @@ export async function streamSse(url: string, body: ChatPayload | DebugChatPayloa
           break
         case 'delta':
           handlers.onDelta?.(evt.content || '')
+          break
+        case 'reasoning':
+          handlers.onReasoning?.(evt.content || '')
           break
         case 'tool_call':
           handlers.onToolCall?.({ id: evt.id, name: evt.name, arguments: evt.arguments })
