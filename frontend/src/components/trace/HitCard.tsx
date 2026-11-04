@@ -1,6 +1,7 @@
-import { Card, Space, Tag, Typography } from 'antd'
-
-const { Paragraph, Text } = Typography
+import { useState } from 'react'
+import { cn } from 'cn'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
 
 // 检索命中卡片：知识库"检索评测"与装配页调试的"召回"共用（docs/15 3.4）。
 // 正文可选：调试的检索步骤不重复带正文，由调用方按 chunk_id 从引用里补；定位信息来自切片 meta（页码 / 行号 / 标题）。
@@ -26,25 +27,36 @@ export function locationText(loc?: HitLocation): string {
 }
 
 export default function HitCard({ rank, docName, docId, score, content, vectorScore, keywordScore, rerankScore, matchedKeywords, location }: Props) {
+  const [expanded, setExpanded] = useState(false)
   const where = locationText(location)
+  const long = !!content && (content.split('\n').length > 3 || content.length > 240)
+
   return (
-    <Card size="small" title={
-      <Space size={8} wrap>
-        <Tag color="blue">#{rank}</Tag>
-        <Text strong>{docName || '文档 ' + (docId ?? '?')}</Text>
-        {where && <Text type="secondary" style={{ fontSize: 12 }}>{where}</Text>}
-        <Text type="secondary" style={{ fontSize: 12 }}>score {score.toFixed(4)}</Text>
-      </Space>
-    }>
-      {content && <Paragraph style={{ marginBottom: 8, fontSize: 13 }} ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}>{content}</Paragraph>}
-      {typeof vectorScore === 'number' && (
-        <Space size={6} wrap>
-          <Tag>向量 {vectorScore}</Tag>
-          <Tag>词法 {keywordScore}</Tag>
-          {typeof rerankScore === 'number' && <Tag color="success">重排 {rerankScore.toFixed(4)}</Tag>}
-          {(matchedKeywords || []).map((k) => <Tag key={k} color="cyan">{k}</Tag>)}
-        </Space>
-      )}
-    </Card>
+    <section className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <Badge tone="info">#{rank}</Badge>
+        <span className="text-[13.5px] font-medium text-foreground">{docName || '文档 ' + (docId ?? '?')}</span>
+        {where && <span className="text-[12px] text-muted-foreground">{where}</span>}
+        <span className="text-[12px] text-muted-foreground">score {score.toFixed(4)}</span>
+      </div>
+      <div className="flex flex-col gap-2 px-3 py-2.5">
+        {content && (
+          <div>
+            <p className={cn('m-0 whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground', !expanded && 'line-clamp-3')}>{content}</p>
+            {long && (
+              <Button size="sm" variant="ghost" className="mt-1" onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '展开'}</Button>
+            )}
+          </div>
+        )}
+        {typeof vectorScore === 'number' && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge>向量 {vectorScore}</Badge>
+            <Badge>词法 {keywordScore}</Badge>
+            {typeof rerankScore === 'number' && <Badge tone="success">重排 {rerankScore.toFixed(4)}</Badge>}
+            {(matchedKeywords || []).map((k) => <Badge key={k} tone="info">{k}</Badge>)}
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
