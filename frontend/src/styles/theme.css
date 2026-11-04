@@ -274,9 +274,13 @@
   overflow: visible !important;
 }
 
-/* 淡色加在模糊层身上：先糊背景、再叠淡色，玻璃才有通透感 */
+/* 淡色加在模糊层身上：先糊背景、再叠淡色，玻璃才有通透感。
+   同时去掉库的位移滤镜（filter: url(#feDisplacementMap)）：它的位移量默认 70px，
+   而顶栏只有 55px 高，位移远大于元素本身，实测把整条横栏渲染成 RGB≈156 的灰带
+   （页面背景是 253）。这些尺寸下折射本来也看不出来，保留 backdrop-filter 的模糊即可。 */
 .lg-surface > .glass > .glass__warp {
   background-color: color-mix(in srgb, var(--bg-elev) 46%, transparent);
+  filter: none !important;
 }
 
 /* 内容包裹层是 .glass 的最后一个子节点。库默认 align-items:center、高度随内容，
