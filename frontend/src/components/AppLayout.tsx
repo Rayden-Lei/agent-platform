@@ -33,7 +33,9 @@ export default function AppLayout() {
   useSessionSync() // 进入应用与切回页面时刷新角色、菜单与"必须改密"（docs/15 OP-02）
 
   // 玻璃底色：关闭玻璃时退回实色，和 theme.css 的降级规则一致
-  const glassOff = { background: 'var(--bg-elev)' }
+  // 关闭玻璃时退回实色面板；开启时底色由 GlassSurface 内部的 .glass 提供，
+  // 容器本身必须保持透明，否则玻璃采样到白板、折射失效。
+  const solidBg = glass ? 'transparent' : 'var(--bg-elev)'
 
   // 视口宽度变化时切换移动端形态
   useEffect(() => {
@@ -74,12 +76,13 @@ export default function AppLayout() {
       ) : (
         <div
           className="relative h-full shrink-0"
-          style={{ width: 212, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)', ...(glass ? null : glassOff) }}
+          style={{ width: 212, background: solidBg, borderWidth: '0 1px 0 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
-          <GlassSurface enabled={glass} />
-          <div className="relative h-full overflow-y-auto">
-            <SideNav />
-          </div>
+          <GlassSurface enabled={glass}>
+            <div className="h-full w-full overflow-y-auto">
+              <SideNav />
+            </div>
+          </GlassSurface>
         </div>
       )}
 
@@ -87,9 +90,10 @@ export default function AppLayout() {
         {/* 顶栏 */}
         <header
           className="relative flex shrink-0 items-center justify-between gap-3 px-4 sm:px-5"
-          style={{ height: 56, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)', ...(glass ? null : glassOff) }}
+          style={{ height: 56, background: solidBg, borderWidth: '0 0 1px 0', borderStyle: 'solid', borderColor: 'var(--border)' }}
         >
-          <GlassSurface enabled={glass} />
+          <GlassSurface enabled={glass}>
+            <div className="flex h-full w-full items-center justify-between gap-3 px-4 sm:px-5">
           <div className="flex min-w-0 items-center gap-2">
             {isMobile && (
               <Button variant="ghost" size="sm" aria-label="打开菜单" onClick={() => setDrawerOpen(true)}>
@@ -132,6 +136,8 @@ export default function AppLayout() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+            </div>
+          </GlassSurface>
         </header>
 
         <DegradedBanner />

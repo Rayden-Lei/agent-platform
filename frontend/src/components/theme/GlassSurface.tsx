@@ -1,42 +1,48 @@
 import LiquidGlass from 'liquid-glass-react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
-// 液态玻璃背景层（liquid-glass-react）。
+// 液态玻璃面板（liquid-glass-react）。
 //
-// 为什么是「背景层」而不是「包住内容」：这个库返回的 Fragment 里有 3 个与内容并列的
-// 遮罩节点，且默认 position:relative，直接包进 flex 容器会多出几个 flex 子项把布局撑坏。
-// 所以这里只渲染玻璃本身，绝对定位铺在容器底下，内容仍走原来的文档流。
-// 调用方需要给父级 position:relative。
+// 层次必须是：页面背景 → 玻璃（模糊 + 折射 + 淡色）→ 内容。内容要放在玻璃里面，
+// 否则拿不到内层折射与高光；容器上也不能再压一层不透明底色，那会让 backdrop-filter
+// 采样到白板，折射等于失效。
 //
-// 另外三个默认值必须改掉，它们是为按钮/卡片设计的：cornerRadius 999 是胶囊形、
-// elasticity 0.15 会让内容跟着鼠标动、padding 24px 32px 会挤走内容。
-// 注意 top 要写字符串 '0px'：库内部是 `baseStyle.top || '50%'`，传数字 0 会被当假值。
+// 定位：库内部用 translate(-50%,-50%) 居中，所以 top/left 必须给 50% 并配 100% 尺寸，
+// 写成 0px 会与那个位移叠加、把整层推出去半个身位（表现为糊成一片马赛克）。
+// 绝对定位是为了不参与父级 flex 布局——库会额外渲染 3 个与内容并列的遮罩节点，
+// 留在文档流里会多出几个 flex 子项把布局撑坏。
+// behind：高度由内容决定的容器（如聊天输入框）用这个模式。内容进绝对定位层会让父级
+// 失去流内高度、直接塌成 0，所以这时玻璃只做底衬，内容留在调用方的文档流里（需 relative）。
 interface Props {
+  children?: ReactNode
   enabled?: boolean
+  behind?: boolean
   cornerRadius?: number
   className?: string
   style?: CSSProperties
 }
 
-export default function GlassSurface({ enabled = true, cornerRadius = 0, className, style }: Props) {
-  if (!enabled) return null
+export default function GlassSurface({ children, enabled = true, behind = false, cornerRadius = 0, className, style }: Props) {
+  if (!enabled) {
+    return behind ? null : <div className={className} style={style}>{children}</div>
+  }
   return (
     <LiquidGlass
       cornerRadius={cornerRadius}
       elasticity={0}
       padding="0px"
-      className={`[&>.glass]:h-full [&>.glass]:w-full ${className ?? ''}`}
+      className={`lg-surface ${className ?? ''}`}
       style={{
         position: 'absolute',
-        top: '0px',
-        left: '0px',
+        top: '50%',
+        left: '50%',
         width: '100%',
         height: '100%',
-        pointerEvents: 'none',
+        ...(behind ? { pointerEvents: 'none' as const } : null),
         ...style,
       }}
     >
-      {null}
+      {behind ? null : children}
     </LiquidGlass>
   )
 }
