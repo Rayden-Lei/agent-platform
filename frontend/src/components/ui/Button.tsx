@@ -1,6 +1,9 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { cn } from 'cn'
+import { Button as ShadcnButton } from '@/components/shadcn/button'
 
-// 按钮：迁移期替代 antd Button。视觉走新 token，尺寸与语义对齐原来那套（primary / default / text / danger）。
+// 按钮：底层就是 shadcn 的 Button（焦点环、禁用态、asChild 都由它负责），
+// 这里只保留项目原来的四个语义与两档尺寸，避免每迁一个页面就改一遍调用处。
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md'
 
@@ -12,28 +15,27 @@ interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className
 }
 
 const SIZES: Record<Size, string> = {
-  sm: 'h-7 px-2.5 text-[12.5px] gap-1',
-  md: 'h-9 px-3.5 text-[13px] gap-1.5',
+  sm: 'h-7 px-2.5 text-[12.5px] gap-1 rounded-lg',
+  md: 'h-9 px-3.5 text-[13px] gap-1.5 rounded-lg',
 }
 
-export default function Button({ variant = 'secondary', size = 'sm', icon, block, children, style, disabled, ...rest }: Props) {
-  const base = 'inline-flex items-center justify-center rounded-lg font-medium transition-colors whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed'
-  const look: Record<Variant, React.CSSProperties> = {
-    primary: { background: 'var(--accent)', color: 'var(--accent-fg)', border: '1px solid var(--accent)' },
-    secondary: { background: 'var(--bg-elev)', color: 'var(--fg)', border: '1px solid var(--border-strong)' },
-    ghost: { background: 'transparent', color: 'var(--fg-muted)', border: '1px solid transparent' },
-    danger: { background: 'transparent', color: '#DC2626', border: '1px solid rgba(220,38,38,.35)' },
-  }
+const VARIANTS: Record<Variant, string> = {
+  primary: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-none',
+  secondary: 'bg-card text-foreground border border-border-strong hover:bg-accent shadow-none',
+  ghost: 'bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground shadow-none',
+  danger: 'bg-transparent text-destructive border border-destructive/35 hover:bg-destructive/10 shadow-none',
+}
+
+export default function Button({ variant = 'secondary', size = 'sm', icon, block, children, disabled, ...rest }: Props) {
   return (
-    <button
+    <ShadcnButton
       type="button"
       disabled={disabled}
-      className={`${base} ${SIZES[size]} ${block ? 'w-full' : ''}`}
-      style={{ ...look[variant], ...style }}
+      className={cn('font-medium', SIZES[size], VARIANTS[variant], block && 'w-full')}
       {...rest}
     >
       {icon && <span className="flex items-center text-[13px]">{icon}</span>}
       {children}
-    </button>
+    </ShadcnButton>
   )
 }

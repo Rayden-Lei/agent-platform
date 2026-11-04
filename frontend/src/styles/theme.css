@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ============================================================
    智枢 · 设计 token
@@ -216,6 +217,51 @@
   --blob-3: rgba(56, 189, 248, 0.13);
   --dot: rgba(255, 255, 255, 0.045);
   color-scheme: dark;
+}
+
+/* ============================================================
+   shadcn/ui 语义色桥接
+   shadcn 组件源码里写的是 bg-background / text-foreground / bg-primary 这类语义类名，
+   这里统一映射到上面的设计 token，8 套配色与玻璃开关都会自动生效。
+   注意两个容易搞混的名字：
+     --color-primary = 品牌色（项目里的 --accent）
+     --color-accent  = 悬停面（浅灰底，不是品牌色）
+   ============================================================ */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--bg-elev);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--bg-elev);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--bg-soft);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--bg-soft-2);
+  --color-muted-foreground: var(--fg-muted);
+  --color-accent: var(--bg-soft);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #FFFFFF;
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border-strong);
+  --color-ring: var(--accent);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/* 危险色（删除、停用这类破坏性操作）：浅色用深红，深色提亮保证对比度。
+   单独放在这里而不是塞进 8 个主题块，是因为它跟配色方案无关、全站固定语义。 */
+:root {
+  --danger: #DC2626;
+}
+[data-theme="deep"],
+[data-theme="midnight"] {
+  --danger: #F87171;
 }
 
 /* ============================================================

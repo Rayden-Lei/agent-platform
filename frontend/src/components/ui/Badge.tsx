@@ -1,15 +1,17 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import { cn } from 'cn'
+import { Badge as ShadcnBadge } from '@/components/shadcn/badge'
 
-// 状态徽章：替代 antd Tag。色板只保留五种语义，避免各页面自定义颜色导致风格发散。
+// 状态徽章：底层是 shadcn Badge，色板固定为五种语义，避免各页面自定义颜色导致风格发散。
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'accent' | 'info'
 
-const TONES: Record<Tone, { bg: string; fg: string }> = {
-  neutral: { bg: 'var(--bg-soft)', fg: 'var(--fg-muted)' },
-  success: { bg: 'rgba(22,163,74,.14)', fg: '#15803D' },
-  warning: { bg: 'rgba(217,119,6,.16)', fg: '#B45309' },
-  danger: { bg: 'rgba(220,38,38,.13)', fg: '#B91C1C' },
-  accent: { bg: 'var(--accent-soft)', fg: 'var(--accent)' },
-  info: { bg: 'rgba(37,99,235,.13)', fg: '#1D4ED8' },
+const TONES: Record<Tone, CSSProperties> = {
+  neutral: { background: 'var(--bg-soft)', color: 'var(--fg-muted)' },
+  success: { background: 'rgba(22,163,74,.14)', color: '#15803D' },
+  warning: { background: 'rgba(217,119,6,.16)', color: '#B45309' },
+  danger: { background: 'rgba(220,38,38,.13)', color: '#B91C1C' },
+  accent: { background: 'var(--accent-soft)', color: 'var(--accent)' },
+  info: { background: 'rgba(37,99,235,.13)', color: '#1D4ED8' },
 }
 
 // antd Tag 的语义色名 -> 新 tone；StatusTag 等既有组件传进来的是这些名字
@@ -30,14 +32,15 @@ interface Props {
 
 export default function Badge({ tone = 'neutral', children, title }: Props) {
   const key = (LEGACY[tone] ?? tone) as Tone
-  const c = TONES[key] ?? TONES.neutral
+  const style = TONES[key] ?? TONES.neutral
   return (
-    <span
+    <ShadcnBadge
+      variant="outline"
       title={title}
-      className="inline-flex items-center gap-1 px-2 py-[1px] rounded-full text-[11.5px] whitespace-nowrap leading-[18px]"
-      style={{ background: c.bg, color: c.fg }}
+      style={style}
+      className={cn('border-transparent rounded-full px-2 py-[1px] text-[11.5px] leading-[18px] font-normal')}
     >
       {children}
-    </span>
+    </ShadcnBadge>
   )
 }
