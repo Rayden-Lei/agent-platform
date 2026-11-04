@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { message } from 'antd'
-import type { TableProps } from 'antd'
+import { toast } from 'sonner'
 import type { Page, PageQuery } from '../api'
 import { errorText } from '../utils/errors'
 
@@ -11,7 +10,7 @@ export interface UsePagedListOptions {
   /** 服务端筛选条件，变化时自动回到第 1 页重新加载 */
   filters?: Record<string, string | number | boolean | undefined>
   errorText?: string
-  /** 默认排序；列上用 sortProps(field) 接入表头排序 */
+  /** 默认排序；列上标 sortable 即可接入服务端排序（由 DataTable 触发 setSort） */
   defaultSort?: SortState
   /** 注入 rowSelection，选中跨页保留；筛选变化时清空 */
   selectable?: boolean
@@ -22,7 +21,7 @@ export interface UsePagedListOptions {
 }
 
 /**
- * 服务端分页列表的通用状态：页码、每页条数、总数、加载态、排序、错误态、行选择，以及可直接展开到 <Table> 的 tableProps。
+ * 服务端分页列表的通用状态：页码、每页条数、总数、加载态、排序、错误态、行选择，直接喂给 DataTable。
  * 用请求序号丢弃过期响应：快速翻页或切换筛选时，先发后到的响应不会覆盖新数据。
  */
 export function usePagedList<T = any>(
@@ -59,7 +58,7 @@ export function usePagedList<T = any>(
       if (mine !== seq.current) return
       const text = errorText(e, fallbackText)
       setError(text)
-      message.error(text)
+      toast.error(text)
     } finally {
       if (mine === seq.current) setLoading(false)
     }
@@ -78,43 +77,6 @@ export function usePagedList<T = any>(
   const reload = useCallback(() => load(page, pageSize), [load, page, pageSize])
   const clearSelection = useCallback(() => setSelectedKeys([]), [])
 
-  // 列定义上展开：{ ...sortProps('latency_ms') } 即可让表头可排序（服务端排序）
-  const sortProps = useCallback((field: string) => ({
-    sorter: true as const,
-    sortOrder: sort.field === field ? (sort.order === 'asc' ? ('ascend' as const) : ('descend' as const)) : null,
-  }), [sort])
-
-  // 可直接展开到 antd <Table> 的属性：数据源、加载态、分页配置（翻页即触发 load）、排序回调、行选择、空态
-  const tableProps = useMemo(() => {
-    const onChange: TableProps<T>['onChange'] = (_pagination, _filters, sorter) => {
-      const s = Array.isArray(sorter) ? sorter[0] : sorter
-      const field = s?.order ? String(s.columnKey ?? s.field ?? '') : undefined
-      setSort(field ? { field, order: s?.order === 'ascend' ? 'asc' : 'desc' } : {})
-    }
-    return {
-      dataSource: items,
-      loading,
-      onChange,
-      pagination: {
-        current: page,
-        pageSize,
-        total,
-        showSizeChanger: true,
-        showTotal: (t: number) => '共 ' + t + ' 条',
-        position: ['bottomRight'] as ['bottomRight'],
-        onChange: (p: number, ps: number) => load(p, ps),
-      },
-      ...(selectable ? {
-        rowSelection: {
-          selectedRowKeys: selectedKeys,
-          onChange: (keys: React.Key[]) => setSelectedKeys(keys.map(Number)),
-          preserveSelectedRowKeys: true,
-        },
-      } : {}),
-      ...(emptyText !== undefined ? { locale: { emptyText: loading ? ' ' : error ? `加载失败：${error}` : emptyText } } : {}),
-    }
-  }, [items, loading, page, pageSize, total, load, selectable, selectedKeys, emptyText, error])
-
   // items 当前页数据 / total 总条数 / load 指定页码加载 / reload 原地刷新 / error 失败文案
-  return { items, total, page, pageSize, loading, error, sort, setSort, sortProps, selectedKeys, setSelectedKeys, clearSelection, load, reload, tableProps }
+  return { items, total, page, pageSize, loading, error, sort, setSort, selectedKeys, setSelectedKeys, clearSelection, load, reload }
 }

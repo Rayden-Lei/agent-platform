@@ -274,7 +274,7 @@ html, body, #root {
 .stat-card { padding: 14px 16px; }
 .stat-card-clickable { cursor: pointer; }
 .stat-card-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.detail-header { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
+.detail-header { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 16px 14px; }
 .detail-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .detail-tabs > .ant-tabs-nav { flex-shrink: 0; margin-bottom: 0; }
 .detail-tabs > .ant-tabs-content-holder { flex: 1; min-height: 0; overflow: auto; }

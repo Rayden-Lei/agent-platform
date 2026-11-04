@@ -1,4 +1,4 @@
-import { HistoryOutlined, MessageOutlined } from '@ant-design/icons'
+import { History, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { AgentRow } from '../../api'
 import type { DataColumn, SortState } from '../table/DataTable'
@@ -85,13 +85,13 @@ export function buildAgentColumns({ onChat, onPublish, onEdit, onDelete }: Optio
       key: 'actions', header: '操作', width: 250, pinRight: true,
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="ghost" icon={<MessageOutlined />} disabled={r.status !== 'published'} onClick={() => onChat(r)}>对话</Button>
+          <Button size="sm" variant="ghost" icon={<MessageSquare />} disabled={r.status !== 'published'} onClick={() => onChat(r)}>对话</Button>
           {(r.status !== 'published' || r.has_unpublished_changes) && (
             <Button size="sm" variant="primary" onClick={() => onPublish(r)}>
               {r.status === 'offline' && !r.has_unpublished_changes ? '重新上线' : '发布'}
             </Button>
           )}
-          <Button size="sm" variant="secondary" icon={<HistoryOutlined />} onClick={() => onEdit(r)}>编辑</Button>
+          <Button size="sm" variant="secondary" icon={<History />} onClick={() => onEdit(r)}>编辑</Button>
           <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
-import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
+import { Plus, Users as UsersIcon } from 'lucide-react'
 import { batchUsers, deleteUser, listUsers, updateUser, type UserRow } from '../api'
 import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
@@ -48,7 +48,7 @@ export default function Users() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<TeamOutlined />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
+      header={<PageHeader icon={<UsersIcon />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />

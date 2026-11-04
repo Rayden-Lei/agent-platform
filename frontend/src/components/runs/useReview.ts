@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { resumeWorkflow, type RunRow } from '../../api'
 import { errorText } from '../../utils/errors'
 
@@ -11,10 +11,10 @@ export function useReview(onDone?: () => void) {
     setReviewing(run.id)
     try {
       await resumeWorkflow(run.workflow_id, run.id, { decision })
-      message.success(decision === 'approved' ? '已通过，工作流继续执行' : '已拒绝')
+      toast.success(decision === 'approved' ? '已通过，工作流继续执行' : '已拒绝')
       onDone?.()
     } catch (e) {
-      message.error(errorText(e, '提交审核结果失败'))
+      toast.error(errorText(e, '提交审核结果失败'))
     } finally {
       setReviewing(null)
     }

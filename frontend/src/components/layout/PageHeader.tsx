@@ -37,7 +37,7 @@ export default function PageHeader({ title, icon, crumbs, description, extra, ta
           </div>
           {description && <p className="m-0 mt-1 text-[14px] leading-relaxed text-muted-foreground">{description}</p>}
         </div>
-        {extra && <div className="flex shrink-0 items-center gap-2">{extra}</div>}
+        {extra && <div className="flex shrink-0 items-center gap-2 self-start">{extra}</div>}
       </div>
     </div>
   )

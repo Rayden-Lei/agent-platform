@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from "sonner"
-import { PlusOutlined, RobotOutlined } from '@ant-design/icons'
+import { Plus, Bot } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { batchAgents, deleteAgent, getAgent, listAgents, listModels, OPTIONS_PAGE, publishAgent, type AgentDetail, type AgentRow, type ModelRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -61,7 +61,7 @@ export default function Agents() {
 
   return (
     <ListPage
-      header={<PageHeader icon={<RobotOutlined />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => navigate('/agents/new')}>新增智能体</Button>} />}
+      header={<PageHeader icon={<Bot />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button variant="primary" size="md" icon={<Plus />} onClick={() => navigate('/agents/new')}>新增智能体</Button>} />}
       filters={<AgentFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} models={models} loading={list.loading} />}
       batch={
         <BatchActionBar

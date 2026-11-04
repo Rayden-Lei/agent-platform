@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import type { ChatTransport } from '../../api'
 import type { Msg } from './types'
 
@@ -75,7 +75,7 @@ export function useChatStream(messages: Msg[], setMessages: React.Dispatch<React
       // 主动停止产生 AbortError，属预期行为，静默返回不提示错误
       if ((e as { name?: string }).name === 'AbortError') return
       const text = (e as Error).message || '发送失败'
-      message.error(text)
+      toast.error(text)
       // 建流前就被拒（422 / 400 等）时占位气泡是空的：写上原因并标失败，不留一个空白回答
       patchLast((last) => { if (!last.content) last.content = '[错误] ' + text; last.failed = true })
     } finally {

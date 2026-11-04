@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { message } from 'antd'
+import { toast } from "sonner"
 import { RequestError, chatShareStream, deleteShareConversation, listShareConversations, listShareMessages, type ChatTransport, type ConversationRow } from '../api'
 import { useChatStream } from '../components/chat/useChatStream'
 import { toGuestChatMessages } from '../components/chat/messages'
@@ -19,7 +19,7 @@ export function useShareChat(code: string, ready: boolean, onUnauthorized: (deta
 
   const handleError = useCallback((e: unknown, fallback: string) => {
     if (e instanceof RequestError && e.status === 401) onUnauthorized(e.message)
-    else message.error((e as Error).message || fallback)
+    else toast.error((e as Error).message || fallback)
   }, [onUnauthorized])
 
   const loadConversations = useCallback(async (page = 1) => {
