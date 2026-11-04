@@ -1,6 +1,13 @@
-import { useEffect } from 'react'
-import { Button, DatePicker, Form, Input, InputNumber, Modal, Radio, Space, Switch, Typography } from 'antd'
-import dayjs, { type Dayjs } from 'dayjs'
+import { useEffect, useState } from 'react'
+import { CalendarDays } from 'lucide-react'
+import dayjs from 'dayjs'
+import { Calendar } from '@/components/shadcn/calendar'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
+import { Switch } from '@/components/shadcn/switch'
+import Modal from '../ui/Modal'
+import Button from '../ui/Button'
 import type { AgentShare, AgentShareInput, ShareAccessMode } from '../../api'
 
 // 分享链接的访问与限额设置（docs/15 3.6）：访问方式、访问密码、有效期、三个限额、访客能力。整体覆盖保存，开关状态沿用当前值。
@@ -9,8 +16,8 @@ type PasswordMode = 'none' | 'keep' | 'set'
 interface Values {
   access_mode: ShareAccessMode
   password_mode: PasswordMode
-  password?: string
-  expires_at: Dayjs | null
+  password: string
+  expires_at: string | null // ISO 串；null 表示长期有效
   rate_limit_per_minute: number
   daily_message_limit: number
   visitor_daily_limit: number
@@ -24,67 +31,205 @@ interface Props {
 }
 
 const toValues = (s: AgentShare): Values => ({
-  access_mode: s.access_mode, password_mode: s.password_set ? 'keep' : 'none', expires_at: s.expires_at ? dayjs(s.expires_at) : null,
-  rate_limit_per_minute: s.rate_limit_per_minute, daily_message_limit: s.daily_message_limit, visitor_daily_limit: s.visitor_daily_limit,
-  allow_http_tools: s.allow_http_tools, show_citations: s.show_citations,
+  access_mode: s.access_mode, password_mode: s.password_set ? 'keep' : 'none', password: '',
+  expires_at: s.expires_at, rate_limit_per_minute: s.rate_limit_per_minute, daily_message_limit: s.daily_message_limit,
+  visitor_daily_limit: s.visitor_daily_limit, allow_http_tools: s.allow_http_tools, show_citations: s.show_citations,
 })
 
-export default function ShareSettingsForm({ share, saving, onSave }: Props) {
-  const [form] = Form.useForm<Values>()
-  const passwordMode = Form.useWatch('password_mode', form)
-  useEffect(() => { form.setFieldsValue(toValues(share)) }, [share, form])
+// 互斥选项：原来 antd 的 Radio.Group，用语义 token 的分段按钮表达
+function Segment<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-border p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          onClick={() => onChange(o.value)}
+          className={o.value === value
+            ? 'rounded-md bg-primary px-2.5 py-1 text-[12.5px] font-medium text-primary-foreground'
+            : 'rounded-md px-2.5 py-1 text-[12.5px] text-muted-foreground hover:bg-accent hover:text-foreground'}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
-  const submit = async (v: Values) => {
-    const input: AgentShareInput = {
-      is_enabled: share.is_enabled, access_mode: v.access_mode, expires_at: v.expires_at ? v.expires_at.format() : null, // format() 是带偏移量的 ISO 8601
-      rate_limit_per_minute: v.rate_limit_per_minute, daily_message_limit: v.daily_message_limit, visitor_daily_limit: v.visitor_daily_limit,
-      allow_http_tools: v.allow_http_tools, show_citations: v.show_citations,
+// 带单位的数字输入：原来 antd InputNumber 的 addonAfter
+function NumberField({ id, label, unit, value, min, max, onChange }: { id: string; label: string; unit: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Input id={id} type="number" min={min} max={max} value={value} className="w-[110px]" onChange={(e) => onChange(Number(e.target.value))} />
+        <span className="text-[12.5px] text-muted-foreground">{unit}</span>
+      </div>
+    </div>
+  )
+}
+
+export default function ShareSettingsForm({ share, saving, onSave }: Props) {
+  const [values, setValues] = useState<Values>(() => toValues(share))
+  const [error, setError] = useState<string | null>(null)
+  const [confirmTools, setConfirmTools] = useState(false)
+  useEffect(() => { setValues(toValues(share)); setError(null) }, [share])
+
+  const set = <K extends keyof Values>(key: K, v: Values[K]) => setValues((s) => ({ ...s, [key]: v }))
+  const expires = values.expires_at ? dayjs(values.expires_at) : null
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    // 服务端同样会校验，这里只是提前给出可读提示
+    if (values.password_mode === 'set') {
+      if (!values.password.trim()) { setError('请输入访问密码'); return }
+      if (values.password.length < 4 || values.password.length > 64) { setError('4～64 个字符'); return }
     }
-    if (v.password_mode === 'set') input.password = v.password
-    else if (v.password_mode === 'none' && share.password_set) input.password = null
-    if (await onSave(input)) form.setFieldValue('password', undefined)
-  }
-  // 打开 HTTP 工具前确认：访客能触发智能体绑定的 HTTP 工具，等于把这些接口开放给拿到链接的人。
-  // Form.Item 先把开关值写进表单再调这里，所以打开时先拨回关闭，确认后才置为打开（取消则保持关闭）
-  const confirmHttpTools = (checked: boolean) => {
-    if (!checked) return
-    form.setFieldValue('allow_http_tools', false)
-    Modal.confirm({
-      title: '允许访客调用 HTTP 工具？', okText: '允许', cancelText: '取消',
-      content: '访客的提问会触发智能体绑定的 HTTP 工具（预检里列出了是哪几个），等于把这些接口开放给拿到链接的人。保存后生效。',
-      onOk: () => form.setFieldValue('allow_http_tools', true),
-    })
+    setError(null)
+    const input: AgentShareInput = {
+      is_enabled: share.is_enabled, access_mode: values.access_mode,
+      expires_at: values.expires_at ? dayjs(values.expires_at).format() : null, // format() 是带偏移量的 ISO 8601
+      rate_limit_per_minute: values.rate_limit_per_minute, daily_message_limit: values.daily_message_limit,
+      visitor_daily_limit: values.visitor_daily_limit, allow_http_tools: values.allow_http_tools, show_citations: values.show_citations,
+    }
+    if (values.password_mode === 'set') input.password = values.password
+    else if (values.password_mode === 'none' && share.password_set) input.password = null
+    if (await onSave(input)) set('password', '')
   }
 
   return (
-    <Form form={form} layout="vertical" onFinish={submit} initialValues={toValues(share)} style={{ maxWidth: 640 }}>
-      <Form.Item name="access_mode" label="访问方式" extra="仅登录：访客用平台账号登录后访问，会话记在其本人名下，检索按其本人的角色">
-        <Radio.Group options={[{ value: 'public', label: '公开（拿到链接即可）' }, { value: 'login', label: '仅登录用户' }]} />
-      </Form.Item>
-      <Form.Item name="password_mode" label="访问密码">
-        <Radio.Group options={[{ value: 'none', label: '不设' }, ...(share.password_set ? [{ value: 'keep', label: '保留现有密码' }] : []), { value: 'set', label: share.password_set ? '改成新密码' : '设置密码' }]} />
-      </Form.Item>
-      {passwordMode === 'set' && (
-        <Form.Item name="password" rules={[{ required: true, message: '请输入访问密码' }, { min: 4, max: 64, message: '4～64 个字符' }]}>
-          <Input.Password placeholder="4～64 个字符" autoComplete="new-password" style={{ maxWidth: 320 }} />
-        </Form.Item>
+    <form className="flex max-w-[640px] flex-col gap-3.5" onSubmit={submit}>
+      <div className="flex flex-col gap-1.5">
+        <Label>访问方式</Label>
+        <Segment
+          value={values.access_mode}
+          onChange={(v) => set('access_mode', v)}
+          options={[{ value: 'public', label: '公开（拿到链接即可）' }, { value: 'login', label: '仅登录用户' }]}
+        />
+        <p className="m-0 text-[12px] text-muted-foreground">仅登录：访客用平台账号登录后访问，会话记在其本人名下，检索按其本人的角色</p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label>访问密码</Label>
+        <Segment
+          value={values.password_mode}
+          onChange={(v) => set('password_mode', v)}
+          options={[
+            { value: 'none', label: '不设' },
+            ...(share.password_set ? [{ value: 'keep' as PasswordMode, label: '保留现有密码' }] : []),
+            { value: 'set', label: share.password_set ? '改成新密码' : '设置密码' },
+          ]}
+        />
+      </div>
+
+      {values.password_mode === 'set' && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="share-new-password" className="sr-only">访问密码</Label>
+          <Input
+            id="share-new-password"
+            type="password"
+            autoComplete="new-password"
+            placeholder="4～64 个字符"
+            className="max-w-[320px]"
+            value={values.password}
+            onChange={(e) => set('password', e.target.value)}
+          />
+        </div>
       )}
-      <Form.Item name="expires_at" label="有效期至" extra="不填则长期有效；过期后访客打开看到「链接已过期」">
-        <DatePicker showTime allowClear disabledDate={(d) => d.isBefore(dayjs().startOf('day'))} />
-      </Form.Item>
-      <Space size={16} wrap>
-        <Form.Item name="rate_limit_per_minute" label="整条链接每分钟" rules={[{ required: true }]}><InputNumber min={1} max={600} precision={0} addonAfter="次" /></Form.Item>
-        <Form.Item name="daily_message_limit" label="整条链接每天" rules={[{ required: true }]}><InputNumber min={1} max={100000} precision={0} addonAfter="条" /></Form.Item>
-        <Form.Item name="visitor_daily_limit" label="每位访客每天" rules={[{ required: true }]}><InputNumber min={1} max={1000} precision={0} addonAfter="条" /></Form.Item>
-      </Space>
-      <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -8 }}>
+
+      <div className="flex flex-col gap-1.5">
+        <Label>有效期至</Label>
+        <div className="flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-input bg-transparent px-3 text-[13px] text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                {expires ? expires.format('YYYY-MM-DD HH:mm') : '长期有效'}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-0">
+              <Calendar
+                mode="single"
+                selected={expires?.toDate()}
+                disabled={{ before: dayjs().startOf('day').toDate() }}
+                onSelect={(d) => {
+                  if (!d) return
+                  const base = dayjs(d).hour(expires?.hour() ?? 0).minute(expires?.minute() ?? 0).second(0)
+                  set('expires_at', base.format())
+                }}
+              />
+              <div className="flex items-center gap-2 border-t border-border p-2">
+                <Input
+                  type="time"
+                  aria-label="时间"
+                  className="h-8 w-[110px] text-[12.5px]"
+                  value={expires ? expires.format('HH:mm') : '00:00'}
+                  onChange={(e) => {
+                    const [h, m] = e.target.value.split(':').map(Number)
+                    set('expires_at', dayjs(expires ?? undefined).hour(h || 0).minute(m || 0).second(0).format())
+                  }}
+                />
+                {values.expires_at && (
+                  <button type="button" className="text-[12.5px] text-muted-foreground hover:text-foreground" onClick={() => set('expires_at', null)}>清除</button>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+        <p className="m-0 text-[12px] text-muted-foreground">不填则长期有效；过期后访客打开看到「链接已过期」</p>
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <NumberField id="share-rate" label="整条链接每分钟" unit="次" min={1} max={600} value={values.rate_limit_per_minute} onChange={(v) => set('rate_limit_per_minute', v)} />
+        <NumberField id="share-daily" label="整条链接每天" unit="条" min={1} max={100000} value={values.daily_message_limit} onChange={(v) => set('daily_message_limit', v)} />
+        <NumberField id="share-visitor" label="每位访客每天" unit="条" min={1} max={1000} value={values.visitor_daily_limit} onChange={(v) => set('visitor_daily_limit', v)} />
+      </div>
+      <p className="m-0 -mt-1 text-[12px] text-muted-foreground">
         成本的硬上限是"整条链接每天"：访客换浏览器能绕开"每位访客每天"，绕不开它。超限的提问直接拒绝，不调模型。
-      </Typography.Paragraph>
-      <Space size={24} wrap>
-        <Form.Item name="show_citations" label="显示引用来源" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item name="allow_http_tools" label="允许 HTTP 工具" valuePropName="checked"><Switch onChange={confirmHttpTools} /></Form.Item>
-      </Space>
-      <Button type="primary" htmlType="submit" loading={saving}>保存设置</Button>
-    </Form>
+      </p>
+
+      <div className="flex flex-wrap items-center gap-5">
+        <div className="flex items-center gap-2">
+          <Switch id="share-citations" checked={values.show_citations} onCheckedChange={(v) => set('show_citations', v === true)} />
+          <Label htmlFor="share-citations" className="text-[13px] font-normal">显示引用来源</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="share-http-tools"
+            checked={values.allow_http_tools}
+            onCheckedChange={(v) => { if (v === true) setConfirmTools(true); else set('allow_http_tools', false) }}
+          />
+          <Label htmlFor="share-http-tools" className="text-[13px] font-normal">允许 HTTP 工具</Label>
+        </div>
+      </div>
+
+      {error && <p className="m-0 text-[12.5px] text-destructive">{error}</p>}
+
+      <div>
+        <Button variant="primary" size="md" type="submit" disabled={saving}>{saving ? '保存中…' : '保存设置'}</Button>
+      </div>
+
+      {/* 打开 HTTP 工具前确认：访客能触发智能体绑定的 HTTP 工具，等于把这些接口开放给拿到链接的人 */}
+      <Modal
+        open={confirmTools}
+        size="sm"
+        title="允许访客调用 HTTP 工具？"
+        onClose={() => setConfirmTools(false)}
+        footer={
+          <>
+            <Button variant="ghost" size="md" onClick={() => setConfirmTools(false)}>取消</Button>
+            <Button variant="primary" size="md" onClick={() => { set('allow_http_tools', true); setConfirmTools(false) }}>允许</Button>
+          </>
+        }
+      >
+        <p className="m-0 text-[13px] leading-relaxed text-muted-foreground">
+          访客的提问会触发智能体绑定的 HTTP 工具（预检里列出了是哪几个），等于把这些接口开放给拿到链接的人。保存后生效。
+        </p>
+      </Modal>
+    </form>
   )
 }

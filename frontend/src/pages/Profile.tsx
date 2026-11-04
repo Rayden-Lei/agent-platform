@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Tag, message } from 'antd'
+import { toast } from 'sonner'
 import { changeMyPassword, listMyApiKeys, listMyLogins, logoutOtherDevices, me, updateMe, type ProfileInput } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
 import { useAuth } from '../store/auth'
@@ -9,6 +9,7 @@ import ProfileForm from '../components/profile/ProfileForm'
 import SecurityPanel from '../components/profile/SecurityPanel'
 import MyApiKeysPanel from '../components/profile/MyApiKeysPanel'
 import LoginHistoryTable from '../components/profile/LoginHistoryTable'
+import Badge from '../components/ui/Badge'
 import { errorText } from '../utils/errors'
 import { formatDateTime } from '../utils/time'
 
@@ -26,10 +27,10 @@ export default function Profile() {
     setSaving(true)
     try {
       profile.setData(await updateMe(input))
-      message.success('已保存')
+      toast.success('已保存')
       return true
     } catch (e) {
-      message.error(errorText(e, '保存失败'))
+      toast.error(errorText(e, '保存失败'))
       return false
     } finally { setSaving(false) }
   }
@@ -48,7 +49,7 @@ export default function Profile() {
     <DetailPage
       crumbs={[{ label: '个人中心' }]}
       title={info ? info.display_name || info.username : ''}
-      tags={info && <Tag>{roleLabel[info.role] || info.role}</Tag>}
+      tags={info && <Badge tone="accent">{roleLabel[info.role] || info.role}</Badge>}
       meta={info ? [
         { label: '用户名', value: info.username },
         { label: '最近登录', value: info.last_login_at ? formatDateTime(info.last_login_at) : '-' },

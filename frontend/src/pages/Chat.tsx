@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Grid, Select, Typography, message } from 'antd'
+import { toast } from 'sonner'
+import { ChevronDown, MessageSquare, Plus } from 'lucide-react'
 import Button from '../components/ui/Button'
-import { MessageOutlined, PlusOutlined } from '@ant-design/icons'
 import { chatAgentStream, deleteConversation, getConversation, listConversations, listMessages, type ChatTransport, type ConversationRow } from '../api'
 import { visibleNavItems } from '../constants/nav'
 import { useAvailableAgents } from '../hooks/useAvailableAgents'
@@ -9,19 +9,18 @@ import { useQueryState } from '../hooks/useQueryState'
 import { useAuth } from '../store/auth'
 import ChatPanel from '../components/chat/ChatPanel'
 import ConversationList from '../components/chat/ConversationList'
+import AgentPicker from '../components/chat/AgentPicker'
 import { useChatStream } from '../components/chat/useChatStream'
 import { toChatMessages } from '../components/chat/messages'
 import { CHAT_MESSAGE_MAX_CHARS, FULL_CAPABILITIES, type ChatCapabilities, type Msg } from '../components/chat/types'
 import { errorText } from '../utils/errors'
 
-const { useBreakpoint } = Grid
 const PAGE = 50
 
 // 聊天页：左侧按当前智能体过滤的会话列表 + 右侧对话面板（ChatPanel，与装配页调试、分享访客页共用）。
 // 智能体与会话通过 ?agent= 与 ?conversation= 深链，可从智能体详情、运行详情跳入；发送走 SSE 流式接口（useChatStream + chatAgentStream）。
 export default function Chat() {
-  const screens = useBreakpoint()
-  const isMobile = !screens.md
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [query, setQuery] = useQueryState<{ agent?: string; conversation?: string }>({ agent: undefined, conversation: undefined })
   const agentId = query.agent ? Number(query.agent) : undefined
   const conversationId = query.conversation ? Number(query.conversation) : null
@@ -38,6 +37,15 @@ export default function Chat() {
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [showList, setShowList] = useState(false)
 
+  // 断点用 matchMedia 判断，不再依赖 antd Grid 的 JS 断点
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const onChange = () => setIsMobile(mq.matches)
+    onChange()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
   // 可对话列表只含已发布的智能体，所有角色都能取（管理用的 /agents 列表 caller 无权访问）。
   // URL 没带智能体时：带了会话就按会话定智能体（落到第一个的话接着发送会被 404 拒绝），都没带默认第一个
   useEffect(() => {
@@ -49,7 +57,7 @@ export default function Chat() {
           const conv = await getConversation(conversationId)
           if (conv.agent_id) patch.agent = String(conv.agent_id)
         } catch (e) {
-          message.error(errorText(e, '会话不存在或已删除'))
+          toast.error(errorText(e, '会话不存在或已删除'))
           patch.conversation = undefined
         }
       }
@@ -65,7 +73,7 @@ export default function Chat() {
       const res = await listConversations({ agent_id: agentId, q, page, page_size: PAGE })
       setConversations((prev) => (page === 1 ? res.items : [...prev, ...res.items]))
       setTotal(res.total)
-    } catch (e) { message.error(errorText(e, '加载会话失败')) }
+    } catch (e) { toast.error(errorText(e, '加载会话失败')) }
   }, [agentId, q])
   useEffect(() => { loadConversations(1) }, [loadConversations])
 
@@ -77,7 +85,7 @@ export default function Chat() {
     setLoadingMessages(true)
     listMessages(conversationId)
       .then((rows) => { if (!cancelled) setMessages(toChatMessages(rows)) })
-      .catch((e) => { if (!cancelled) message.error(errorText(e, '加载历史失败')) })
+      .catch((e) => { if (!cancelled) toast.error(errorText(e, '加载历史失败')) })
       .finally(() => { if (!cancelled) setLoadingMessages(false) })
     return () => { cancelled = true }
   }, [conversationId])
@@ -93,12 +101,13 @@ export default function Chat() {
   const currentAgent = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId])
 
   const agentSelector = (
-    <Select
-      placeholder="选择已发布的智能体" style={{ width: '100%' }} value={agentId} showSearch
-      {...(remoteSearch ? { filterOption: false, onSearch } : { optionFilterProp: 'label' })}
-      onChange={(v) => { setQuery({ agent: String(v), conversation: undefined }); setMessages([]) }}
+    <AgentPicker
+      value={agentId ?? null}
       options={agents.map((a) => ({ value: a.id, label: a.name }))}
-      notFoundContent={<Typography.Text type="secondary">{canManageAgents ? '没有已发布的智能体，先去智能体页发布一个' : '还没有可用的智能体，请联系管理员发布'}</Typography.Text>}
+      remoteSearch={remoteSearch}
+      onSearch={onSearch}
+      emptyText={canManageAgents ? '没有已发布的智能体，先去智能体页发布一个' : '还没有可用的智能体，请联系管理员发布'}
+      onChange={(v) => { setQuery({ agent: String(v), conversation: undefined }); setMessages([]) }}
     />
   )
   const newConversation = () => { setQuery({ conversation: undefined }); setMessages([]); setShowList(false) }
@@ -109,18 +118,7 @@ export default function Chat() {
   }
 
   const sidebar = (
-    <div
-      style={{
-        width: isMobile ? '100%' : 240,
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        padding: 12,
-        flexShrink: 0,
-        height: '100%',
-        minHeight: 0,
-        background: 'var(--bg-elev)',
-      }}
-    >
+    <div className="h-full min-h-0 shrink-0 rounded-xl border border-border bg-card p-3" style={{ width: isMobile ? '100%' : 240 }}>
       <ConversationList
         conversations={conversations} total={total} currentId={conversationId} q={q} onSearch={setQ}
         onSelect={(id) => { setQuery({ conversation: String(id) }); setShowList(false) }}
@@ -135,16 +133,16 @@ export default function Chat() {
   const header = (
     <>
       {isMobile && (
-        <Button size="sm" variant="secondary" icon={<MessageOutlined />} onClick={() => setShowList(true)}>会话</Button>
+        <Button size="sm" variant="secondary" icon={<MessageSquare />} onClick={() => setShowList(true)}>会话</Button>
       )}
-      <div className="flex-1 min-w-0">
-        <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--fg)' }}>{currentAgent?.name ?? '未选择智能体'}</div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14px] font-semibold text-foreground">{currentAgent?.name ?? '未选择智能体'}</div>
         {currentAgent?.description && (
-          <div className="text-[12px] truncate" style={{ color: 'var(--fg-subtle)' }}>{currentAgent.description}</div>
+          <div className="truncate text-[12px] text-muted-foreground">{currentAgent.description}</div>
         )}
       </div>
       {isMobile && (
-        <Button size="sm" variant="secondary" icon={<PlusOutlined />} onClick={newConversation} aria-label="新建会话" />
+        <Button size="sm" variant="secondary" icon={<Plus />} onClick={newConversation} aria-label="新建会话" />
       )}
     </>
   )
@@ -158,6 +156,6 @@ export default function Chat() {
     />
   )
 
-  if (isMobile) return <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{showList ? sidebar : chatArea}</div>
-  return <div style={{ display: 'flex', flex: 1, gap: 12, minHeight: 0 }}>{sidebar}{chatArea}</div>
+  if (isMobile) return <div className="flex min-h-0 flex-1 flex-col">{showList ? sidebar : chatArea}</div>
+  return <div className="flex min-h-0 flex-1 gap-3">{sidebar}{chatArea}</div>
 }
