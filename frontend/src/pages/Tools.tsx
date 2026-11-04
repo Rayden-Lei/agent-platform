@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Button, Select, Table, message } from 'antd'
+import { Select, message } from 'antd'
 import { PlusOutlined, ToolOutlined } from '@ant-design/icons'
 import { batchTools, deleteTool, getTool, listTools, toggleTool, type ToolRow } from '../api'
 import { useAuth } from '../store/auth'
@@ -19,6 +19,8 @@ import ToolForm from '../components/tools/ToolForm'
 import ToolTestModal from '../components/tools/ToolTestModal'
 import ToolDrawer from '../components/tools/ToolDrawer'
 import { buildToolColumns } from '../components/tools/toolColumns'
+import DataTable from '../components/table/DataTable'
+import Button from '../components/ui/Button'
 import { errorText } from '../utils/errors'
 
 type Filters = { q?: string; type?: string; is_enabled?: string }
@@ -41,11 +43,11 @@ export default function Tools() {
   const onToggle = async (t: ToolRow) => { await toggleTool(t.id); list.reload() }
   const onDelete = async (t: ToolRow) => { try { await deleteTool(t.id); list.reload() } catch (e) { message.error(errorText(e, '删除失败')) } }
   const onEdit = (t: ToolRow) => { setEditing(t); setFormOpen(true) }
-  const columns = useMemo(() => buildToolColumns({ sortProps: list.sortProps, canManage, onOpen: setCurrent, onToggle, onTest: setTesting, onEdit, onDelete }), [list.sortProps, canManage]) // eslint-disable-line react-hooks/exhaustive-deps
+  const columns = useMemo(() => buildToolColumns({ canManage, onOpen: setCurrent, onToggle, onTest: setTesting, onEdit, onDelete }), [canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ListPage
-      header={<PageHeader icon={<ToolOutlined />} title="工具管理" description="内置工具与 HTTP 接口工具；参数声明决定模型如何结构化调用，停用后智能体与工作流都不再使用。" extra={canManage && <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增工具</Button>} />}
+      header={<PageHeader icon={<ToolOutlined />} title="工具管理" description="内置工具与 HTTP 接口工具；参数声明决定模型如何结构化调用，停用后智能体与工作流都不再使用。" extra={canManage && <Button variant="primary" size="md" icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增工具</Button>} />}
       filters={
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 描述" />
@@ -59,7 +61,24 @@ export default function Tools() {
         { key: 'delete', label: '批量删除', danger: true, confirm: `删除选中的 ${list.selectedKeys.length} 个工具？`, run: () => batch.run(() => batchTools(list.selectedKeys, 'delete'), '已删除') },
       ]} />}
     >
-      <Table rowKey="id" {...list.tableProps} columns={columns} scroll={{ x: 'max-content' }} />
+      <DataTable
+        columns={columns}
+        rows={list.items}
+        rowKey={(r) => r.id}
+        loading={list.loading}
+        error={list.error}
+        empty={<EmptyState description="还没有工具。内置工具由服务提供，HTTP 工具把任意接口声明成模型可调用的能力。" action={canManage ? { label: '新增工具', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} />}
+        onRetry={list.reload}
+        page={list.page}
+        pageSize={list.pageSize}
+        total={list.total}
+        onPageChange={list.load}
+        sort={list.sort}
+        onSortChange={list.setSort}
+        selectable={canManage}
+        selectedKeys={list.selectedKeys}
+        onSelectionChange={list.setSelectedKeys}
+      />
       <ToolForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={() => { list.reload(); setCurrent(null) }} />
       <ToolTestModal tool={testing} onClose={() => setTesting(null)} />
       <ToolDrawer tool={current} canManage={canManage} onClose={() => setCurrent(null)} onTest={setTesting} onEdit={onEdit} />

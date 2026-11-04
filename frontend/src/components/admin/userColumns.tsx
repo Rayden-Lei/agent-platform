@@ -1,12 +1,13 @@
-import { Button, Popconfirm, Space, Tag, Tooltip } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
 import type { UserRow } from '../../api'
+import type { DataColumn } from '../table/DataTable'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import InlineConfirm from '../ui/InlineConfirm'
 import EnableSwitch from '../common/EnableSwitch'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 
 interface Options {
-  sortProps: (field: string) => { sorter: true; sortOrder: 'ascend' | 'descend' | null }
   meId?: number
   onOpen: (u: UserRow) => void
   onToggle: (u: UserRow) => Promise<unknown>
@@ -16,34 +17,41 @@ interface Options {
 }
 
 // 用户列表列定义：状态列为启停开关；对自己的账号禁止停用 / 删除（服务端同样拒绝，这里只是不给误操作入口）。
-export function buildUserColumns({ sortProps, meId, onOpen, onToggle, onEdit, onResetPassword, onDelete }: Options): ColumnsType<UserRow> {
+export function buildUserColumns({ meId, onOpen, onToggle, onEdit, onResetPassword, onDelete }: Options): DataColumn<UserRow>[] {
   return [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 60, ...sortProps('id') },
+    { key: 'id', header: 'ID', width: 64, sortable: true, cell: (r) => <span style={{ color: 'var(--fg-muted)' }}>{r.id}</span> },
     {
-      title: '用户名', dataIndex: 'username', key: 'username', ...sortProps('username'),
-      render: (v: string, r) => (
-        <Space size={4}>
-          <a onClick={() => onOpen(r)}>{v}{r.id === meId && <span style={{ color: '#9ca3af', fontSize: 12 }}>（我）</span>}</a>
+      key: 'username', header: '用户名', sortable: true, primary: true, width: 200,
+      cell: (r) => (
+        <span className="inline-flex items-center gap-1.5 min-w-0">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(r) }} className="hover:underline truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
+            {r.username}
+          </button>
+          {r.id === meId && <span className="text-[12px]" style={{ color: 'var(--fg-subtle)' }}>（我）</span>}
           {/* 重置密码或首次登录后还没改密：该账号除改密外调任何接口都 403（docs/15 OP-04） */}
-          {r.must_change_password && <Tooltip title="下次登录必须先修改密码"><Tag color="warning">待改密</Tag></Tooltip>}
-        </Space>
+          {r.must_change_password && <Badge tone="warning" title="下次登录必须先修改密码">待改密</Badge>}
+        </span>
       ),
     },
-    { title: '角色', dataIndex: 'role', key: 'role', width: 100, ...sortProps('role'), render: (v: string) => <StatusTag domain="role" value={v} /> },
+    { key: 'role', header: '角色', width: 100, sortable: true, cell: (r) => <StatusTag domain="role" value={r.role} /> },
     {
-      title: '状态', key: 'status', width: 80,
-      render: (_, r) => (r.id === meId ? <Tooltip title="不能停用自己"><span><EnableSwitch checked={r.is_active} disabled onToggle={() => Promise.resolve()} /></span></Tooltip> : <EnableSwitch checked={r.is_active} onToggle={() => onToggle(r)} />),
+      key: 'status', header: '状态', width: 80,
+      cell: (r) => (r.id === meId
+        ? <span title="不能停用自己"><EnableSwitch checked={r.is_active} disabled onToggle={() => Promise.resolve()} /></span>
+        : <EnableSwitch checked={r.is_active} onToggle={() => onToggle(r)} />),
     },
-    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170, ...sortProps('created_at'), render: (v: string | null) => <TimeCell value={v} /> },
-    { title: '更新时间', dataIndex: 'updated_at', width: 170, render: (v: string | null) => <TimeCell value={v} /> },
+    { key: 'created_at', header: '创建时间', width: 168, sortable: true, hideOnMobile: true, cell: (r) => <TimeCell value={r.created_at} /> },
+    { key: 'updated_at', header: '更新时间', width: 168, hideOnMobile: true, cell: (r) => <TimeCell value={r.updated_at} /> },
     {
-      title: '操作', key: 'actions', width: 230, fixed: 'right',
-      render: (_, r) => (
-        <Space size={4}>
-          <Button size="small" onClick={() => onEdit(r)}>改角色</Button>
-          <Button size="small" onClick={() => onResetPassword(r)}>重置密码</Button>
-          <Popconfirm title="确定删除该用户？其创建的资源保留但创建人置空" onConfirm={() => onDelete(r)} disabled={r.id === meId}><Button size="small" danger disabled={r.id === meId}>删除</Button></Popconfirm>
-        </Space>
+      key: 'actions', header: '操作', width: 230, pinRight: true,
+      cell: (r) => (
+        <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>改角色</Button>
+          <Button size="sm" variant="secondary" onClick={() => onResetPassword(r)}>重置密码</Button>
+          <InlineConfirm message="确定删除该用户？其创建的资源保留但创建人置空" onConfirm={() => onDelete(r)}>
+            <Button size="sm" variant="danger" disabled={r.id === meId}>删除</Button>
+          </InlineConfirm>
+        </span>
       ),
     },
   ]
