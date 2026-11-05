@@ -29,21 +29,22 @@ TUNNEL_LOG="$LOG_DIR/tunnel.log"
 PID_DIR="$LOG_DIR/.pids"
 mkdir -p "$PID_DIR"
 
-# 代理：cloudflared 只认 HTTPS_PROXY 环境变量，不读 macOS 系统代理设置。
-# 开着 Clash / Surge 这类工具时，不显式传代理它就连不上 api.trycloudflare.com
-# （表现为 "context deadline exceeded"，等 15 秒超时）。
-detect_proxy() {
-  if [ -n "${HTTPS_PROXY:-}" ] || [ -n "${https_proxy:-}" ]; then
-    return 0
+# 代理：隧道**不要**走 Clash / Surge 这类 HTTP 代理。
+#
+# 2026-11-05 实测反证了旧做法（旧代码在这里读 scutil --proxy 自动注入 HTTPS_PROXY）：
+#   - 注入代理后，cloudflared 申请隧道就 "context deadline exceeded"，重试三次全失败；
+#   - 同样的命令去掉代理环境变量，6 秒拿到域名，QUIC / HTTP2 自检全部 PASS。
+# 原因：cloudflared 的数据面走 QUIC(UDP)，HTTP 代理只转发 TCP，穿过去也活不久；
+# 而它对 api.trycloudflare.com 的控制面请求直连本来就是通的（本机直连 curl 12 秒超时，
+# 是因为 curl 没走系统代理；cloudflared 有自己的一套连接方式，不受此影响）。
+#
+# 所以这里只做一件事：把外部可能带进来的代理变量清掉，保证隧道直连。
+# 如果将来某个网络确实必须走代理，改成显式传 --protocol http2 并单独验证，别全局注入。
+clear_proxy_for_tunnel() {
+  if [ -n "${HTTPS_PROXY:-}${https_proxy:-}${HTTP_PROXY:-}${http_proxy:-}" ]; then
+    c_dim "清空代理环境变量，隧道直连（代理会掐断 QUIC）"
   fi
-  local host port
-  host="$(scutil --proxy 2>/dev/null | awk '/HTTPSProxy/ {print $3}')"
-  port="$(scutil --proxy 2>/dev/null | awk '/HTTPSPort/ {print $3}')"
-  if [ -n "$host" ] && [ -n "$port" ]; then
-    export HTTPS_PROXY="http://$host:$port"
-    export HTTP_PROXY="$HTTPS_PROXY"
-    c_dim "检测到系统代理 ${host}:${port}，隧道走它"
-  fi
+  unset HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy
 }
 
 c_green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -134,7 +135,7 @@ start_tunnel() {
     c_dim "brew install cloudflared"
     return 1
   fi
-  detect_proxy
+  clear_proxy_for_tunnel
   echo "==> 启动外网隧道"
   rm -f "$TUNNEL_LOG"
   nohup cloudflared tunnel --url "http://localhost:$FE_PORT" --no-autoupdate > "$TUNNEL_LOG" 2>&1 &
