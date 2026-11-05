@@ -15,7 +15,8 @@ interface Props {
   onEdit: (skill: SkillRow) => void
 }
 
-const kbText = (bytes?: number | null) => (bytes == null ? '-' : (bytes / 1024).toFixed(1) + 'KB')
+// 小于 1KB 按字节显示：脚本只有几十字节时「0.0KB」没有信息量
+const kbText = (bytes?: number | null) => (bytes == null ? '-' : bytes < 1024 ? bytes + 'B' : (bytes / 1024).toFixed(1) + 'KB')
 
 export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
   if (!skill) return null
