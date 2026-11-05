@@ -4,6 +4,7 @@ import { PanelRight } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { deleteAgent, getAgent, listKBs, listModels, listPromptTemplates, listTools, offlineAgent, publishAgent, renderPromptTemplate, updateAgent, OPTIONS_PAGE } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
+import { useAvailableSkills } from '../hooks/useAvailableSkills'
 import { useAgentDebug } from '../hooks/useAgentDebug'
 import { useGuardedNavigate } from '../hooks/useGuardedNavigate'
 import { useUnsaved } from '../store/unsaved'
@@ -43,6 +44,8 @@ export default function AgentEditor() {
   const options = useAsyncData(() => Promise.all([listModels(OPTIONS_PAGE), listKBs(OPTIONS_PAGE), listTools(OPTIONS_PAGE), listPromptTemplates(OPTIONS_PAGE)]), [], { errorText: '加载下拉选项失败' })
   const agent = detail.data
   const [models, kbs, tools, templates] = options.data ?? []
+  // 技能只列启用的；已绑定的停用技能由 mergeSkillOptions 补回来，否则触发器只显示一个数字
+  const { items: skills } = useAvailableSkills()
 
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < 1024)
@@ -79,7 +82,9 @@ export default function AgentEditor() {
     model: Object.fromEntries((models?.items ?? []).map((m) => [m.id, m.name])),
     kb: Object.fromEntries((kbs?.items ?? []).map((k) => [k.id, k.name])),
     tool: Object.fromEntries((tools?.items ?? []).map((t) => [t.id, t.name])),
-  }), [models, kbs, tools])
+    // 快照里只存 skill_ids，名称取详情附带的已绑定技能（显示名比 name 好认）
+    skill: Object.fromEntries((agent?.skills ?? []).map((s) => [s.id, s.display_name])),
+  }), [models, kbs, tools, agent])
 
   const onSave = async () => {
     if (!agent?.updated_at || !values) return
@@ -217,6 +222,7 @@ export default function AgentEditor() {
             templates={templates?.items ?? []}
             kbOptions={mergeOptions(kbs?.items ?? [], agent?.knowledge_bases ?? [])}
             toolOptions={(tools?.items ?? []).map((t) => ({ value: t.id, label: t.is_enabled ? t.name : `${t.name}（已停用）` }))}
+            skillOptions={mergeSkillOptions(skills, agent?.skills ?? [])}
             onRenderTemplate={renderPromptTemplate}
           />
         </div>
@@ -272,3 +278,19 @@ function mergeOptions(listed: { id: number; name: string }[], bound: { id: numbe
   const seen = new Set(listed.map((k) => k.id))
   return [...listed, ...bound.filter((k) => !seen.has(k.id))].map((k) => ({ value: k.id, label: k.name }))
 }
+
+// 技能下拉 = 启用中的前 100 个 + 本智能体已绑定的（详情里带名称）：停用的技能不在下拉列表里，
+// 绑过的要能看见并解绑。常驻的要标出来 —— 它每轮都占上下文，选之前得知道。
+function mergeSkillOptions(
+  listed: { id: number; display_name: string; always_on: boolean }[],
+  bound: { id: number; display_name: string; always_on: boolean; is_enabled: boolean }[],
+) {
+  const seen = new Set(listed.map((s) => s.id))
+  return [
+    ...listed.map((s) => ({ value: s.id, label: skillLabel(s.display_name, s.always_on, true) })),
+    ...bound.filter((s) => !seen.has(s.id)).map((s) => ({ value: s.id, label: skillLabel(s.display_name, s.always_on, s.is_enabled) })),
+  ]
+}
+
+const skillLabel = (displayName: string, alwaysOn: boolean, isEnabled: boolean) =>
+  `${displayName}${alwaysOn ? '（常驻）' : ''}${isEnabled ? '' : '（已停用）'}`

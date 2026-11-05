@@ -13,7 +13,7 @@ import ModelParamsFields from '../../models/ModelParamsFields'
 // 整页的编辑态由装配页持有（values + onChange），这里只渲染与回传补丁，不发请求。
 export const EDITOR_SECTIONS = [
   { key: 'basic', title: '基础信息' }, { key: 'model', title: '模型与参数' }, { key: 'prompt', title: '提示词' },
-  { key: 'kb', title: '知识库' }, { key: 'tools', title: '工具' },
+  { key: 'kb', title: '知识库' }, { key: 'tools', title: '工具' }, { key: 'skills', title: '技能' },
 ]
 export const sectionId = (key: string) => `agent-section-${key}`
 
@@ -149,6 +149,7 @@ interface Props {
   models: ModelRow[]
   kbOptions: Option[]
   toolOptions: Option[]
+  skillOptions: Option[]
   templates: PromptTemplateRow[]
   onRenderTemplate: (templateId: number, variables: Record<string, string>) => Promise<PromptRenderResult>
 }
@@ -167,10 +168,11 @@ export function validateAgentConfig(values: AgentConfigValues): Partial<Record<k
   if (!values.model_id) errors.model_id = '请选择模型'
   if ((values.kb_ids ?? []).length > 20) errors.kb_ids = '最多 20 个'
   if ((values.tool_ids ?? []).length > 20) errors.tool_ids = '最多 20 个'
+  if ((values.skill_ids ?? []).length > 20) errors.skill_ids = '最多 20 个'
   return errors
 }
 
-export default function ConfigSections({ values, onChange, models, kbOptions, toolOptions, templates, onRenderTemplate }: Props) {
+export default function ConfigSections({ values, onChange, models, kbOptions, toolOptions, skillOptions, templates, onRenderTemplate }: Props) {
   // 一进页面就飘红太吵：只有用户碰过（失焦过）的字段才显示错误
   const [touched, setTouched] = useState<Partial<Record<keyof AgentConfigValues, boolean>>>({})
   const touch = (key: keyof AgentConfigValues) => setTouched((t) => ({ ...t, [key]: true }))
@@ -250,6 +252,27 @@ export default function ConfigSections({ values, onChange, models, kbOptions, to
           />
         </Field>
       </Section>
+
+      {/* 技能与提示词分开：模板是「人设」，技能是「操作手册」，混在一张卡片里会让人以为是同一种东西 */}
+      <Section
+        id="skills"
+        title="技能"
+        hint={`技能只在需要时加载，不占常驻上下文；开启「常驻」的技能正文每轮都进提示词。${liveHint('技能')}`}
+      >
+        <Field
+          label="可用的技能"
+          error={errorOf('skill_ids')}
+          hint="模型先看到技能名与说明，遇到对应任务时再调 load_skill 取正文"
+        >
+          <MultiSelect
+            value={values.skill_ids}
+            onChange={(ids) => { onChange({ skill_ids: ids }); touch('skill_ids') }}
+            options={skillOptions}
+            placeholder="未绑定技能"
+            invalid={!!errorOf('skill_ids')}
+          />
+        </Field>
+      </Section>
     </>
   )
 }
@@ -258,7 +281,7 @@ export default function ConfigSections({ values, onChange, models, kbOptions, to
 export function toFormValues(a: AgentDetail) {
   return {
     name: a.name, description: a.description ?? '', system_prompt: a.system_prompt, model_id: a.model_id, params: a.params ?? {},
-    kb_ids: a.kb_ids ?? [], tool_ids: a.tool_ids ?? [], workflow_id: a.workflow_id,
+    kb_ids: a.kb_ids ?? [], tool_ids: a.tool_ids ?? [], skill_ids: a.skill_ids ?? [], workflow_id: a.workflow_id,
     use_template: !!a.prompt_template_id, prompt_template_id: a.prompt_template_id, prompt_variables: a.prompt_variables ?? {},
   }
 }

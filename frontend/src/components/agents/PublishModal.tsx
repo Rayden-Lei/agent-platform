@@ -24,8 +24,12 @@ function prechecks(a: AgentDetail): Check[] {
   else if (!a.model.is_enabled) checks.push({ type: 'error', text: `模型「${a.model.name}」已停用，发布会被拒绝` })
   if (a.missing_tool_ids.length) checks.push({ type: 'error', text: `引用的工具已删除：#${a.missing_tool_ids.join('、#')}，先在装配页去掉` })
   if (a.missing_kb_ids.length) checks.push({ type: 'error', text: `引用的知识库已删除：#${a.missing_kb_ids.join('、#')}，先在装配页去掉` })
+  if (a.missing_skill_ids.length) checks.push({ type: 'error', text: `引用的技能已删除：#${a.missing_skill_ids.join('、#')}，先在装配页去掉` })
   const disabledTools = a.tools.filter((t) => !t.is_enabled).map((t) => t.name)
   if (disabledTools.length) checks.push({ type: 'warning', text: `这些工具已停用，发布后也不会提供给模型：${disabledTools.join('、')}` })
+  // 技能停用只影响装配（不提供给模型），绑定关系保留；与工具同一口径只提示，不拦发布
+  const disabledSkills = a.skills.filter((s) => !s.is_enabled).map((s) => s.display_name)
+  if (disabledSkills.length) checks.push({ type: 'warning', text: `这些技能已停用，发布后也不会提供给模型：${disabledSkills.join('、')}` })
   if (a.prompt_template_outdated && a.prompt_template) {
     checks.push({ type: 'warning', text: `模板「${a.prompt_template.name}」已有 v${a.prompt_template.version}，草稿按 v${a.prompt_template_version} 渲染；要用新版先重新保存草稿` })
   }
