@@ -95,7 +95,7 @@
 |---|---|
 | 后端 | Python 3.12、FastAPI、SQLAlchemy 2.0、Pydantic 2、LangGraph、LangChain、APScheduler |
 | 数据 | PostgreSQL 16 + pgvector、Redis 7、MinIO |
-| 前端 | React 18、TypeScript、Vite、Ant Design 5、@ant-design/plots、React Flow、zustand、axios、dayjs |
+| 前端 | React 19、TypeScript、Vite 5、Tailwind CSS v4、shadcn/ui、lucide-react、sonner、@ant-design/plots、React Flow、zustand、axios、dayjs |
 | 部署 | Docker Compose 一键部署，或裸机 uvicorn + Nginx |
 | 质量 | pytest、GitHub Actions CI、tsc 类型检查 |
 
