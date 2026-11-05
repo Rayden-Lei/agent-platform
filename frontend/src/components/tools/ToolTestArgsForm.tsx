@@ -4,8 +4,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/shadcn/textarea'
 import type { ToolRow } from '../../api'
 
-// 工具测试弹窗的参数输入：HTTP 工具按参数声明生成输入项（不再手写 JSON）；
-// 未声明参数的 HTTP 工具只能以 {} 调用，只给提示；内置工具没有声明，保留 JSON 文本框。
+// 工具测试弹窗的参数输入：按 tools.config.parameters 生成输入项（不再手写 JSON）。
+// 内置工具的声明由后端补进 config（tools/builtin.py），与 HTTP 工具同一条路径；
+// 未声明参数的工具只能以 {} 调用，只给提示。
 // 这里只是页内片段，受控值由调用方（ToolTestModal）持有。
 
 interface Props {
@@ -20,7 +21,10 @@ interface Props {
 const UNSET = '__unset__'
 
 export default function ToolTestArgsForm({ tool, values, onChange, jsonText, onJsonChange }: Props) {
-  if (tool.type !== 'http') {
+  // 内置工具的参数声明由后端随 config 一并下发（tools/builtin.py），所以三种工具类型走同一套表单；
+  // 只有"既不是 http 又没有声明"的旧数据才退回 JSON 文本框（2026-11-05 前内置工具都是这种）
+  const params = tool.config?.parameters
+  if (tool.type !== 'http' && !params) {
     return (
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="tool-args-json">参数(JSON)</Label>
@@ -28,7 +32,6 @@ export default function ToolTestArgsForm({ tool, values, onChange, jsonText, onJ
       </div>
     )
   }
-  const params = tool.config?.parameters
   const entries = Object.entries(params?.properties || {})
   if (!entries.length) {
     return <p className="m-0 text-[13px] text-muted-foreground">该工具未声明参数，将以空参数调用。可在编辑里补参数声明。</p>
