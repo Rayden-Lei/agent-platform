@@ -21,6 +21,8 @@ from app.db.models import User
 from app.db.session import get_db
 from app.schemas import CALLER_ID_PATTERN, AgentIn
 from app.services import chat_runner, chat_service, conversation_service
+from app.services import model_chat as model_chat_service
+from app.services import workflow_chat as workflow_chat_service
 
 router = APIRouter(tags=["chat"])
 
@@ -105,6 +107,46 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
                                 kb_scope=kb_scope, source=conversation_service.RUN_SOURCE_OF[caller.channel])
     return StreamingResponse(sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
+
+
+@router.post("/models/{model_id}/chat")
+async def model_chat(model_id: int, data: ChatIn, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin", "developer"))):
+    """模型对话（docs/17 §3.1）：直接和某个模型聊，不挂工具、不检索知识库、不经过智能体。
+
+    只对 admin / developer 开放，且只认 JWT（API Key 403）：这是平台内的"试模型"入口，不是对外能力。
+    caller 角色只看到智能体对话（docs/17 §3.7），所以这里不用 allow_api_key。
+    拒绝（空消息、模型不存在或已停用、会话不属于该模型）都在建流之前以 HTTP 状态码返回。
+    """
+    caller = conversation_service.caller_for(user, None, data.end_user)
+    prepared, replay = await run_in_threadpool(model_chat_service.prepare_model_chat, db, caller, model_id, data.message,
+                                               data.conversation_id, data.client_message_id)
+    if replay is not None:  # 重复的 client_message_id：回放首次的结果
+        return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
+    turn = chat_runner.ModelTurn(model_id=model_id, user_id=user.id, message=data.message,
+                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id,
+                                 source=conversation_service.RUN_SOURCE_OF[caller.channel])
+    return StreamingResponse(sse_stream(chat_runner.stream_model(turn)), media_type="text/event-stream")
+
+
+@router.post("/workflows/{workflow_id}/chat")
+async def workflow_chat(workflow_id: int, data: ChatIn, request: Request, db: Session = Depends(get_db),
+                        user: User = Depends(require_roles("admin", "developer"))):
+    """工作流对话（docs/17 §3.4 方案 c）：一句话触发一次工作流运行，会话只做历史展示。
+
+    只对 admin / developer 开放、只认 JWT（工作流的增删改查本来就只给这两个角色）。
+    事件形状与智能体对话完全一致：节点进度走 tool_call / tool_result，最终输出走 delta。
+    工作流没有可用作文本输入的变量、或还有必填变量没默认值时 400，且不建会话与运行记录。
+    """
+    caller = conversation_service.caller_for(user, None, data.end_user)
+    prepared, replay = await run_in_threadpool(workflow_chat_service.prepare_workflow_chat, db, caller, workflow_id,
+                                               data.message, data.conversation_id, data.client_message_id)
+    if replay is not None:
+        return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
+    turn = chat_runner.WorkflowTurn(workflow_id=workflow_id, user_id=user.id, role=user.role, message=data.message,
+                                    conversation_id=prepared.conversation_id, run_id=prepared.run_id,
+                                    inputs=prepared.extra["inputs"])
+    return StreamingResponse(sse_stream(chat_runner.stream_workflow(turn)), media_type="text/event-stream")
 
 
 @router.post("/agents/{agent_id}/debug-chat")
