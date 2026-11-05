@@ -110,7 +110,8 @@ export default function Skills() {
         />
       }
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); stats.reload(true) }} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); stats.reload(true) }} loading={list.loading}
+        activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 显示名" />
           <Select value={filters.always_on ?? 'all'} onValueChange={(v) => setFilters({ always_on: v === 'all' ? undefined : v })}>
             <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="加载方式"><SelectValue placeholder="加载方式" /></SelectTrigger>

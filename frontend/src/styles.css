@@ -225,13 +225,61 @@ html, body, #root {
 /* ===== 页面深度优化：列表页 / 详情页骨架 ===== */
 .page-header { display: flex; flex-direction: column; }
 .page-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+/* 操作区：桌面靠右单行（内容放不下时按钮换行，不压标题）；窄屏整段落到标题下方 */
+.page-header-extra { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+@media (max-width: 767px) {
+  .page-header-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-header-extra { justify-content: flex-start; }
+}
 .filter-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.filter-bar-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* 窄屏卡片里的操作区（DataTable 的 pinRight 列）：
+   各列定义把按钮包在一层 inline-flex 里（<span className="inline-flex gap-1.5">4 个按钮</span>），
+   这层自身是 nowrap 的，外层怎样 flex-wrap 都换不了行，窄屏上按钮组会整块顶出屏幕
+   （定时任务页实测 385px / 320px 屏）。这里让内层也允许换行。 */
+.data-card-actions > * { flex-wrap: wrap; min-width: 0; }
+/* 折叠开关只在窄屏出现；宽屏隐藏（控件一行放得下，多一个按钮反而多余） */
+.filter-bar-toggle { display: none; }
+@media (max-width: 767px) {
+  /* 窄屏：第一行是「筛选 N ▾」+ 右侧操作，筛选项在第二行按需展开。
+     收起时用 display:none 而不是高度动画 —— 收起状态不该占位，也不该有不可见但可聚焦的控件 */
+  .filter-bar { gap: 8px; align-items: center; flex-wrap: nowrap; justify-content: space-between; }
+  .filter-bar-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--fg-muted);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+  }
+  .filter-bar-fields { order: 3; width: 100%; gap: 8px; }
+  .filter-bar-fields-collapsed { display: none; }
+  /* 窄屏筛选项按两列铺开，比一行一个控件省一半高度；搜索框独占一行 */
+  .filter-bar-fields > * { flex: 1 1 calc(50% - 4px); min-width: 0; }
+  .filter-bar-fields > *:first-child { flex-basis: 100%; }
+}
 .batch-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 13px; }
 .stat-card { padding: 14px 16px; }
 .stat-card-clickable { cursor: pointer; }
 .stat-card-active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .detail-header { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 16px 14px; }
 .detail-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 页签横向滚动容器：内容超出时能滑，不把整条顶出屏幕；滚动条隐藏（移动端一条横向条太抢眼），
+   左右边缘用渐隐提示"还有更多"。桌面页签放得下时这条渐隐看不见（宽度与内容一致）。 */
+.detail-tabs-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.detail-tabs-scroll::-webkit-scrollbar { display: none; }
+.detail-tabs-scroll > [role='tablist'] { width: max-content; }
 
 .detail-tab-body { padding: 12px 2px; }
 

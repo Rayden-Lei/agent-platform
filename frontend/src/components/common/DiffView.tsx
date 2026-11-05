@@ -24,7 +24,7 @@ export function FieldDiff({ before, after, labels }: { before: Record<string, un
       {changes.map((c) => (
         <div key={c.field}>
           <span className="text-[13px] font-semibold">{labels?.[c.field] ?? c.field}</span>
-          <div className="mt-1 grid grid-cols-2 gap-2">
+          <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <JsonView title="旧值" value={c.before} maxHeight={160} />
             <JsonView title="新值" value={c.after} maxHeight={160} />
           </div>

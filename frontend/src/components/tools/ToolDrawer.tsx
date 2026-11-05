@@ -63,7 +63,7 @@ export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }:
     >
       {tool && (
         <div className="flex flex-col gap-4">
-          <dl className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border">
+          <dl className="m-0 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
             <Cell label="类型"><StatusTag domain="toolType" value={tool.type} /></Cell>
             <Cell label="状态"><StatusTag domain="enabled" value={tool.is_enabled} /></Cell>
             <Cell label="描述" wide>{tool.description}</Cell>

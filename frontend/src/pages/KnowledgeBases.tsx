@@ -58,7 +58,8 @@ export default function KnowledgeBases() {
       }
       alert={<EmbeddingAlert />}
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+          activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索知识库名称" />
           <Select
             value={filters.is_public ?? 'all'}

@@ -50,7 +50,8 @@ export default function Tools() {
     <ListPage
       header={<PageHeader icon={<Wrench />} title="工具管理" description="内置工具与 HTTP 接口工具；参数声明决定模型如何结构化调用，停用后智能体与工作流都不再使用。" extra={canManage && <Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增工具</Button>} />}
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+          activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 描述" />
           <Select value={filters.type ?? 'all'} onValueChange={(v) => setFilters({ type: v === 'all' ? undefined : v })}>
             <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>

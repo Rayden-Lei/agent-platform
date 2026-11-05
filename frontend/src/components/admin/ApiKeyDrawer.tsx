@@ -57,14 +57,14 @@ export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit }: Props) {
 
           <section className="flex flex-col gap-2">
             <h3 className="m-0 text-[13px] font-semibold text-foreground">授权范围</h3>
-            <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5">
+            <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-2">
               <Field label="可调用的智能体" wide><ScopeList type="agent" items={k.scope.agents} /></Field>
               <Field label="可运行的工作流" wide><ScopeList type="workflow" items={k.scope.workflows} /></Field>
               <Field label="检索放行的知识库" wide><ScopeList type="kb" items={k.scope.knowledge_bases} /></Field>
             </dl>
           </section>
 
-          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5">
+          <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-2">
             <Field label="Key 前缀"><span className="font-mono">{k.key_prefix}…</span></Field>
             <Field label="状态"><StatusTag domain="enabled" value={k.is_enabled} /></Field>
             <Field label="配额 / 已用" wide><QuotaCell used={k.used} quota={k.quota} /></Field>

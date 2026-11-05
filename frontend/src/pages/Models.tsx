@@ -64,7 +64,8 @@ export default function Models() {
     <ListPage
       header={<PageHeader icon={<Zap />} title="模型管理" description="LLM 接入配置；价格用于成本统计，连续失败会触发熔断，连通测试成功即恢复。" extra={canManage && <Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增模型</Button>} />}
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}
+        activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 模型名" />
           <Select value={filters.provider ?? 'all'} onValueChange={(v) => setFilters({ provider: v === 'all' ? undefined : v })}>
             <SelectTrigger size="sm" className="h-8 w-[130px] text-[13px]" aria-label="提供商"><SelectValue placeholder="提供商" /></SelectTrigger>

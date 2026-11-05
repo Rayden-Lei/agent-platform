@@ -65,9 +65,14 @@ export default function DetailPage({ crumbs, title, tags, meta, extra, tabs, def
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
         <Tabs value={activeKey} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-3">
-          <TabsList className="shrink-0 justify-start">
-            {tabs.map((t) => <TabsTrigger key={t.key} value={t.key} className="flex-none px-3">{t.label}</TabsTrigger>)}
-          </TabsList>
+          {/* 页签多于一屏时横向滚动：原来 TabsList 是 w-fit 且外层没有 overflow，
+              窄屏上「版本历史（线上 v5）」这类长标签会把整条顶出屏幕被裁掉（实测 553px / 390px 屏）。
+              滚动条隐藏，靠左右边缘的渐隐提示还能滑 —— 移动端一条横向滚动条太抢眼。 */}
+          <div className="detail-tabs-scroll shrink-0">
+            <TabsList className="justify-start">
+              {tabs.map((t) => <TabsTrigger key={t.key} value={t.key} className="flex-none px-3">{t.label}</TabsTrigger>)}
+            </TabsList>
+          </div>
           {tabs.map((t) => (
             <TabsContent key={t.key} value={t.key} className="detail-tab-body min-h-0 flex-1 overflow-auto">
               {t.children}

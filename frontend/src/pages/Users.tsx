@@ -50,7 +50,8 @@ export default function Users() {
     <ListPage
       header={<PageHeader icon={<UsersIcon />} title="用户管理" description="账号、角色与启停；开发者可管理资源，调用者只能对话。对自己的账号不能停用、降级或删除。" extra={<Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增用户</Button>} />}
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+          activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />
           <Select value={filters.role ?? 'all'} onValueChange={(v) => setFilters({ role: v === 'all' ? undefined : v })}>
             <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="角色"><SelectValue placeholder="角色" /></SelectTrigger>
