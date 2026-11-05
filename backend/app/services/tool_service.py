@@ -67,10 +67,21 @@ def _creators(db: Session, tools: list) -> dict:
 
 
 def _check_auth(data, has_secret_after: bool) -> None:
-    """鉴权与凭据的组合校验（格式由 ToolIn 管）：内置工具不需要鉴权；选了鉴权方式就得有凭据；没选却填了凭据也拒绝，免得以为生效了。"""
+    """鉴权与凭据的组合校验（格式由 ToolIn 管）。
+
+    内置工具与 HTTP 工具是两套语义，分开校验：
+
+    内置工具：能力由代码实现，没有"怎么发请求"这回事，因此**不允许**配置鉴权方式；
+      但它可以有自己的一份密钥（如 web_search 的搜索 API Key）——那份凭据存
+      secret_enc、由工具自己解密使用，与"鉴权方式"无关，所以这里放行 secret。
+
+    HTTP 工具：选了鉴权方式就必须有凭据，没选却填了凭据也拒绝，免得以为生效了。
+    """
     kind = data.auth.type
-    if data.type == "builtin" and kind != "none":
-        raise BizError(400, "内置工具不需要鉴权")
+    if data.type == "builtin":
+        if kind != "none":
+            raise BizError(400, "内置工具不需要鉴权方式；它的密钥请在工具配置里填")
+        return
     if kind != "none" and not has_secret_after:
         raise BizError(400, f"鉴权方式为 {kind}，请填写凭据")
     if kind == "none" and data.secret:
@@ -173,7 +184,11 @@ def update_tool(db: Session, tool_id: int, data, user: User) -> dict:
     secret_change = None
     if data.secret:
         t.secret_enc, secret_change = encrypt_secret(data.secret), "已更换"
-    elif had_secret and (data.clear_secret or data.auth.type == "none"):
+    elif had_secret and data.clear_secret:
+        # 只有显式要求清除才清。不能拿 auth.type == "none" 当条件：
+        # 内置工具的 auth 恒为 none（它们的密钥不叫"鉴权方式"），那样写会让每次
+        # 改个数字就把密钥顺手清掉（2026-11-06 修）。HTTP 工具改成 none 时，
+        # 前端本来就会一并发 clear_secret，语义不变。
         t.secret_enc, secret_change = None, "已清除"
     changed = [f for f in _AUDITED_FIELDS if before[f] != getattr(t, f)]
     db.commit()
