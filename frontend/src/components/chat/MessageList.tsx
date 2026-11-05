@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import AssistantMessage from './AssistantMessage'
+import ErrorBoundary from '../common/ErrorBoundary'
 import type { ChatCapabilities, Msg } from './types'
 import { fromNow } from '../../utils/time'
 
@@ -113,14 +114,18 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
         }
         return (
           <div key={i} style={{ maxWidth: isMobile ? '100%' : '88%' }}>
-            <AssistantMessage
-              msg={m}
-              streaming={isStreaming}
-              capabilities={capabilities}
-              onShowDetails={onShowDetails}
-              agentName={agentName}
-              onRegenerate={isStreaming ? undefined : onRegenerate}
-            />
+            {/* 单条消息兜底：模型产出的结构不可预知（Markdown、公式、引用标记），
+                某一条渲染崩掉时只丢这一条，页面与输入框都还在 */}
+            <ErrorBoundary>
+              <AssistantMessage
+                msg={m}
+                streaming={isStreaming}
+                capabilities={capabilities}
+                onShowDetails={onShowDetails}
+                agentName={agentName}
+                onRegenerate={isStreaming ? undefined : onRegenerate}
+              />
+            </ErrorBoundary>
           </div>
         )
       })}
