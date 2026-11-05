@@ -87,61 +87,63 @@ async def test_http_request_rejects_non_http_scheme():
     assert "error" in r
 
 
-# --------------------------------------------------------------------------- 配置
+# --------------------------------------------------------------------------- 工具级配置
 
-def test_tool_reads_runtime_setting_over_env(db, monkeypatch):
-    """页面写入的值优先于 .env：工具通过 _cfg 读，改完下一次调用即生效。"""
-    admin = _admin(db)
-    settings_service.update_settings(db, admin, {"search_default_limit": 2})
-    settings_service.invalidate_cache()
+def test_tool_config_reads_from_tool_row_over_default():
+    """配置属于工具：工具行里的值优先于代码默认值，同一平台的两个工具可各配各的。"""
+    conf = {"default_limit": 3, "max_limit": 8}
+    assert general.tool_config("web_search", conf, "default_limit") == 3
+    assert general.tool_config("web_search", conf, "max_limit") == 8
+    # 没配的键回落到 TOOL_CONFIG_DEFAULTS
+    assert general.tool_config("web_search", conf, "timeout") == 20
+    assert general.tool_config("web_search", {}, "default_limit") == 5
+
+
+def test_tool_config_two_tools_differ():
+    """两个 web_search 工具各带自己的 config，互不影响——这正是"配置放工具页"的理由。"""
+    a = {"default_limit": 2, "max_limit": 4}
+    b = {"default_limit": 9, "max_limit": 10}
+    assert general.tool_config("web_search", a, "default_limit") == 2
+    assert general.tool_config("web_search", b, "default_limit") == 9
+
+
+def test_config_fields_declared_for_tools():
+    """要能被工具页渲染，必须有声明；secret 项要标出来，否则前端当普通文本框。"""
+    from app.tools.tool_config import TOOL_CONFIG_FIELDS
+
+    search = {f.key: f for f in TOOL_CONFIG_FIELDS["web_search"]}
+    assert search["api_key"].kind == "secret"
+    assert search["endpoint"].kind == "str"
+    assert search["default_limit"].kind == "int"
+
+
+def test_secret_never_leaves_via_config_out(db):
+    """工具行里的密钥加密存 secret_enc，_config_out 只给 has_secret，绝不下发明文。"""
+    from app.core.security import encrypt_secret
+    from app.db.models import Tool
+    from app.services.tool_service import _config_out
+
+    secret = "sk-tool-owned-never-leaked-9999"
+    t = db.query(Tool).filter(Tool.name == "web_search").first()
+    original = (dict(t.config or {}), t.secret_enc)
     try:
-        assert general._cfg("search_default_limit") == 2
+        t.config = {**(t.config or {}), "default_limit": 3}
+        t.secret_enc = encrypt_secret(secret)
+        db.commit()
+        out = _config_out(t)
+        assert secret not in str(out), "明文出现在接口返回里"
+        assert out.get("default_limit") == 3
+        assert any(f["kind"] == "secret" for f in out["config_fields"])
     finally:
-        settings_service.update_settings(db, admin, {"search_default_limit": None})
-        settings_service.invalidate_cache()
+        t.config, t.secret_enc = original
+        db.commit()
 
 
-def test_secret_value_never_echoed(db):
-    """密钥写入后，接口只给 configured 与掩码，明文不出现在返回里。"""
-    admin = _admin(db)
-    secret = "sk-verify-never-echoed-123456"
-    settings_service.update_settings(db, admin, {"search_api_key": secret})
-    try:
-        item = _item(db, "search_api_key")
-        assert item["configured"] is True
-        assert item["value"] is None
-        assert secret not in str(item)
-        assert item["masked"].startswith("sk-v")
-        assert item["masked"].endswith("56")
-    finally:
-        settings_service.update_settings(db, admin, {"search_api_key": None})
-
-
-def test_secret_not_written_to_audit_in_plaintext(db):
-    """审计日志能被管理员读回，密钥明文绝不能进去。"""
-    from sqlalchemy import text
-
-    admin = _admin(db)
-    secret = "sk-audit-leak-check-abcdef"
-    settings_service.update_settings(db, admin, {"search_api_key": secret})
-    try:
-        detail = db.execute(text(
-            "select detail from audit_logs where action='update' and resource='system_setting' "
-            "order by id desc limit 1"
-        )).scalar()
-        assert secret not in str(detail)
-    finally:
-        settings_service.update_settings(db, admin, {"search_api_key": None})
-
-
-def test_text_setting_rejects_non_string(db):
-    with pytest.raises(settings_service.BizError):
-        settings_service.update_settings(db, _admin(db), {"search_endpoint": 123})
-
-
-def test_unknown_setting_rejected(db):
-    with pytest.raises(settings_service.BizError):
-        settings_service.update_settings(db, _admin(db), {"no_such_key": 1})
+def test_settings_service_no_longer_owns_tool_config():
+    """工具配置不该再出现在系统参数里——这是使用者指出的职责错位。"""
+    assert not any(k.startswith("search_") or k.startswith("http_") for k in settings_service.SPECS)
+    groups = {g["key"] for g in settings_service.GROUPS.values()}
+    assert "tools" not in groups
 
 
 # --------------------------------------------------------------------------- 辅助

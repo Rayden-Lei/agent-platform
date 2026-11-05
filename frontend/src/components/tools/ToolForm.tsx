@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/shadcn/textarea'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
-import { createTool, updateTool, type ToolAuthType, type ToolConfig, type ToolInput, type ToolRow } from '../../api'
+import { createTool, updateTool, type ToolAuthType, type ToolConfig, type ToolConfigField, type ToolInput, type ToolRow } from '../../api'
 import { statusOptions } from '../../constants/status'
 import ToolParamsEditor, { rowsFromSchema, schemaFromRows, type ParamRow } from './ToolParamsEditor'
 import { errorText } from '../../utils/errors'
@@ -20,6 +20,9 @@ interface FormValues {
   name: string; description: string; type: 'builtin' | 'http'; timeout: number; method: string; url: string; headersStr: string; params: ParamRow[]
   allowedHosts: string
   authType: ToolAuthType; authLocation: 'header' | 'query'; authName: string; secret: string; clearSecret: boolean
+  // 内置工具自己的配置（config_fields 声明的那些）。secret 类的值不进这里——
+  // 它走上面统一的 secret/clearSecret 通道，加密后存 tools.secret_enc
+  configValues: Record<string, string | number>
 }
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 const AUTH_TYPES = [
@@ -29,6 +32,7 @@ const AUTH_TYPES = [
 const EMPTY: FormValues = {
   name: '', description: '', type: 'builtin', timeout: 30, method: 'POST', url: '', headersStr: '', params: [], allowedHosts: '',
   authType: 'none', authLocation: 'header', authName: '', secret: '', clearSecret: false,
+  configValues: {},
 }
 
 export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
@@ -36,18 +40,31 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const hasSecret = !!editing?.auth?.has_secret
+  // 内置工具自己的配置项声明（后端下发）。有声明才渲染配置区，HTTP 工具与无配置的内置工具都没有
+  const fields = (editing?.config?.config_fields || []) as ToolConfigField[]
+  const hasBuiltinSecret = fields.some((f) => f.kind === 'secret')
 
   useEffect(() => {
     if (!open) return
     setError(null)
     if (!editing) { setValues(EMPTY); return }
-    const { parameters, url, method, headers, allowed_hosts } = editing.config || {}
+    const { parameters, url, method, headers, allowed_hosts, config_fields, ...restConfig } = editing.config || {}
+    // 内置工具的配置项：按声明取值（声明里的 default 兜底）；secret 类不取当前值（读不回来）
+    const configValues: Record<string, string | number> = {}
+    for (const f of config_fields || []) {
+      if (f.kind === 'secret') continue
+      const raw = (restConfig as Record<string, unknown>)[f.key]
+      configValues[f.key] = raw === undefined || raw === null || raw === '' ? (f.default as string | number) : (raw as string | number)
+    }
     setValues({
       name: editing.name, description: editing.description, type: editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(),
       url: url ?? '', headersStr: headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '',
       params: rowsFromSchema(parameters), allowedHosts: (allowed_hosts || []).join('\n'),
-      authType: editing.auth?.type ?? 'none', authLocation: editing.auth?.location === 'query' ? 'query' : 'header',
+      // 内置工具的凭据单独管理（存 secret_enc），不占"鉴权"区，否则会被当成 HTTP 工具的鉴权配置
+      authType: (config_fields || []).some((f) => f.kind === 'secret') ? 'none' : (editing.auth?.type ?? 'none'),
+      authLocation: editing.auth?.location === 'query' ? 'query' : 'header',
       authName: editing.auth?.name ?? '', secret: '', clearSecret: false,
+      configValues,
     })
   }, [open, editing])
 
@@ -83,12 +100,34 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
       const hosts = (values.allowedHosts || '').split(/[\n,]/).map((h) => h.trim()).filter(Boolean)
       config = { ...rest, method: values.method, url: values.url, headers, parameters: schemaFromRows(values.params || []), ...(hosts.length ? { allowed_hosts: hosts } : {}) }
     }
+    if (values.type === 'builtin' && fields.length) {
+      // 内置工具的配置写回 config：只覆盖声明里列出的键，保留后端其它字段；
+      // 数字项转成数字（后端按 int 处理），文本项去空白
+      const prev = { ...(editing?.config || {}) } as Record<string, unknown>
+      delete prev.config_fields
+      delete prev.parameters
+      for (const f of fields) {
+        if (f.kind === 'secret') continue
+        const raw = values.configValues[f.key]
+        if (f.kind === 'int') {
+          const n = Number(raw)
+          prev[f.key] = Number.isFinite(n) ? n : f.min
+        } else {
+          prev[f.key] = String(raw ?? '').trim()
+        }
+      }
+      config = prev as ToolConfig
+    }
     const authType = values.type === 'http' ? values.authType : 'none'
     const auth = authType === 'api_key' ? { type: authType, location: values.authLocation, name: values.authName } : { type: authType }
+    // 内置工具的密钥（如 web_search 的 API Key）也存 secret_enc，但不经"鉴权"区：
+    // auth 恒为 none，secret 只在该工具有 secret 类配置项时才发送
+    const builtinSecret = hasBuiltinSecret && values.secret ? { secret: values.secret } : {}
     const payload: ToolInput = {
       name: values.name, description: values.description, type: values.type, config, timeout: values.timeout, auth,
-      // 切回"不需要"时隐藏的凭据框里可能还留着值，不发上去（服务端会以"没选鉴权方式却填了凭据"拒绝）
-      ...(authType !== 'none' && values.secret ? { secret: values.secret } : {}), clear_secret: authType === 'none' || !!values.clearSecret,
+      ...(authType !== 'none' && values.secret ? { secret: values.secret } : {}),
+      ...builtinSecret,
+      clear_secret: hasBuiltinSecret ? !!values.clearSecret : (authType === 'none' || !!values.clearSecret),
     }
     setSubmitting(true)
     try {
@@ -141,6 +180,61 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
           </div>
         </div>
 
+{values.type === 'builtin' && fields.length > 0 && (
+  <div className="flex flex-col gap-3 rounded-lg border border-border px-3 py-3">
+    <div className="flex flex-col gap-0.5">
+      <Label>工具配置</Label>
+      <p className="m-0 text-[12px] text-muted-foreground">这些是{values.name || '该工具'}自己的配置，保存后下一次调用即生效</p>
+    </div>
+    {fields.map((f) => {
+      const isSecretField = f.kind === 'secret'
+      const cur = values.configValues[f.key]
+      return (
+        <div key={f.key} className="flex flex-col gap-1.5">
+          <Label htmlFor={`tool-cfg-${f.key}`} className="text-[12.5px]">{f.label}</Label>
+          {isSecretField ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id={`tool-cfg-${f.key}`}
+                type="password"
+                value={values.secret}
+                onChange={(e) => set('secret', e.target.value)}
+                placeholder={hasSecret ? '已配置（留空则保持，输入新值则覆盖）' : (f.placeholder || '未配置')}
+                className="h-9 w-full max-w-[420px]"
+              />
+              {hasSecret && (
+                <label className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
+                  <Checkbox checked={values.clearSecret} onCheckedChange={(v) => set('clearSecret', !!v)} />
+                  清除已配置的密钥
+                </label>
+              )}
+            </div>
+          ) : f.kind === 'int' ? (
+            <div className="flex items-center gap-2">
+              <Input
+                id={`tool-cfg-${f.key}`} type="number" min={f.min} max={f.max} step={f.step}
+                value={String(cur ?? f.default)}
+                onChange={(e) => set('configValues', { ...values.configValues, [f.key]: e.target.value === '' ? f.default : Number(e.target.value) })}
+                className="h-9 w-[140px]"
+              />
+              {f.unit && <span className="text-[12.5px] text-muted-foreground">{f.unit}</span>}
+              <span className="text-[12px] text-muted-foreground">范围 {f.min}～{f.max}，默认 {f.default}</span>
+            </div>
+          ) : (
+            <Input
+              id={`tool-cfg-${f.key}`}
+              value={String(cur ?? '')}
+              onChange={(e) => set('configValues', { ...values.configValues, [f.key]: e.target.value })}
+              placeholder={f.placeholder || String(f.default ?? '')}
+              className="h-9 w-full max-w-[460px]"
+            />
+          )}
+          <p className="m-0 text-[12px] leading-relaxed text-muted-foreground">{f.description}</p>
+        </div>
+      )
+    })}
+  </div>
+)}
         {values.type === 'http' && (
           <>
             <div className="flex gap-3">

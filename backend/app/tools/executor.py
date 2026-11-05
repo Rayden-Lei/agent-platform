@@ -39,7 +39,7 @@ async def execute_tool(tool: Tool, arguments: dict, ctx: ToolCallContext | None 
 async def _dispatch(tool: Tool, arguments: dict) -> dict:
     """闸门放行之后才走这里：只按类型分发，不再做任何判定。"""
     if tool.type == "builtin":
-        return await _execute_builtin(tool.name, arguments)
+        return await _execute_builtin(tool.name, arguments, tool)
     return await _execute_http(tool, arguments)
 
 
@@ -57,14 +57,28 @@ _GENERAL_HANDLERS = {
 }
 
 
-async def _call_general(handler: tuple, args: dict) -> dict:
-    """按声明把参数喂给实现：多余的键丢掉、缺的键用默认值，避免模型多传一个字段就报 TypeError。"""
+async def _call_general(handler: tuple, args: dict, *, tool: Tool | None = None) -> dict:
+    """按声明把参数喂给实现：多余的键丢掉、缺的键用默认值，避免模型多传一个字段就报 TypeError。
+
+    带 * 的仅关键字参数由这里注入，不走模型输入：
+      config  —— 工具行自己的配置（tools.config），配置属于工具不属于系统
+      api_key —— 工具行加密保存的凭据（tools.secret_enc），解密后才给实现用
+    """
     fn, is_async = handler
     import inspect
 
     sig = inspect.signature(fn)
+    injected = {}
+    if "config" in sig.parameters:
+        injected["config"] = (tool.config or {}) if tool is not None else {}
+    if "api_key" in sig.parameters:
+        enc = getattr(tool, "secret_enc", None) if tool is not None else None
+        injected["api_key"] = decrypt_secret(enc) if enc else ""
     kwargs = {}
     for pname, param in sig.parameters.items():
+        if param.kind is inspect.Parameter.KEYWORD_ONLY and pname in injected:
+            kwargs[pname] = injected[pname]
+            continue
         if pname in args:
             kwargs[pname] = args[pname]
         elif param.default is inspect.Parameter.empty:
@@ -72,7 +86,7 @@ async def _call_general(handler: tuple, args: dict) -> dict:
     return await fn(**kwargs) if is_async else fn(**kwargs)
 
 
-async def _execute_builtin(name: str, args: dict) -> dict:
+async def _execute_builtin(name: str, args: dict, tool: Tool | None = None) -> dict:
     if name == "current_time":
         return {"result": datetime.now().isoformat()}
     if name == "calculator":
@@ -90,7 +104,7 @@ async def _execute_builtin(name: str, args: dict) -> dict:
     handler = _GENERAL_HANDLERS.get(name)
     if handler is not None:
         try:
-            return await _call_general(handler, args)
+            return await _call_general(handler, args, tool=tool)
         except Exception as e:
             logger.exception("内置工具 %s 执行失败：args=%r", name, args)
             return {"error": f"工具执行失败：{e}"}

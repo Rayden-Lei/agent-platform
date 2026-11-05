@@ -148,7 +148,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "http_request": "发起一次 HTTP 请求（GET/POST/PUT/DELETE/PATCH/HEAD）并返回状态码与响应体。需要访问外部接口时用；不能访问内网地址。",
     "web_search": "联网搜索网页，返回标题、链接、站点、日期与摘要片段。需要查实时信息、新闻或不确定的事实时用。",
 }
-def _build_optional_builtin(name: str):
+def _build_optional_builtin(name: str, tool=None):
     """把能力型内置工具包装成 LangChain StructuredTool（tools/general.py 里的实现）。
 
     参数声明取自 builtin.BUILTIN_PARAMETERS，与工具页展示的同一份，避免两处不一致。
@@ -162,9 +162,10 @@ def _build_optional_builtin(name: str):
     params = BUILTIN_PARAMETERS.get(name) or {"type": "object", "properties": {}, "required": []}
 
     async def _run(**kwargs) -> str:
-        # 走与工具页 / 工作流同一条实现，不重复写一遍逻辑
+        # 走与工具页 / 工作流同一条实现，不重复写一遍逻辑；
+        # 工具行一并传下去，配置与凭据从它身上取（配置属于工具，不属于系统）
         try:
-            result = await _call_general(entry, {k: v for k, v in kwargs.items() if v is not None})
+            result = await _call_general(entry, {k: v for k, v in kwargs.items() if v is not None}, tool=tool)
         except Exception as e:
             logger.exception("内置工具 %s 执行失败", name)
             return json.dumps({"error": f"工具执行失败：{e}"}, ensure_ascii=False)
@@ -198,7 +199,7 @@ def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = 
         if t.type == "builtin":
             # 能力型内置工具（text_stats / web_search 等）：按 name 从分发表取实现，
             # 由 LangChain 包装成 StructuredTool，参数声明来自 builtin.BUILTIN_PARAMETERS
-            wrapped = _build_optional_builtin(t.name)
+            wrapped = _build_optional_builtin(t.name, t)
             if wrapped is not None:
                 tools.append(wrapped)
             continue
