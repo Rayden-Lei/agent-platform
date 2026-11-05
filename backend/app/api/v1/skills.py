@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -26,40 +26,24 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 MAX_RESOURCES = 20
 
 
-class SkillResource(BaseModel):
-    """技能附带资源（首版只存文本）：name 是展示名，content 是正文。
-
-    文件型资源（scripts / references 里的真文件）走 MinIO，等 P2.6 接沙箱时再加，
-    现在留 type 字段是为了那时不用改结构。
-    """
-
-    name: str = Field(min_length=1, max_length=128)
-    type: str = Field("text", max_length=32)
-    content: str = Field("", max_length=20000)
-
-
 class SkillIn(BaseModel):
     """创建 / 更新请求体（整体覆盖）。name 与 Agent Skills 开放标准一致：
     小写字母数字与连字符，不能以连字符开头/结尾、不能连续连字符 —— 它是模型调 load_skill 时唯一能传的标识。
+
+    **不含 resources**：资源只由 /skills/{id}/resources 子接口增删（2026-11-06 改）。
+    曾经放在这个整体覆盖体里，但资源条目带 object（对象存储键）与 size，前端回传时
+    只要漏了 object，一次保存就把脚本从 MinIO 上摘成悬空引用 —— 收窄成单向入口后不会再发生。
+    多传 resources 会 422（extra=forbid），而不是被静默忽略。
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=SKILL_NAME_MAX, pattern=SKILL_NAME_PATTERN)
     display_name: str = Field(min_length=1, max_length=128)
     description: str = Field(min_length=1, max_length=DESCRIPTION_MAX)
     content: str = Field(min_length=1)
-    resources: list[SkillResource] = Field(default_factory=list, max_length=MAX_RESOURCES)
     always_on: bool = False
     is_enabled: bool = True
-
-    @field_validator("resources")
-    @classmethod
-    def _unique_resource_names(cls, value: list[SkillResource]) -> list[SkillResource]:
-        seen: set[str] = set()
-        for r in value:
-            if r.name in seen:
-                raise ValueError(f"资源名重复：{r.name}")
-            seen.add(r.name)
-        return value
 
 
 class SkillImportIn(BaseModel):
@@ -157,9 +141,15 @@ async def upload_resource(
         raise BizError(400, f"首版只支持 {' / '.join(skill_resource.SCRIPT_SUFFIXES)} 资源")
     content = await _read_limited(file, skill_resource.RESOURCE_MAX_BYTES)
     skill = skill_service.get_skill(db, skill_id)
+    # 上限在这里也要判：SkillIn 不再收 resources，这条是唯一的写入入口，
+    # 不判就等于"建技能时最多 20 个"形同虚设
+    # 比对时按服务端规范化后的名字（store_file 会 strip），否则「带空格的新名字」会绕过上限
+    existing = skill.resources or []
+    if len(existing) >= MAX_RESOURCES and all(r.get("name") != name.strip() for r in existing):
+        raise BizError(400, f"单个技能最多 {MAX_RESOURCES} 个资源")
     entry = await run_in_threadpool(skill_resource.store_file, skill_id, name, content, file.content_type or "text/plain")
     # 同名资源覆盖：先摘掉旧的，再追加新的（skills.resources 是整体 JSON，顺序即展示顺序）
-    resources = [r for r in (skill.resources or []) if r.get("name") != entry["name"]]
+    resources = [r for r in existing if r.get("name") != entry["name"]]
     resources.append(entry)
     skill.resources = resources
     db.commit()
@@ -167,7 +157,8 @@ async def upload_resource(
     return entry
 
 
-@router.delete("/{skill_id}/resources/{name}")
+# name 用 :path —— 资源名允许单层目录（scripts/add.py），普通路径参数遇到 / 直接 404
+@router.delete("/{skill_id}/resources/{name:path}")
 def delete_resource(skill_id: int, name: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """删一个资源：从 resources 摘掉并删除对象存储里的文件。"""
     skill = skill_service.get_skill(db, skill_id)

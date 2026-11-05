@@ -47,6 +47,13 @@ def stored(monkeypatch):
     monkeypatch.setattr(skill_resource.minio_client, "remove_object", _remove)
     monkeypatch.setattr(skill_resource.minio_client, "read_bytes", _read)
     monkeypatch.setattr(skill_resource.minio_client, "stat_object", _stat)
+
+    def _list(prefix):
+        return {k: len(v) for k, v in files.items() if k.startswith(prefix)}
+
+    # 资源清单改成一次 list_objects（不再逐个 stat）：不打桩就会连真 MinIO，
+    # 用例变成"隧道开着才通过"，本机跑测试会直接打到云端桶上
+    monkeypatch.setattr(skill_resource.minio_client, "list_objects", _list)
     return {"files": files, "calls": calls}
 
 
@@ -241,3 +248,67 @@ print(json.dumps({"db": os.environ.get("DATABASE_URL"), "aes": os.environ.get("A
         assert out == {"db": None, "aes": None}
     finally:
         db.close()
+
+
+def test_update_skill_keeps_resources(client, auth_headers, make_skill, stored):
+    """回归：保存技能不能抹掉已上传的脚本。
+
+    2026-11-06 的缺陷 —— resources 曾放在整体覆盖的 SkillIn 里，而资源条目带 object（对象存储键）。
+    前端回传时只带 name/type/content，pydantic 默认忽略多余字段，一次「改个显示名再保存」
+    就把 object 抹成空，脚本对象成了桶里的孤儿，run_skill_script 从此报「脚本不存在」。
+    """
+    s = make_skill()
+    _upload(client, auth_headers, s["id"], "add.py", ADD_SCRIPT)
+    body = {"name": s["name"], "display_name": "改了显示名", "description": s["description"],
+            "content": s["content"], "always_on": False, "is_enabled": True}
+    r = client.put(f"/api/v1/skills/{s['id']}", headers=auth_headers, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["display_name"] == "改了显示名"
+    resources = r.json()["resources"]
+    assert len(resources) == 1 and resources[0]["object"] == f"skills/{s['id']}/add.py"
+    # 对象也还在桶里：不是库里留着引用、桶里已经没了
+    assert f"skills/{s['id']}/add.py" in stored["files"]
+
+
+def test_skill_body_rejects_resources(client, auth_headers, make_skill, stored):
+    """resources 只走子接口：放进整体覆盖体一律 422，而不是被静默忽略。
+
+    静默忽略最坏 —— 调用方以为资源跟着保存了，实际什么都没发生。
+    """
+    s = make_skill()
+    body = {"name": s["name"], "display_name": s["display_name"], "description": s["description"],
+            "content": s["content"], "always_on": False, "is_enabled": True,
+            "resources": [{"name": "add.py", "type": "text", "content": "print(1)"}]}
+    r = client.put(f"/api/v1/skills/{s['id']}", headers=auth_headers, json=body)
+    assert r.status_code == 422, r.text
+
+
+def test_delete_resource_with_directory(client, auth_headers, make_skill, stored):
+    """资源名允许单层目录（scripts/add.py），删除路由必须用 {name:path} 接得住。
+
+    用普通路径参数时 / 会被当成段分隔符，直接 404 —— 脚本传上去了却删不掉。
+    """
+    s = make_skill()
+    r = _upload(client, auth_headers, s["id"], "scripts/add.py", ADD_SCRIPT)
+    assert r.status_code == 200, r.text
+    obj = f"skills/{s['id']}/scripts/add.py"
+    assert obj in stored["files"]
+    d = client.delete(f"/api/v1/skills/{s['id']}/resources/scripts/add.py", headers=auth_headers)
+    assert d.status_code == 200, d.text
+    assert obj not in stored["files"]
+    assert client.get(f"/api/v1/skills/{s['id']}/resources", headers=auth_headers).json() == []
+
+
+def test_resource_count_limit(client, auth_headers, make_skill, stored, monkeypatch):
+    """上限从 SkillIn 挪到上传入口后仍要生效：否则「最多 20 个」形同虚设。"""
+    from app.api.v1 import skills as skills_api
+
+    monkeypatch.setattr(skills_api, "MAX_RESOURCES", 2)
+    s = make_skill()
+    for i in range(2):
+        assert _upload(client, auth_headers, s["id"], f"s{i}.py", ADD_SCRIPT).status_code == 200
+    over = _upload(client, auth_headers, s["id"], "s2.py", ADD_SCRIPT)
+    assert over.status_code == 400 and "最多" in over.json()["detail"]
+    # 同名覆盖不受上限影响：改脚本是这个动作，不能因为已经满了就改不了
+    assert _upload(client, auth_headers, s["id"], "s0.py", ADD_SCRIPT).status_code == 200
+

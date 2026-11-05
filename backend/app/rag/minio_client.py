@@ -78,6 +78,15 @@ def remove_object(object_name: str) -> None:
     get_minio().remove_object(settings.MINIO_BUCKET, object_name)
 
 
+def list_objects(prefix: str) -> dict[str, int]:
+    """按前缀列对象，返回 {对象名: 字节数}。
+
+    技能资源清单用它一次取全：逐个 stat_object 在循环里发 IO，20 个资源就是 20 次往返（docs/09 禁 N+1）。
+    """
+    client = get_minio()
+    return {obj.object_name: obj.size for obj in client.list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True)}
+
+
 def stat_object(object_name: str) -> dict | None:
     """对象元信息；不存在返回 None。列表页显示资源大小用，不必把内容读出来。"""
     from minio.error import S3Error
