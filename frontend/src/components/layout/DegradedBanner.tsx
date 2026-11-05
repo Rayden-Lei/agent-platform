@@ -9,6 +9,7 @@ const ENTRY: Record<string, { to: string; label: string }> = {
   rerank: { to: '/knowledge-bases', label: '知识库' },
   model_breaker: { to: '/models', label: '模型' },
   scheduler: { to: '/schedules', label: '定时任务' },
+  // 沙箱降级没有对应页面可去（是服务器配置问题），只说明原因、不给入口
 }
 
 export default function DegradedBanner() {
