@@ -24,7 +24,7 @@ export function buildUserColumns({ meId, onOpen, onToggle, onEdit, onResetPasswo
       key: 'username', header: '用户名', sortable: true, primary: true, width: 200,
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5 min-w-0">
-          <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(r) }} className="hover:underline truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(r) }} className="relative after:absolute after:-inset-y-1.5 after:content-[''] hover:underline truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
             {r.username}
           </button>
           {r.id === meId && <span className="text-[12px]" style={{ color: 'var(--fg-subtle)' }}>（我）</span>}

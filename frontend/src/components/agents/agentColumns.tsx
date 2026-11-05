@@ -27,7 +27,7 @@ export function buildAgentColumns({ onChat, onPublish, onEdit, onDelete }: Optio
       key: 'name', header: '名称', sortable: true, primary: true, width: 220,
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5 min-w-0">
-          <Link to={`/agents/${r.id}`} onClick={(e) => e.stopPropagation()} className="hover:underline truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
+          <Link to={`/agents/${r.id}`} onClick={(e) => e.stopPropagation()} className="relative after:absolute after:-inset-y-1.5 after:content-[''] hover:underline truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
             {r.name}
           </Link>
           {/* 模板改版不自动传播：提示开发者重新保存以按最新版本渲染 */}
