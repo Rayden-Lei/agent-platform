@@ -12,11 +12,12 @@ from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
+from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
-from app.services import skill_service
-from app.services.skill_service import DESCRIPTION_MAX, SKILL_NAME_MAX, SKILL_NAME_PATTERN
+from app.services import skill_import, skill_service
+from app.services.skill_service import CONTENT_MAX_BYTES, DESCRIPTION_MAX, SKILL_NAME_MAX, SKILL_NAME_PATTERN
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -59,6 +60,12 @@ class SkillIn(BaseModel):
         return value
 
 
+class SkillImportIn(BaseModel):
+    """粘贴导入：SKILL.md 全文（含 frontmatter）。"""
+
+    text: str = Field(min_length=1)
+
+
 class SkillBatchIn(BatchIn[Literal["delete"]]):
     """action 只接受 "delete"，其余值 422。"""
 
@@ -93,6 +100,24 @@ def create_skill(data: SkillIn, db: Session = Depends(get_db), user: User = Depe
 def batch_skills(data: SkillBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量删除：逐条独立执行，仍被智能体绑定的技能 409 进失败清单。"""
     return run_batch(db, data.unique_ids(), lambda skill_id: skill_service.delete_skill(db, skill_id, user))
+
+
+@router.post("/parse")
+def parse_skill_md(data: SkillImportIn, user: User = Depends(require_roles("admin", "developer"))):
+    """解析 SKILL.md（Agent Skills 开放标准）成技能字段，**不落库**。
+
+    返回的字段直接填进编辑弹窗，使用者确认后走正常的 POST /skills 保存 ——
+    导入与手填共用同一条校验路径，不存在"导入能绕过 name 格式 / 正文上限"的第二套入口。
+    格式不对 400 并写明哪里不对（缺 frontmatter、缺 name / description、正文为空、不支持的 YAML 结构）。
+    """
+    try:
+        parsed = skill_import.parse_skill_md(data.text)
+    except skill_import.SkillImportError as e:
+        raise BizError(400, str(e)) from e
+    size = len(parsed["content"].encode("utf-8"))
+    if size > CONTENT_MAX_BYTES:
+        raise BizError(400, f"技能正文最多 {CONTENT_MAX_BYTES // 1024}KB，这个文件解析出 {size / 1024:.1f}KB，先拆成多个技能")
+    return parsed
 
 
 @router.get("/{skill_id}")
