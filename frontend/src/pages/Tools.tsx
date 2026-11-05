@@ -53,14 +53,14 @@ export default function Tools() {
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 描述" />
           <Select value={filters.type ?? 'all'} onValueChange={(v) => setFilters({ type: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部类型</SelectItem>
               {statusOptions('toolType').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部状态</SelectItem>
               {ENABLED_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}

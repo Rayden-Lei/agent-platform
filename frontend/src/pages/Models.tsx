@@ -67,14 +67,14 @@ export default function Models() {
         <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); usage.reload(true); refresh() }} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 模型名" />
           <Select value={filters.provider ?? 'all'} onValueChange={(v) => setFilters({ provider: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[130px] text-[13px]" aria-label="提供商"><SelectValue placeholder="提供商" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[130px] text-[13px]" aria-label="提供商"><SelectValue placeholder="提供商" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部提供商</SelectItem>
               {statusOptions('provider').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部状态</SelectItem>
               {ENABLED_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}

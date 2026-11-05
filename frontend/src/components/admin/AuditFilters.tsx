@@ -33,7 +33,7 @@ export default function AuditFilters({ values, onChange, onReset, onRefresh, onE
 
       {/* 原来 antd 的 allowClear 改成一项"全部"：清空也走同一个 onChange 通道 */}
       <Select value={values.action ?? ALL} onValueChange={(v) => onChange({ action: v === ALL ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[120px] text-[13px]" aria-label="操作">
+        <SelectTrigger size="sm" className="h-8 w-[120px] text-[13px]" aria-label="操作">
           <SelectValue placeholder="操作" />
         </SelectTrigger>
         <SelectContent>
@@ -43,7 +43,7 @@ export default function AuditFilters({ values, onChange, onReset, onRefresh, onE
       </Select>
 
       <Select value={values.resource ?? ALL} onValueChange={(v) => onChange({ resource: v === ALL ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[120px] text-[13px]" aria-label="资源">
+        <SelectTrigger size="sm" className="h-8 w-[120px] text-[13px]" aria-label="资源">
           <SelectValue placeholder="资源" />
         </SelectTrigger>
         <SelectContent>

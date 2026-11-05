@@ -97,7 +97,7 @@ export default function Schedules() {
         >
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索任务名称" />
           <Select value={filters.workflow_id ?? 'all'} onValueChange={(v) => setFilters({ workflow_id: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[170px] text-[13px]" aria-label="工作流">
+            <SelectTrigger size="sm" className="h-8 w-[170px] text-[13px]" aria-label="工作流">
               <SelectValue placeholder="工作流" />
             </SelectTrigger>
             <SelectContent>
@@ -106,7 +106,7 @@ export default function Schedules() {
             </SelectContent>
           </Select>
           <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态">
+            <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态">
               <SelectValue placeholder="状态" />
             </SelectTrigger>
             <SelectContent>

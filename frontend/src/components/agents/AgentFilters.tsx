@@ -29,7 +29,7 @@ export default function AgentFilters({ values, onChange, onReset, onRefresh, mod
     <FilterBar onReset={onReset} onRefresh={onRefresh} loading={loading}>
       <SearchInput value={values.q} onChange={(q) => onChange({ q })} placeholder="搜索智能体名称" />
       <Select value={values.status ?? ALL} onValueChange={(v) => onChange({ status: v === ALL ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[110px] text-[13.5px]" aria-label="状态">
+        <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="状态">
           <SelectValue placeholder="状态" />
         </SelectTrigger>
         <SelectContent>
@@ -38,7 +38,7 @@ export default function AgentFilters({ values, onChange, onReset, onRefresh, mod
         </SelectContent>
       </Select>
       <Select value={values.model_id ?? ALL} onValueChange={(v) => onChange({ model_id: v === ALL ? undefined : v })}>
-        <SelectTrigger className="h-8 w-[180px] text-[13.5px]" aria-label="模型">
+        <SelectTrigger size="sm" className="h-8 w-[180px] text-[13px]" aria-label="模型">
           <SelectValue placeholder="模型" />
         </SelectTrigger>
         <SelectContent>

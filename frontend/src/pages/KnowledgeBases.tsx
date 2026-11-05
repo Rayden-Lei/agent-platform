@@ -64,7 +64,7 @@ export default function KnowledgeBases() {
             value={filters.is_public ?? 'all'}
             onValueChange={(v) => setFilters({ is_public: v === 'all' ? undefined : v })}
           >
-            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="权限">
+            <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="权限">
               <SelectValue placeholder="权限" />
             </SelectTrigger>
             <SelectContent>

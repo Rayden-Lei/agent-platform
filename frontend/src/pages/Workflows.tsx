@@ -67,7 +67,7 @@ export default function Workflows() {
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索工作流名称" />
           <Select value={filters.status ?? 'all'} onValueChange={(v) => setFilters({ status: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="状态">
+            <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="状态">
               <SelectValue placeholder="状态" />
             </SelectTrigger>
             <SelectContent>
