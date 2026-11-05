@@ -89,11 +89,13 @@ def _bwrap_works(bwrap: str) -> tuple[bool, str | None]:
     只看 which 会得到一个"以为有隔离、其实每次都失败"的沙箱。
     """
     try:
-        r = subprocess.run(
-            [bwrap, "--unshare-all", "--die-with-parent", "--dev", "/dev", "--proc", "/proc",
-             "--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin", "--", "/bin/true"],
-            capture_output=True, text=True, timeout=10,
-        )
+        # 用与真实执行同一套参数探测：探测通过但执行参数不同，等于测了个别的东西。
+        # 工作目录用一次性临时目录，不把宿主的 /tmp 挂进探测沙箱。
+        with tempfile.TemporaryDirectory(prefix="sbx-probe-") as probe_dir:
+            r = subprocess.run(
+                _bwrap_argv(bwrap, probe_dir, None) + ["--", "/bin/true"],
+                capture_output=True, text=True, timeout=10,
+            )
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"执行 bwrap 失败：{e}"
     if r.returncode == 0:
@@ -184,6 +186,13 @@ exec(compile(_code, _script, "exec"), {{"__name__": "__main__", "__file__": _scr
 """
 
 
+# 系统目录里的这几项在现代发行版上都是符号链接（Ubuntu 24.04：/bin -> usr/bin、/lib -> usr/lib）。
+# 对符号链接做 --ro-bind 会静默得到一个空目录，然后 execvp 报 "No such file or directory" ——
+# 2026-11-05 在阿里云 Ubuntu 24.04 上实测踩过：bind /bin 之后连 /bin/true 都找不到。
+# 正确做法是 --symlink 重建同样的链接（Flatpak 的做法），已挂 /usr 的前提下这些路径自然可用。
+SYSTEM_SYMLINKS = (("/bin", "usr/bin"), ("/sbin", "usr/sbin"), ("/lib", "usr/lib"), ("/lib64", "usr/lib64"))
+
+
 def _bwrap_argv(bwrap: str, workdir: str, interpreter: str | None) -> list[str]:
     """bwrap 参数。要点：
     - --unshare-all 一次把 user/mount/net/pid/ipc/uts/cgroup 全隔开，网络直接断掉（技能脚本不该联网）
@@ -199,12 +208,22 @@ def _bwrap_argv(bwrap: str, workdir: str, interpreter: str | None) -> list[str]:
         "--bind", workdir, "/work", "--chdir", "/work",
         "--tmpfs", "/tmp",
     ]
-    for path in ("/bin", "/lib", "/lib64", "/sbin", "/etc/ssl", "/etc/ca-certificates"):
+    # /bin /sbin /lib /lib64：宿主上是符号链接就重建链接，是真实目录才 bind
+    for path, target in SYSTEM_SYMLINKS:
+        if os.path.islink(path):
+            argv += ["--symlink", target, path]
+        elif os.path.isdir(path):
+            argv += ["--ro-bind", path, path]
+    # /etc 只挑程序真正会读的几项，不整目录挂（里面有 shadow、ssh 私钥、数据库口令配置）
+    for path in ("/etc/ssl", "/etc/ca-certificates", "/etc/alternatives", "/etc/ld.so.cache", "/etc/localtime"):
         if os.path.exists(path):
             argv += ["--ro-bind", path, path]
-    # venv 的解释器不在 /usr 下时补挂它所在的前两级目录（如 /app/.venv）
+    # venv 的解释器不在 /usr 下时补挂虚拟环境根目录（如 /app/.venv）。
+    # 用 abspath 而不是 realpath：venv 里的 python 是指向系统解释器的符号链接，
+    # realpath 会把它解析回 /usr/bin/python3.x，于是这段判断认为"在 /usr 下、不用挂"，
+    # 结果沙箱里找不到 venv 的 python 与 site-packages。2026-11-05 在云服务器实测踩到。
     if interpreter:
-        root = os.path.dirname(os.path.dirname(os.path.realpath(interpreter)))
+        root = os.path.dirname(os.path.dirname(os.path.abspath(interpreter)))
         if root and os.path.isdir(root) and not root.startswith(("/usr", "/bin", "/lib", "/sbin")):
             argv += ["--ro-bind", root, root]
     env = _child_env()
