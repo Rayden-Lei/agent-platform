@@ -171,11 +171,11 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
           {PROCESSING.has(d.status) ? (
             <Button size="sm" variant="secondary" icon={<RotateCw className="size-3.5" />} disabled>重新解析</Button>
           ) : (
-            <InlineConfirm message="重新解析会清掉旧切片并按当前切片参数重建" onConfirm={() => act(() => reprocessDoc(kbId, d.id), '已排队重新解析', '重新解析失败')}>
+            <InlineConfirm message="重新解析会清掉旧切片并按当前切片参数重建" danger onConfirm={() => act(() => reprocessDoc(kbId, d.id), '已排队重新解析', '重新解析失败')}>
               <Button size="sm" variant="secondary" icon={<RotateCw className="size-3.5" />}>重新解析</Button>
             </InlineConfirm>
           )}
-          <InlineConfirm message="确定删除该文档？" onConfirm={() => act(() => deleteDoc(kbId, d.id), '已删除', '删除失败')}>
+          <InlineConfirm message="确定删除该文档？" danger onConfirm={() => act(() => deleteDoc(kbId, d.id), '已删除', '删除失败')}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

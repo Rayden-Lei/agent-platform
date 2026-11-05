@@ -48,7 +48,7 @@ export function buildUserColumns({ meId, onOpen, onToggle, onEdit, onResetPasswo
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>改角色</Button>
           <Button size="sm" variant="secondary" onClick={() => onResetPassword(r)}>重置密码</Button>
-          <InlineConfirm message="确定删除该用户？其创建的资源保留但创建人置空" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除该用户？其创建的资源保留但创建人置空" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger" disabled={r.id === meId}>删除</Button>
           </InlineConfirm>
         </span>

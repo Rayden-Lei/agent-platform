@@ -82,7 +82,7 @@ export default function KbDetail() {
             <Button variant="secondary" size="md" onClick={() => setEditing(true)}>
               <Pencil className="size-3.5" />编辑
             </Button>
-            <InlineConfirm message="确定删除？文档与切片会一并删除" onConfirm={remove}>
+            <InlineConfirm message="确定删除？文档与切片会一并删除" danger onConfirm={remove}>
               <Button variant="danger" size="md"><Trash2 className="size-3.5" />删除</Button>
             </InlineConfirm>
           </>

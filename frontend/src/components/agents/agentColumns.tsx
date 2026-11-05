@@ -92,7 +92,7 @@ export function buildAgentColumns({ onChat, onPublish, onEdit, onDelete }: Optio
             </Button>
           )}
           <Button size="sm" variant="secondary" icon={<History />} onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

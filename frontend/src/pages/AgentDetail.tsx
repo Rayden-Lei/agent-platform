@@ -95,14 +95,14 @@ export default function AgentDetail() {
               </Button>
             )}
             {agent.status === 'published' && (
-              <InlineConfirm message="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" confirmLabel="下线" onConfirm={takeOffline}>
+              <InlineConfirm message="下线后对话、API Key 与工作流都不能再调用它，重新发布即恢复。确定下线？" confirmLabel="下线" danger onConfirm={takeOffline}>
                 <Button variant="secondary" size="md">下线</Button>
               </InlineConfirm>
             )}
             <Button variant="secondary" size="md" onClick={() => navigate(`/agents/${agent.id}/edit`)}>
               <Pencil className="size-3.5" />编辑
             </Button>
-            <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" onConfirm={remove}>
+            <InlineConfirm message="确定删除？会话、消息与运行记录会一并删除" danger onConfirm={remove}>
               <Button variant="danger" size="md"><Trash2 className="size-3.5" />删除</Button>
             </InlineConfirm>
           </>

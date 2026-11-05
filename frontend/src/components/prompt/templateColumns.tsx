@@ -50,7 +50,7 @@ export function buildTemplateColumns({ onOpen, onEdit, onDelete }: Options): Dat
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>编辑</Button>
           {/* 仍被智能体绑定时后端 409，提示里带绑定数 */}
-          <InlineConfirm message="确定删除？仍被智能体绑定时会被拒绝" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？仍被智能体绑定时会被拒绝" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

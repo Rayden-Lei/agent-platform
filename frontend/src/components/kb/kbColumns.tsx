@@ -68,7 +68,7 @@ export function buildKbColumns({ onEdit, onDelete }: Options): DataColumn<Knowle
             <Button size="sm" variant="ghost" icon={<FolderOpen />}>文档</Button>
           </Link>
           <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除？文档与切片会一并删除" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？文档与切片会一并删除" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

@@ -56,7 +56,7 @@ export function buildWorkflowColumns({ onRun, onDuplicate, onDelete }: Options):
           <Link to={`/workflows/${r.id}/edit`}><Button size="sm" variant="ghost" icon={<Pencil />}>编辑</Button></Link>
           <Button size="sm" variant="secondary" icon={<Play />} disabled={!r.node_count} onClick={() => onRun(r)}>运行</Button>
           <Button size="sm" variant="secondary" icon={<Copy />} onClick={() => onDuplicate(r)}>复制</Button>
-          <InlineConfirm message="确定删除？关联的定时任务会一并删除" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？关联的定时任务会一并删除" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

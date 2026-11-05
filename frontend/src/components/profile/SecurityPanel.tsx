@@ -80,7 +80,7 @@ export default function SecurityPanel({ passwordChangedAt, onChangePassword, onL
           在别的电脑或浏览器上登录过、又不确定是否已退出时用：除当前页面外，你的所有登录立即失效（API Key 不受影响）。
         </p>
         <div className="mt-3">
-          <InlineConfirm message="其他电脑与浏览器上的登录会立即失效" confirmLabel="退出其他设备" onConfirm={() => { void logoutOthers() }}>
+          <InlineConfirm message="其他电脑与浏览器上的登录会立即失效" confirmLabel="退出其他设备" danger onConfirm={() => { void logoutOthers() }}>
             <Button variant="danger" size="md">退出其他设备</Button>
           </InlineConfirm>
         </div>
