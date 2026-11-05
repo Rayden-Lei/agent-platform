@@ -33,6 +33,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
   // 首条消息指纹：换会话 / 重新加载历史时整批消息都换了，靠它判断"这是一次整体替换"
   const headRef = useRef('')
   const lenRef = useRef(0)
+  const loadingRef = useRef(false)
 
   const head = messages[0] ? messages[0].role + ':' + messages[0].content.slice(0, 20) : ''
 
@@ -40,6 +41,12 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
   useLayoutEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    // 换会话 / 重新拉历史：重新开始吸附底部（否则在上一个会话里往上翻过，新会话就不会滚到底）
+    if (loading && !loadingRef.current) {
+      stickRef.current = true
+      headRef.current = ''
+    }
+    loadingRef.current = !!loading
     if (head !== headRef.current) {
       headRef.current = head
       stickRef.current = true
