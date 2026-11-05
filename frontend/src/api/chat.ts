@@ -122,6 +122,37 @@ export interface SseAuth {
 }
 const PLATFORM_AUTH: SseAuth = { token: () => localStorage.getItem('token'), onUnauthorized: clearLoginAndRedirect }
 
+// 流读取的空闲超时。后端 sse_stream 每 15 秒发一次心跳（": ping"），
+// 留两倍余量：30 秒内一个字节都没有，就认定连接已死。
+const SSE_IDLE_TIMEOUT_MS = 30_000
+
+// 带超时的 read：超时抛 IdleTimeout，由调用方转成用户可读的错误。
+// 必须 clearTimeout 并 cancel 底层流，否则定时器泄漏、reader 也不会被回收。
+class SseIdleTimeout extends Error {
+  constructor() {
+    super('连接已中断（30 秒没有收到数据），请重试')
+    this.name = 'SseIdleTimeout'
+  }
+}
+
+async function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: number | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new SseIdleTimeout()), timeoutMs)
+  })
+  try {
+    return await Promise.race([reader.read(), timeout])
+  } catch (e) {
+    // 超时后必须主动 cancel，不然这个 reader 会一直占着连接
+    if (e instanceof SseIdleTimeout) void reader.cancel().catch(() => {})
+    throw e
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer)
+  }
+}
 export async function streamSse(url: string, body: ChatPayload | DebugChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal, auth: SseAuth = PLATFORM_AUTH): Promise<number | null> {
   const token = auth.token()
   const res = await fetch('/api/v1' + url, {
@@ -147,7 +178,10 @@ export async function streamSse(url: string, body: ChatPayload | DebugChatPayloa
   let newCid: number | null = 'conversation_id' in body ? body.conversation_id : null
 
   while (true) {
-    const { done, value } = await reader.read()
+    // 读超时：后端每 SSE_IDLE_TIMEOUT 秒发一次心跳注释帧，所以这么久还没有任何字节，
+    // 说明连接已经死了（上游半开、中间设备掐断、服务器进程没了），而不是"模型还在想"。
+    // 不设这个超时的话 reader.read() 会永远挂着：界面停在"正在思考"，停止按钮之外无路可走。
+    const { done, value } = await readWithTimeout(reader, SSE_IDLE_TIMEOUT_MS)
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     const parts = buffer.split('\n\n')

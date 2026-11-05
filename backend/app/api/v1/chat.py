@@ -5,6 +5,7 @@
 流式执行在 services/chat_runner（2026-09-25 从本文件下沉，调试、分享访客也要复用它）。
 """
 
+import asyncio
 import json
 from contextlib import aclosing
 from typing import Literal
@@ -69,6 +70,12 @@ class DebugChatIn(BaseModel):
         return self
 
 
+# SSE 心跳：事件之间的静默期超过这么多秒就发一行注释帧。
+# 模型首字节慢、工具执行久、上游半开连接时，客户端长时间收不到任何字节，
+# 浏览器与中间代理会以为连接死了，前端也只能一直显示"正在思考"。
+SSE_HEARTBEAT_SECONDS = 15
+
+
 def _sse(data: dict) -> str:
     """把数据包装成 SSE 的 data 帧（UTF-8，JSON 序列化）。
 
@@ -80,11 +87,39 @@ def _sse(data: dict) -> str:
 
 
 async def sse_stream(events):
-    """执行器事件 → SSE 帧。客户端断开时显式关闭执行器，让它的 finally 立刻收尾（部分回答落库、运行记录置 cancelled），
-    而不是等垃圾回收时才关。分享访客路由（public_shares）也用它。"""
+    """执行器事件 → SSE 帧；事件之间空闲超过 SSE_HEARTBEAT_SECONDS 时插入心跳注释帧。
+
+    客户端断开时显式关闭执行器，让它的 finally 立刻收尾（部分回答落库、运行记录置 cancelled），
+    而不是等垃圾回收时才关。分享访客路由（public_shares）也用它。
+
+    心跳用 SSE 规范的注释行（以 `:` 开头）：符合规范的客户端天然忽略，
+    本项目的解析器只认 `data: ` 前缀，注释行被跳过，前端解析不用改。
+    它的作用是让连接在长静默期里不被中间设备掐断，也给前端一个"还活着"的依据。
+    """
     async with aclosing(events) as it:
-        async for event in it:
-            yield _sse(event)
+        # 心跳不能直接用 asyncio.wait_for 包 __anext__()：wait_for 超时会 cancel 那个任务，
+        # 而取消 __anext__ 会把生成器关掉，之后永远取不到下一个事件——done 帧就此丢失。
+        # 正确做法是把 __anext__ 起成独立 Task，超时只放弃等待、不取消它，下一轮接着等同一个 Task。
+        pending: asyncio.Task | None = None
+        try:
+            while True:
+                if pending is None:
+                    pending = asyncio.ensure_future(it.__anext__())
+                done, _ = await asyncio.wait({pending}, timeout=SSE_HEARTBEAT_SECONDS)
+                if not done:
+                    # 只是慢，不是结束：发心跳，继续等同一个 Task
+                    yield ": ping\n\n"
+                    continue
+                try:
+                    event = pending.result()
+                except StopAsyncIteration:
+                    break
+                pending = None
+                yield _sse(event)
+        finally:
+            # 客户端断开或异常退出时把未完成的 Task 收掉，不让它挂着
+            if pending is not None and not pending.done():
+                pending.cancel()
 
 
 @router.post("/agents/{agent_id}/chat")

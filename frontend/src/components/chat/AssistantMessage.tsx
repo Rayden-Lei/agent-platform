@@ -76,7 +76,8 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
         <span className="text-[11.5px] tracking-wide" style={{ color: 'var(--fg-subtle)' }}>{agentName}</span>
       </div>
 
-      <ThinkingTrace citations={msg.citations} tools={msg.tools} reasoning={msg.reasoning} running={streaming && !hasContent} />
+      <ThinkingTrace citations={msg.citations} tools={msg.tools} reasoning={msg.reasoning}
+        running={streaming && !hasContent} streaming={streaming} />
       <ToolList tools={msg.tools} showDetails={capabilities.showToolDetails} />
 
       {hasContent ? (

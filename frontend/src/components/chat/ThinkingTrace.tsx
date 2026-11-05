@@ -10,7 +10,10 @@ interface Props {
   citations?: Citation[]
   tools?: ToolStep[]
   reasoning?: string
+  // 思考阶段：正文还没开始（streaming && 没有正文）。计时器按它跑
   running?: boolean
+  // 整轮是否还在进行（含正文生成阶段）。用来区分"思考完了"与"整轮结束"
+  streaming?: boolean
 }
 
 const CHEVRON = (
@@ -19,7 +22,7 @@ const CHEVRON = (
   </svg>
 )
 
-export default function ThinkingTrace({ citations, tools, reasoning, running }: Props) {
+export default function ThinkingTrace({ citations, tools, reasoning, running, streaming = false }: Props) {
   const [open, setOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const startRef = useRef<number>(0)
@@ -32,42 +35,57 @@ export default function ThinkingTrace({ citations, tools, reasoning, running }: 
   const hasReasoning = !!reasoning && reasoning.length > 0
   const toolCount = tools?.length ?? 0
 
-  // 计时：进行中每 100ms 刷新；结束后记下总时长，摘要行显示"N.N 秒"
+  // 计时：进行中每 100ms 刷新；结束后把总时长固化下来，摘要行显示"N.N 秒"。
+  //
+  // startRef 只在**本次回答的计时还没开始过**时初始化，不随 running 翻转而重置：
+  // running 的实际取值是 `streaming && !hasContent`，正文一开始输出就变 false；
+  // 若中途正文又清空（工具调用后重新生成），它会再变回 true。按 running 重置的话
+  // 起点被反复推后，计时永远从头算，界面看起来像"卡在思考"。
   useEffect(() => {
     if (running) {
-      startRef.current = Date.now()
-      doneMsRef.current = null
-      setElapsed(0)
+      if (startRef.current === 0) startRef.current = Date.now()
       const t = window.setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 100)
-      return () => {
-        window.clearInterval(t)
-        doneMsRef.current = Date.now() - startRef.current
-      }
+      return () => { window.clearInterval(t) }
     }
+    // 计时停下的这一刻把总时长固化：只记第一次，后续再变也不覆盖（避免"思考了 3 秒"被改小）
     if (doneMsRef.current === null && startRef.current) {
       doneMsRef.current = Date.now() - startRef.current
     }
   }, [running])
 
-  // 三者都没有：不渲染这一行
+  // 推理内容增长时钉到底部（流式期间才有意义，结束后保留当前位置让用户自己看）
+  //
+  // 必须放在下面的提前 return **之前**：hook 的调用顺序在组件的每次渲染里必须完全一致。
+  // 曾经它写在 return 之后，于是「还没有任何过程信息」时首次渲染少调一个 hook，
+  // 模型开始输出（citations / reasoning 到达）后的那次渲染多调一个 —— React 直接抛
+  // "Rendered fewer hooks than expected"，整棵应用树被卸载，页面在模型出字的那一刻变白。
+  useLayoutEffect(() => {
+    const el = reasonRef.current
+    if (el && running) el.scrollTop = el.scrollHeight
+  }, [reasoning, running])
+
+  // 三者都没有：不渲染这一行（以下不许再出现任何 hook）
   if (!hasReasoning && !hasCitations && !hasTools && !running) return null
 
   // 摘要：有推理内容才说"思考了 N 秒"，否则只说做了什么。
   // 历史回放（从库里读出的旧消息）没有真实计时，doneMsRef 与 elapsed 都是 0，
   // 那时不能显示"思考了 0.0 秒"——那个数字是假的，改成只说"思考过程"。
+  //
+  // running 只表示"思考阶段"（正文还没开始）。思考完了、正文还在往外吐的那段时间
+  // running 已经是 false，摘要要能反映"还在生成"，否则用户看到秒数停住、正文在动，
+  // 会以为是卡了。
   const timedMs = doneMsRef.current ?? (elapsed > 0 ? elapsed * 1000 : null)
+  const generating = !running && streaming
   const summary = hasReasoning
-    ? (running ? '正在思考' : timedMs === null ? '思考过程' : `思考了 ${(timedMs / 1000).toFixed(1)} 秒`)
+    ? (running
+        ? '正在思考'
+        : generating
+          ? (timedMs === null ? '正在生成回答' : `思考了 ${(timedMs / 1000).toFixed(1)} 秒，正在生成回答`)
+          : timedMs === null ? '思考过程' : `思考了 ${(timedMs / 1000).toFixed(1)} 秒`)
     : [
         hasCitations ? `检索 ${citations!.length} 条` : '',
         toolCount ? `调用 ${toolCount} 个工具` : '',
       ].filter(Boolean).join(' · ') || '已处理'
-
-  // 推理内容增长时钉到底部（流式期间才有意义，结束后保留当前位置让用户自己看）
-  useLayoutEffect(() => {
-    const el = reasonRef.current
-    if (el && running) el.scrollTop = el.scrollHeight
-  }, [reasoning, running])
 
   // 有推理内容时默认展开，让用户看到模型在想什么；纯步骤则默认收起
   const expanded = open || (hasReasoning && running)
