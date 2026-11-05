@@ -16,6 +16,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.models import Agent, Skill, User
 from app.db.session import rows_to_dict
+from app.services import skill_resource
 
 # 与 Agent Skills 开放标准（agentskills.io）一致：小写字母数字与连字符，不能以连字符开头/结尾、不能连续连字符。
 # 收紧格式的理由不只是"好看"：name 是模型调 load_skill 时唯一能传的标识，带大写或空格会让它频繁传错。
@@ -163,8 +164,12 @@ def delete_skill(db: Session, skill_id: int, user: User) -> None:
     if bound:
         raise BizError(409, f"仍有 {bound} 个智能体绑定该技能")
     name = s.name
+    resources = list(s.resources or [])
     db.delete(s)
     db.commit()
+    # 对象存储里的资源要显式清：库里删了行不会连带删 MinIO 对象，不清就是永久垃圾。
+    # 放在 commit 之后：先保证库里删成功，再清对象；反过来若 commit 失败，对象已经没了但技能还在。
+    skill_resource.drop_all(skill_id, resources)
     record_audit(db, user, "delete", "skill", skill_id, detail={"name": name})
 
 

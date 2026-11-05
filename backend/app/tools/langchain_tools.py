@@ -5,7 +5,10 @@ from datetime import datetime
 from langchain_core.tools import StructuredTool, tool
 from pydantic import ValidationError
 
+from app.core.exceptions import BizError
 from app.db.models import Tool
+from app.services import skill_resource
+from app.services.skill_resource import SCRIPT_SUFFIXES
 from app.tools.executor import _safe_eval, execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import ToolParameters, build_args_model, format_validation_error, parse_parameters
@@ -28,6 +31,50 @@ def calculator(expression: str) -> str:
         # 错误信息回给模型让它自己纠正，同时留痕：模型反复传错格式时能被发现
         logger.warning("calculator 工具计算失败：expression=%r error=%s", expression, e)
         return f"计算错误: {e}"
+
+
+def _build_run_skill_script(skills: list):
+    """把本次装配的技能做成 run_skill_script 工具（docs/17 §4.5，P2.6）。
+
+    与 load_skill 同一条白名单：只在装配时给的这些技能里找脚本，路径也必须落在该技能的
+    resources 里。模型传别处的路径一律「脚本不存在」—— 不做这个限制，参数就是模型生成的，
+    等于把整个对象存储变成它的文件系统。
+
+    input 是给脚本的入参（任意 JSON），脚本从 stdin 读 {"input": ...}、把结果 JSON 打 stdout。
+    """
+    by_name = {s.name: s for s in skills}
+
+    def _run(skill: str, path: str, input: str = "") -> str:
+        s = by_name.get(skill)
+        if s is None:
+            logger.warning("run_skill_script 请求了未绑定的技能：%r（本次可用 %s）", skill, sorted(by_name))
+            return f"技能不存在：{skill}"
+        try:
+            payload = {"input": json.loads(input) if input else None}
+        except json.JSONDecodeError:
+            # 模型传了非 JSON 的字符串时按纯文本给进去，比直接报错更有用；同时留痕便于发现它总是传错
+            logger.info("run_skill_script 的 input 不是 JSON，按纯文本传入：%r", input[:80])
+            payload = {"input": input}
+        try:
+            result = skill_resource.run_script(s, path, payload)
+        except BizError as e:
+            # 路径非法 / 脚本不在这个技能里：回给模型让它换路径，不抛异常。
+            # 抛出去会被 LangGraph 标成工具 error 并中断这一轮，而这是模型可以自己纠正的输入错误。
+            logger.warning("run_skill_script 拒绝 skill=%s path=%r：%s", skill, path, e.detail)
+            return json.dumps({"error": e.detail}, ensure_ascii=False)
+        if not result.ok:
+            logger.warning("技能脚本执行失败 skill=%s path=%s mode=%s error=%s", skill, path, result.mode, result.error)
+            return json.dumps({"error": result.error, "stderr": result.stderr[:1000]}, ensure_ascii=False)
+        return result.output.strip() or json.dumps({"error": "脚本没有输出"}, ensure_ascii=False)
+
+    return StructuredTool.from_function(
+        name="run_skill_script",
+        description=(
+            "执行某个技能自带的脚本（仅 .py）。参数 skill 取【可用技能】里的名字，path 是该技能资源里的脚本文件名，"
+            "input 是传给脚本的入参（字符串，会作为 JSON 解析）。脚本从 stdin 读 {\"input\": ...}、把结果 JSON 打到 stdout。"
+        ),
+        func=_run,
+    )
 
 
 def _build_load_skill(skills: list):
@@ -107,4 +154,7 @@ def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = 
             tools.append(_build_http_tool(t, ToolCallContext(tool=t, source=source, agent_id=agent_id, run_id=run_id)))
     if skills:
         tools.append(_build_load_skill(skills))
+        # 只有真的登记了 .py 资源的技能才给执行工具：一个永远返回「脚本不存在」的工具只会诱导模型乱试
+        if any(r.get("name", "").endswith(SCRIPT_SUFFIXES) for s in skills for r in (s.resources or [])):
+            tools.append(_build_run_skill_script(skills))
     return tools
