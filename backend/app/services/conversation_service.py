@@ -7,7 +7,17 @@ from app.core.exceptions import BizError
 from app.core.limits import TOOL_RESULT_PREVIEW_CHARS, TOOL_RESULT_STORE_CHARS
 from app.core.pagination import PageParams, paginate
 from app.db.session import rows_to_dict
-from app.db.models import Agent, ApiKey, Conversation, Message, User
+from app.db.models import Agent, ApiKey, Conversation, Message, ModelConfig, User, Workflow
+
+# 三种对话类型（docs/17 §3.1）：模型对话、智能体对话、工作流对话。
+# 定义放在会话模块：kind 是会话的列，归属判定、列表过滤、序列化都在这里，别处按 kind 分支时引用它。
+KIND_MODEL = "model"
+KIND_AGENT = "agent"
+KIND_WORKFLOW = "workflow"
+KINDS = (KIND_MODEL, KIND_AGENT, KIND_WORKFLOW)
+
+# 类型 → 会话上记录归属的列名。互斥由 DB 约束兜底（models.Conversation 的 ck_conversations_kind）
+TARGET_COLUMN = {KIND_MODEL: "model_id", KIND_AGENT: "agent_id", KIND_WORKFLOW: "workflow_id"}
 
 CHANNEL_UI = "ui"
 CHANNEL_API = "api"
@@ -67,38 +77,66 @@ def get_owned_conversation(db: Session, conversation_id: int, caller: Caller) ->
     return conv
 
 
-def owned_conversations(db: Session, caller: Caller, agent_id: int | None = None, q: str | None = None):
-    """属于该调用方的会话查询（按更新时间倒序，id 作副键），列表与分享访客的会话列表共用。"""
+def owned_conversations(db: Session, caller: Caller, kind: str | None = None, target_id: int | None = None, q: str | None = None):
+    """属于该调用方的会话查询（按更新时间倒序，id 作副键），列表与分享访客的会话列表共用。
+
+    kind 与 target_id 是对话分类型后的过滤口径（docs/17 §3.7）：对话页左侧只列"这一类对话、这一个对象"的会话。
+    只给 kind 不给 target_id 时列该类型的全部会话（工作台"最近会话"用不到，但接口口径要完整）。
+    """
     query = _owned_filter(db.query(Conversation), caller)
-    if agent_id:
-        query = query.filter(Conversation.agent_id == agent_id)
+    if kind:
+        query = query.filter(Conversation.kind == kind)
+    if target_id:
+        if kind is None:
+            raise BizError(400, "按对象过滤会话时必须同时指定对话类型 kind")
+        query = query.filter(getattr(Conversation, TARGET_COLUMN[kind]) == target_id)
     if q:
         query = query.filter(Conversation.title.ilike(f"%{q}%"))
     return query.order_by(Conversation.updated_at.desc(), Conversation.id.desc())
 
 
-def list_conversations(db: Session, caller: Caller, params: PageParams, agent_id: int | None = None, q: str | None = None) -> dict:
+def list_conversations(db: Session, caller: Caller, params: PageParams, kind: str | None = None, target_id: int | None = None,
+                       q: str | None = None) -> dict:
     """分页列出属于该调用方的会话（登录：本人在界面里的；API Key：这个 Key 与同一个 end_user 建的），
-    可按智能体过滤、按标题模糊搜索，按更新时间倒序（最近活跃在前）。
-    附带消息数与智能体名：消息数用一次分组查询，智能体名用一次 IN 查询，不逐行查库。"""
-    page = paginate(owned_conversations(db, caller, agent_id, q), params)
+    可按对话类型与对象过滤、按标题模糊搜索，按更新时间倒序（最近活跃在前）。
+    附带消息数与对象名：消息数用一次分组查询，三种类型的名字各一次 IN 查询，不逐行查库。"""
+    page = paginate(owned_conversations(db, caller, kind, target_id, q), params)
     page["items"] = _serialize(db, page["items"])
     return page
 
 
 def get_conversation(db: Session, conversation_id: int, caller: Caller) -> dict:
-    """单个会话，结构同列表项；不属于该调用方 404。对话页只带 conversation 深链时据此定位所属智能体。"""
+    """单个会话，结构同列表项；不属于该调用方 404。对话页只带 conversation 深链时据此定位对话类型与对象。"""
     return _serialize(db, [get_owned_conversation(db, conversation_id, caller)])[0]
 
 
+def _names_of(db: Session, rows: list[Conversation]) -> dict:
+    """三种类型的对象名各批量查一次，返回 {(kind, id): 名字}。删掉对象后会话随外键级联消失，查不到即返回 None。"""
+    ids_of = {kind: {getattr(c, column) for c in rows if c.kind == kind and getattr(c, column)} for kind, column in TARGET_COLUMN.items()}
+    tables = {KIND_MODEL: ModelConfig, KIND_AGENT: Agent, KIND_WORKFLOW: Workflow}
+    names: dict = {}
+    for kind, table in tables.items():
+        ids = ids_of[kind]
+        if not ids:
+            continue
+        for row_id, name in db.query(table.id, table.name).filter(table.id.in_(ids)).all():
+            names[(kind, row_id)] = name
+    return names
+
+
 def _serialize(db: Session, rows: list[Conversation]) -> list[dict]:
-    """会话行 → 接口结构：消息数用一次分组查询，智能体名用一次 IN 查询，不逐行查库。"""
+    """会话行 → 接口结构：消息数用一次分组查询，对象名按类型各一次 IN 查询，不逐行查库。
+
+    kind / target_id / target_name 是三种对话统一的归属口径（docs/17 §3.3）：前端按 kind 切页签、
+    按 target_id 选对象，不需要知道哪个类型对应哪一列。原来的 agent_id / agent_name 已随之退休。
+    """
     ids = [c.id for c in rows]
     counts = rows_to_dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
-    agent_ids = {c.agent_id for c in rows if c.agent_id}
-    agent_names = rows_to_dict(db.query(Agent.id, Agent.name).filter(Agent.id.in_(agent_ids)).all()) if agent_ids else {}
+    names = _names_of(db, rows)
     return [{
-        "id": c.id, "agent_id": c.agent_id, "agent_name": agent_names.get(c.agent_id), "title": c.title, "summary": c.summary,
+        "id": c.id, "kind": c.kind, "target_id": getattr(c, TARGET_COLUMN[c.kind], None),
+        "target_name": names.get((c.kind, getattr(c, TARGET_COLUMN[c.kind], None))),
+        "title": c.title, "summary": c.summary,
         "message_count": int(counts.get(c.id, 0)),
         "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat(),
     } for c in rows]

@@ -7,18 +7,19 @@ import pytest
 
 from app.core.scheduler import _run_scheduled_job
 from app.db.models import Conversation, Message, Run
+from tests.fakes import seed_conversation
 from app.db.session import SessionLocal
 from app.services import chat_service, run_service
 
 START_END_GRAPH = {
-    "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}],
+    "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}],
     "edges": [{"from": "s", "to": "e"}],
 }
 
 # code 节点主动抛异常，用来验证失败路径同样能收尾
 FAILING_GRAPH = {
     "nodes": [
-        {"id": "s", "type": "start", "config": {}},
+        {"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}},
         {"id": "boom", "type": "code", "config": {"code": "raise ValueError('boom-from-pytest')"}},
         {"id": "e", "type": "end", "config": {}},
     ],
@@ -50,7 +51,7 @@ def _runs_of_workflow(client, auth_headers, wid):
 def test_workflow_run_success_writes_timing(client, auth_headers):
     wid = _create_workflow(client, auth_headers, START_END_GRAPH, "pytest-run-timing")
     try:
-        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"input": "hello"})
+        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"inputs": {"input": "hello"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "success"
 
@@ -67,7 +68,7 @@ def test_workflow_run_success_writes_timing(client, auth_headers):
 def test_workflow_run_failure_is_finalized(client, auth_headers):
     wid = _create_workflow(client, auth_headers, FAILING_GRAPH, "pytest-run-failure")
     try:
-        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"input": "hello"})
+        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"inputs": {"input": "hello"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "failed"
         assert "boom-from-pytest" in r.json()["error"]
@@ -168,14 +169,13 @@ def test_chat_cancel_finalizes_run_once(client, auth_headers):
     """客户端中断：部分回答落库、运行置为 cancelled；重复收尾不重复写消息。"""
     me = client.get("/api/v1/auth/me", headers=auth_headers).json()
     db = SessionLocal()
-    conv = None
+    seeded = None
     run = None
     try:
-        conv = Conversation(user_id=me["id"], title="pytest-cancel")
-        db.add(conv)
-        db.commit()
-        db.refresh(conv)
-        run = run_service.create_run(db, "chat", me["id"], input_data={"message": "hi"}, source="chat")
+        # 会话必须绑归属对象（DB 的 ck_conversations_kind），连同最少的模型 + 智能体一起造
+        seeded = seed_conversation(db, me["id"], "pytest-cancel")
+        conv = seeded.conv
+        run = run_service.create_run(db, "chat", me["id"], agent_id=seeded.agent_id, input_data={"message": "hi"}, source="chat")
 
         assert chat_service.finalize_cancelled_chat(db, run.id, conv.id, "部分回答", [], {}, []) is True
         db.refresh(run)
@@ -189,7 +189,7 @@ def test_chat_cancel_finalizes_run_once(client, auth_headers):
     finally:
         if run is not None:
             db.delete(run)
-        if conv is not None:
-            db.delete(conv)  # messages 由外键 CASCADE 级联删除
         db.commit()
+        if seeded is not None:
+            seeded.drop(db)  # 会话、消息、智能体、模型整组清掉（agents.model_id 是 RESTRICT）
         db.close()

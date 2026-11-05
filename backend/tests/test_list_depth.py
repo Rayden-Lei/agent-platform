@@ -4,6 +4,7 @@ import uuid
 import pytest
 
 from app.db.models import Agent, Conversation, Message
+from tests.fakes import seed_conversation
 from app.db.session import SessionLocal
 from app.tools.langchain_tools import build_tools
 
@@ -54,9 +55,9 @@ def test_disabled_tool_is_not_exposed_to_model_and_fails_workflow_node(client, a
             db.close()
         detail = client.get(f"/api/v1/tools/{t['id']}", headers=auth_headers).json()
         assert detail["is_enabled"] is False and detail["agents"] == []
-        graph = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "t", "type": "tool", "config": {"tool_name": t["name"], "args": {}}}, {"id": "e", "type": "end", "config": {}}],
+        graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "t", "type": "tool", "config": {"tool_name": t["name"], "args": {}}}, {"id": "e", "type": "end", "config": {}}],
                  "edges": [{"from": "s", "to": "t"}, {"from": "t", "to": "e"}]}
-        run = client.post("/api/v1/workflows/test-run", headers=auth_headers, json={"graph": graph, "input": "x"}).json()
+        run = client.post("/api/v1/workflows/test-run", headers=auth_headers, json={"graph": graph, "inputs": {"input": "x"}}).json()
         assert run["status"] == "failed" and "工具已停用" in run["error"]
         assert client.post(f"/api/v1/tools/{t['id']}/toggle", headers=auth_headers).json()["is_enabled"] is True
     finally:
@@ -119,7 +120,7 @@ def test_agents_list_filters_and_detail_reports_missing_references(client, auth_
 # ---------- 定时任务：cron 校验、编辑、下次触发、批量 ----------
 
 def test_schedules_validate_cron_and_expose_next_run(client, auth_headers):
-    wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-depth-wf-" + uuid.uuid4().hex[:4], "description": "", "graph": {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}}).json()
+    wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-depth-wf-" + uuid.uuid4().hex[:4], "description": "", "graph": {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}}).json()
     try:
         bad = client.post("/api/v1/schedules", headers=auth_headers, json={"name": "pytest-sched", "workflow_id": wf["id"], "cron": "every 5 minutes", "input": {}})
         assert bad.status_code == 422 and "cron 表达式非法" in bad.json()["detail"][0]["msg"]
@@ -228,7 +229,7 @@ def test_prompt_templates_list_agents_count_and_batch_delete_reports_409(client,
 # ---------- 工作流：节点统计、复制、批量 ----------
 
 def test_workflows_list_node_count_duplicate_and_batch_delete(client, auth_headers):
-    graph = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "c", "type": "code", "config": {"code": "result=1"}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "c"}, {"from": "c", "to": "e"}]}
+    graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "c", "type": "code", "config": {"code": "result=1"}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "c"}, {"from": "c", "to": "e"}]}
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-depth-wf-" + uuid.uuid4().hex[:4], "description": "d", "graph": graph}).json()
     copy = client.post(f"/api/v1/workflows/{wf['id']}/duplicate", headers=auth_headers).json()
     try:
@@ -249,21 +250,19 @@ def test_workflows_list_node_count_duplicate_and_batch_delete(client, auth_heade
 def test_conversations_carry_message_count_and_messages_carry_token_usage(client, auth_headers):
     me = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
     db = SessionLocal()
+    # 会话必须绑归属对象（DB 的 ck_conversations_kind），连同最少的模型 + 智能体一起造，结束时整组清掉
+    seeded = seed_conversation(db, me, "pytest-depth-conv")
+    conv_id = seeded.conv.id
     try:
-        conv = Conversation(user_id=me, title="pytest-depth-conv")
-        db.add(conv)
-        db.commit()
-        db.refresh(conv)
-        conv_id = conv.id
         db.add(Message(conversation_id=conv_id, role="user", content="q"))
         db.add(Message(conversation_id=conv_id, role="assistant", content="a", token_usage={"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}))
         db.commit()
-    finally:
-        db.close()
-    try:
         listed = client.get("/api/v1/conversations", headers=auth_headers, params={"q": "pytest-depth-conv"}).json()["items"][0]
-        assert listed["message_count"] == 2 and listed["agent_name"] is None
+        # 会话列表的归属口径改成 kind + target_id + target_name（docs/17 §3.3），agent_id / agent_name 已退休
+        assert listed["message_count"] == 2 and listed["kind"] == "agent" and listed["target_id"] == seeded.agent_id
+        assert listed["target_name"] and listed["target_name"].startswith("pytest-conv-agent-")
         messages = client.get(f"/api/v1/conversations/{conv_id}/messages", headers=auth_headers).json()
         assert messages[0]["token_usage"] is None and messages[1]["token_usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
     finally:
-        client.delete(f"/api/v1/conversations/{conv_id}", headers=auth_headers)
+        seeded.drop(db)
+        db.close()

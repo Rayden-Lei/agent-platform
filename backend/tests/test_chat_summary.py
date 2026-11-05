@@ -15,6 +15,7 @@ from app.db.models import Conversation, Message
 from app.db.session import SessionLocal
 from app.model_gateway import breaker
 from app.services import chat_service
+from tests.fakes import seed_conversation
 
 STUB = SimpleNamespace(id=999002, name="pytest-summary")
 MAX, BATCH = 20, 10
@@ -48,17 +49,13 @@ def conversation(client, auth_headers, db, monkeypatch):
     monkeypatch.setattr(settings, "CHAT_SUMMARY_BATCH_MESSAGES", BATCH)
     breaker.reset()
     user_id = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
-    conv = Conversation(user_id=user_id, title="pytest-summary")
-    db.add(conv)
-    db.commit()
-    db.refresh(conv)
-    conv_id = conv.id  # 用例可能已把会话删掉（级联用例），清理时不能再从实例上取 id
+    # 会话必须绑一个归属对象（DB 的 ck_conversations_kind），所以连同最少的模型 + 智能体一起造
+    seeded = seed_conversation(db, user_id, "pytest-summary")
+    conv = seeded.conv
     try:
         yield conv
     finally:
-        db.rollback()
-        db.query(Conversation).filter(Conversation.id == conv_id).delete()
-        db.commit()
+        seeded.drop(db)
         breaker.reset()
 
 

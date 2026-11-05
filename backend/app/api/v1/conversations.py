@@ -5,6 +5,8 @@ API Key 只看这个 Key 建的、且 end_user 一致的会话（docs/15 3.7.1�
 分享访客的会话走 /public/shares/{code}/conversations（访客专用结构）。
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
@@ -28,14 +30,19 @@ def _caller(request: Request, user: User, end_user: str | None) -> conversation_
 def list_conversations(
     request: Request,
     params: PageParams = Depends(page_params),
-    agent_id: int | None = Query(None),
+    kind: Literal["model", "agent", "workflow"] | None = Query(None, description="对话类型；不传则不限类型"),
+    target_id: int | None = Query(None, description="按对话对象过滤（模型 / 智能体 / 工作流的 id），必须同时给 kind"),
     q: str | None = Query(None, max_length=64, description="标题模糊匹配"),
     end_user: str | None = EndUser,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """当前调用方的会话列表（分页），可按 agent_id 过滤、按标题搜索；附消息数与智能体名。"""
-    return conversation_service.list_conversations(db, _caller(request, user, end_user), params, agent_id, q)
+    """当前调用方的会话列表（分页），可按对话类型与对象过滤、按标题搜索；附消息数与对象名。
+
+    三种对话共用一个列表接口（docs/17 §3.7）：kind 决定对话页的页签，target_id 决定"只看这个对象的会话"。
+    原来的 agent_id 过滤已随对话分类型一次切换掉，不再兼容。
+    """
+    return conversation_service.list_conversations(db, _caller(request, user, end_user), params, kind, target_id, q)
 
 
 @router.get("/{conversation_id}")

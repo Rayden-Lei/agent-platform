@@ -20,7 +20,7 @@ from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.runtime.agent_config import AgentRunConfig, load_version_config, resolve_live_config, run_config_from_snapshot, snapshot_of, usable_model
 from app.schemas import AgentIn
-from app.services import agent_service, api_key_service, chat_trace, conversation_service, run_service, settings_service
+from app.services import agent_service, api_key_service, chat_trace, chat_turn, conversation_service, run_service, settings_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -236,46 +236,10 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict 
     return Retrieval(citations, acl_rejected, rerank_mode, [step for _, _, step in results])
 
 
-class PreparedChat(NamedTuple):
-    """prepare_chat 的结果：会话、运行记录，以及这轮回答用的线上版本号（构建上下文按同一版本取配置）。"""
-
-    conversation_id: int
-    run_id: int
-    agent_version: int
-
-
-class ReplayChat(NamedTuple):
-    """同一会话里重复的 client_message_id：不落消息、不调模型，回放首次的结果（docs/15 3.7.1 幂等）。
-    status 为 success 时带首次回答（message_id / content / citations / usage）；failed、cancelled 时带 error。"""
-
-    conversation_id: int
-    run_id: int | None
-    status: str
-    message_id: int | None = None
-    content: str = ""
-    citations: list | None = None
-    usage: dict | None = None
-    error: str | None = None
-
-
-def _replay_of(db: Session, conversation_id: int, client_message_id: str) -> ReplayChat | None:
-    """同一会话里这个 client_message_id 首次的结果；没发过返回 None。首次还在生成 → 409（让调用方稍后用同一个 id 再试）。"""
-    first = db.query(Message).filter(Message.conversation_id == conversation_id, Message.client_message_id == client_message_id,
-                                     Message.role == "user").first()
-    if first is None:
-        return None
-    run = db.get(Run, first.run_id) if first.run_id else None
-    if run is None:
-        # 用户消息与运行记录同一次提交，正常不会出现；运行记录被删了才会这样
-        return ReplayChat(conversation_id, None, "failed", error="上次请求的运行记录已不存在，请换一个 client_message_id 重试")
-    if run.status not in run_service.FINAL_STATUSES:
-        raise BizError(409, "该消息正在处理，请稍后用同一个 client_message_id 重试")
-    if run.status == "success":
-        answer = db.query(Message).filter(Message.run_id == run.id, Message.role == "assistant").first()
-        return ReplayChat(conversation_id, run.id, "success", message_id=answer.id if answer else None,
-                          content=answer.content if answer else "", citations=(answer.citations or []) if answer else [], usage=run.token_usage)
-    error = run.error or ("上次请求已中断（已生成的部分见会话消息）" if run.status == "cancelled" else "上次请求失败")
-    return ReplayChat(conversation_id, run.id, run.status, error=f"{error}；如需重新生成请换一个 client_message_id")
+# 幂等回放与会话/运行记录的开立已经下沉到 chat_turn（三种对话共用），这里转出旧名字，
+# 调用方（路由、分享访客、测试）不需要改 import 路径
+ReplayChat = chat_turn.ReplayChat
+PreparedChat = chat_turn.PreparedTurn
 
 
 def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int, message: str, conversation_id: int | None = None,
@@ -292,52 +256,20 @@ def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int
     首轮（不带 conversation_id）不在幂等范围内。并发的同一条撞上部分唯一索引时按"首次仍在生成"409。
     配置读线上版本（草稿与线上分离，FR-039）：运行记录的 model_id 与 agent_version 都取线上快照，不取草稿行。
     """
-    if not message.strip():
-        raise BizError(400, "消息不能为空")
+    chat_turn.validate_message(message)
     api_key_service.check_agent_scope(api_key, agent_id)
     live = resolve_live_config(db, agent_id)
-    conversation = None
-    if conversation_id:
-        conversation = db.get(Conversation, conversation_id)
-        # 还要属于该智能体：否则智能体 A 能接着写 B 的会话（深链只带 conversation 时对话页会落到第一个智能体）
-        if conversation is None or not conversation_service.owns(conversation, caller) or conversation.agent_id != agent_id:
-            raise BizError(404, "会话不存在或不属于该智能体")
-        if client_message_id:
-            replay = _replay_of(db, conversation.id, client_message_id)
-            if replay is not None:
-                return replay
-    if conversation is None:
-        title = message.strip()[:settings.CHAT_TITLE_MAX_LEN] or "新对话"  # 标题取首条消息开头（模型生成标题已于 2026-08-29 移除）
-        conversation = Conversation(agent_id=agent_id, user_id=caller.user_id, title=title, channel=caller.channel,
-                                    api_key_id=caller.api_key_id, end_user=caller.end_user, share_id=caller.share_id)
-        db.add(conversation)
-        db.commit()
-        db.refresh(conversation)
-
-    user_message = Message(conversation_id=conversation.id, role="user", content=message, client_message_id=client_message_id)
-    db.add(user_message)
-    try:
-        db.flush()  # 先撞部分唯一索引：并发的同一条 client_message_id 在这里失败，不会先建出运行记录
-    except IntegrityError:
-        db.rollback()
-        replay = _replay_of(db, conversation.id, client_message_id) if client_message_id else None
-        if replay is None:
-            raise
-        return replay
-    # model_id / conversation_id / agent_version 是统计与追溯用的快照：之后再发布、换模型都不影响这条运行的归属。
-    # 用户消息与运行记录同一次提交：并发的重复请求不会读到"有消息、还没挂上运行记录"的中间状态
-    # 线上对话用的必定是某个发布版本（上面 resolve_live_config 带版本号），为 None 只出现在装配页调试，
-    # 那条路不走本函数；断言是为了让运行记录与 PreparedChat 都用同一个已收窄的值。
+    # 线上对话用的必定是某个发布版本（resolve_live_config 带版本号），为 None 只出现在装配页调试，那条路不走本函数
     agent_version = live.version
     assert agent_version is not None
-    run = run_service.create_run(
-        db, "chat", caller.user_id, agent_id=agent_id, model_id=live.model_id, conversation_id=conversation.id,
-        input_data={"message": message}, source=conversation_service.RUN_SOURCE_OF[caller.channel], api_key_id=caller.api_key_id,
-        share_id=caller.share_id, agent_version=agent_version, commit=False,
+    # 会话与运行记录的开立三种对话完全一样（归属五项、幂等回放、用户消息与运行记录同一次提交），
+    # 已经下沉到 chat_turn.open_turn；这里只负责智能体特有的校验与"记哪个版本、哪个模型"
+    prepared, replay = chat_turn.open_turn(
+        db, caller, conversation_service.KIND_AGENT, agent_id, message, conversation_id, client_message_id,
+        missing_detail="会话不存在或不属于该智能体", run_type="chat",
+        input_data={"message": message}, model_id=live.model_id, agent_version=agent_version,
     )
-    user_message.run_id = run.id
-    db.commit()
-    return PreparedChat(conversation.id, run.id, agent_version)
+    return replay if replay is not None else prepared
 
 
 def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
@@ -457,7 +389,7 @@ def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list | None = None,
                            run_id: int | None = None, reasoning: str | None = None) -> Message:
-    """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。run_id 是这一轮的运行记录，幂等回放据此找回首次的回答。"""
+    """落一条 assistant 消息（含引用、token 用量、工具调用记录与思维链）并返回。run_id 是这一轮的运行记录，幂等回放据此找回首次的回答。"""
     msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage,
                   tool_calls=tool_calls or [], run_id=run_id, reasoning=(reasoning or None))
     db.add(msg)
