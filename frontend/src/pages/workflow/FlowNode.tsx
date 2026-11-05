@@ -1,20 +1,35 @@
 import { Handle, Position } from '@xyflow/react'
 
-// 自定义节点渲染：左侧类型色块图标 + 标签/摘要，左右各一个连接点（Handle）；
-// 选中时加粗边框并加阴影。所有节点类型共用这一种外观，靠 data.color 区分。配置有误（data.configError）时红框并在摘要处写原因。
+// 自定义节点渲染：左侧类型色图标 + 标签/摘要，左右各一个连接点（Handle）。
+// 2026-11-05 改版：图标不再铺实色圆角块（画布上一排彩色方块很吵），改成细线图标 + 类型色；
+// 节点更紧凑（横向 padding 10、纵向 8），一屏能多放两行。选中加粗边框 + 阴影，
+// 配置有误（data.configError）时红框并在摘要处写原因。
 export function FlowNode({ data, selected }: any) {
-  const border = data.configError ? '2px solid #dc2626' : selected ? '2px solid ' + data.color : '1px solid #e5e7eb'
+  const border = data.configError ? '1.5px solid #dc2626' : selected ? '1.5px solid ' + data.color : '1px solid var(--border)'
   return (
-    <div style={{ background: '#fff', border, borderRadius: 10, boxShadow: selected ? '0 6px 20px rgba(15,23,42,0.16)' : '0 2px 6px rgba(15,23,42,0.06)', minWidth: 150, cursor: 'pointer', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
-        <div style={{ width: 30, height: 30, borderRadius: 8, background: data.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, flexShrink: 0 }}>{data.icon}</div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 13, color: '#1f2937', lineHeight: 1.3 }}>{data.label}</div>
-          {(data.configError || data.detail) && <div style={{ fontSize: 11, color: data.configError ? '#dc2626' : '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>{data.configError || data.detail}</div>}
+    <div
+      style={{
+        background: 'var(--card)',
+        border,
+        borderRadius: 8,
+        boxShadow: selected ? '0 4px 14px rgba(15,23,42,0.12)' : '0 1px 3px rgba(15,23,42,0.06)',
+        minWidth: 132,
+        cursor: 'pointer',
+      }}
+    >
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <span className="flex shrink-0 items-center justify-center [&>svg]:size-[15px]" style={{ color: data.color }}>{data.icon}</span>
+        <div className="min-w-0">
+          <div className="text-[12.5px] font-medium leading-tight" style={{ color: 'var(--fg)' }}>{data.label}</div>
+          {(data.configError || data.detail) && (
+            <div className="mt-0.5 truncate text-[11px]" style={{ color: data.configError ? '#dc2626' : 'var(--fg-subtle)', maxWidth: 130 }}>
+              {data.configError || data.detail}
+            </div>
+          )}
         </div>
       </div>
-      <Handle type="target" position={Position.Left} style={{ width: 9, height: 9, background: '#fff', border: '2px solid ' + data.color }} />
-      <Handle type="source" position={Position.Right} style={{ width: 9, height: 9, background: '#fff', border: '2px solid ' + data.color }} />
+      <Handle type="target" position={Position.Left} style={{ width: 8, height: 8, background: 'var(--card)', border: '1.5px solid ' + data.color }} />
+      <Handle type="source" position={Position.Right} style={{ width: 8, height: 8, background: 'var(--card)', border: '1.5px solid ' + data.color }} />
     </div>
   )
 }

@@ -291,6 +291,39 @@
   height: 100%;
 }
 /* ============================================================
+   滚动条：全站细滚动条
+   系统默认滚动条在浅色玻璃侧栏上是一条 12px 的灰块，非常显眼（2026-11-05 使用者反馈）。
+   统一收成 6px 圆角条、只有 hover 才加深；不隐藏是因为"能看出还有内容"比"干净"更重要。
+   ============================================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fg-subtle);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ============================================================
    基础排版
    ============================================================ */
 
