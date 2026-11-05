@@ -27,19 +27,37 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # ---- 通用上限：模型生成的参数不可信，全部按最坏情况设 ----
-TEXT_MAX_CHARS = 100_000          # 文本统计的输入上限（不开放配置，纯保护性）
+TEXT_MAX_CHARS = 100_000          # 文本统计的输入上限（纯保护性，不开放配置）
 JSON_MAX_BYTES = 1_000_000        # json_query 的输入上限（同上）
 
+# 各工具自己的配置默认值。**配置属于工具，不属于系统**：
+# 存在 tools.config（非敏感项）与 tools.secret_enc（密钥），在工具页按工具单独改。
+# 这里的默认值只在工具行没有对应键时兜底，改了 .env 不生效——.env 只提供一份初始值。
+TOOL_CONFIG_DEFAULTS: dict[str, dict] = {
+    "web_search": {
+        "endpoint": "https://api.wsa.cloud.tencent.com/SearchPro",
+        "default_limit": 5,
+        "max_limit": 10,
+        "timeout": 20,
+    },
+    "http_request": {
+        "allowed_hosts": "",
+        "timeout": 20,
+        "max_bytes": 200_000,
+    },
+}
 
-def _cfg(key: str):
-    """取运行时配置：优先 system_settings 表（页面可改），没有则回退 .env。
 
-    工具是热路径（每次对话可能调好几次），settings_service 内部带 5 秒缓存，
-    不会每次都查库。库不可用时它自己回退默认值，不连累工具执行。
+def tool_config(name: str, config: dict | None, key: str):
+    """取某个工具自己的配置项：工具行里的值优先，没有则用 TOOL_CONFIG_DEFAULTS 兜底。
+
+    配置随工具行走（tools.config），因此同一平台上的两个 web_search 工具可以指向
+    不同的搜索服务；不是全局一份。
     """
-    from app.services import settings_service
-
-    return settings_service.runtime_value(key)
+    conf = config or {}
+    if key in conf and conf[key] not in (None, ""):
+        return conf[key]
+    return TOOL_CONFIG_DEFAULTS.get(name, {}).get(key)
 
 
 def _err(message: str) -> dict:
@@ -173,8 +191,8 @@ _PRIVATE_NETS = [
 ]
 
 
-def _host_allowed(host: str) -> tuple[bool, str]:
-    """域名白名单 + 内网地址拦截。
+def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
+    """域名白名单 + 内网地址拦截。allowed 是这个工具自己的白名单（逗号分隔）。
 
     白名单为空时**只拦内网**、放行公网：让工具开箱可用。
     配了白名单则严格按白名单（支持 *.example.com 后缀通配）。
@@ -192,7 +210,7 @@ def _host_allowed(host: str) -> tuple[bool, str]:
         if any(ip in net for net in _PRIVATE_NETS):
             return False, f"不允许访问内网地址（{host} → {ip}）"
 
-    allow = (_cfg("http_allowed_hosts") or "").strip()
+    allow = (allowed or "").strip()
     if not allow:
         return True, ""
     patterns = [p.strip().lower() for p in allow.split(",") if p.strip()]
@@ -205,8 +223,9 @@ def _host_allowed(host: str) -> tuple[bool, str]:
     return False, f"域名不在白名单内：{host}（允许：{', '.join(patterns)}）"
 
 
-async def http_request(url: str, method: str = "GET", headers: str = "", body: str = "") -> dict:
-    """发起一次 HTTP 请求。
+async def http_request(url: str, method: str = "GET", headers: str = "", body: str = "",
+                       *, config: dict | None = None) -> dict:
+    """发起一次 HTTP 请求。config 是这个工具自己的配置行（tools.config）。
 
     headers 是 JSON 对象字符串（如 {"Accept": "application/json"}），body 是原样发送的文本。
     返回状态码、响应头与响应体；响应体超过上限会截断并标注。
@@ -216,7 +235,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
     parts = urlsplit(url.strip())
     if parts.scheme not in ("http", "https"):
         return _err("只支持 http / https")
-    ok, reason = _host_allowed(parts.hostname or "")
+    ok, reason = _host_allowed(parts.hostname or "", tool_config("http_request", config, "allowed_hosts") or "")
     if not ok:
         logger.warning("http_request 拒绝访问：url=%r reason=%s", url[:200], reason)
         return _err(reason)
@@ -235,7 +254,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
     if m not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"):
         return _err(f"不支持的方法：{m}")
 
-    timeout = float(_cfg("http_timeout"))
+    timeout = float(tool_config("http_request", config, "timeout"))
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.request(m, url.strip(), headers=hdrs, content=body or None)
@@ -245,7 +264,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
         logger.warning("http_request 请求失败：url=%r error=%s", url[:200], e)
         return _err(f"请求失败：{type(e).__name__}: {e}")
 
-    max_bytes = int(_cfg("http_max_bytes"))
+    max_bytes = int(tool_config("http_request", config, "max_bytes"))
     raw = resp.content[:max_bytes]
     truncated = len(resp.content) > max_bytes
     try:
@@ -262,11 +281,11 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
 
 # --------------------------------------------------------------------------- 联网搜索
 
-def web_search(query: str, limit: int = 5) -> dict:
-    """用腾讯云 SearchPro 搜索网页。
+def web_search(query: str, limit: int = 0, *, config: dict | None = None, api_key: str = "") -> dict:
+    """用腾讯云 SearchPro 搜索网页。config / api_key 都来自这个工具自己的行。
 
-    复用 wechat-ai/searchpro 的接口契约（POST /SearchPro，Bearer 鉴权），
-    但不依赖那个项目：只照它的协议写，key 走本项目的配置。
+    协议照 wechat-ai/searchpro（POST /SearchPro，Bearer 鉴权），但不依赖那个项目。
+    limit 传 0 表示用工具配置里的默认条数。
     """
     q = (query or "").strip()
     if not q:
@@ -274,22 +293,20 @@ def web_search(query: str, limit: int = 5) -> dict:
     if len(q) > 2000:
         return _err(f"关键词过长（{len(q)} 字，上限 2000）")
 
-    # 全部走运行时配置：地址、密钥、条数上限、超时都能在「系统参数 → 内置工具」里改，改完下一次调用即生效
-    key = (_cfg("search_api_key") or "").strip()
+    # 地址、密钥、条数、超时全部来自这个工具自己的配置（工具页可改，下一次调用即生效）
+    key = (api_key or "").strip()
     if not key:
-        return _err("联网搜索未配置 API Key：去「系统参数 → 内置工具」填搜索 API Key，或在本机 .env 设置 SEARCHPRO_KEY")
-    endpoint = (_cfg("search_endpoint") or "").strip()
+        return _err("联网搜索未配置 API Key：去「工具」页编辑 web_search 填上，或在本机 .env 设置 SEARCHPRO_KEY 后新建工具")
+    endpoint = (tool_config("web_search", config, "endpoint") or "").strip()
     if not endpoint:
-        return _err("联网搜索未配置接口地址：去「系统参数 → 内置工具」填写")
+        return _err("联网搜索未配置接口地址：去「工具」页编辑 web_search 填写")
 
-    max_limit = int(_cfg("search_max_limit"))
-    default_limit = int(_cfg("search_default_limit"))
-    try:
-        n = max(1, min(int(limit), max_limit))
-    except (TypeError, ValueError):
-        n = max(1, min(default_limit, max_limit))
+    max_limit = int(tool_config("web_search", config, "max_limit"))
+    default_limit = int(tool_config("web_search", config, "default_limit"))
+    want = int(limit) if str(limit or "").strip() not in ("", "0") else default_limit
+    n = max(1, min(want, max_limit))
 
-    timeout = float(_cfg("search_timeout"))
+    timeout = float(tool_config("web_search", config, "timeout"))
     payload = {"Query": q}
     try:
         with httpx.Client(timeout=timeout) as client:

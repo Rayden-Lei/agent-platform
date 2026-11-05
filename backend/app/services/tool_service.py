@@ -7,6 +7,7 @@ from app.core.security import encrypt_secret
 from app.db.session import rows_to_dict
 from app.db.models import Agent, Tool, User
 from app.tools.builtin import BUILTIN_PARAMETERS
+from app.tools.tool_config import TOOL_CONFIG_FIELDS
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
@@ -34,8 +35,20 @@ def _config_out(t: Tool) -> dict:
     这样工具页的在线测试、工作流的工具节点都能按声明生成输入项，不必让人手写 JSON 参数。
     声明只存在于代码、不落库——落库迟早和代码实际接受的不一致。
     """
-    if t.type == "builtin" and t.name in BUILTIN_PARAMETERS:
-        return {**(t.config or {}), "parameters": BUILTIN_PARAMETERS[t.name]}
+    if t.type == "builtin":
+        out = dict(t.config or {})
+        if t.name in BUILTIN_PARAMETERS:
+            out["parameters"] = BUILTIN_PARAMETERS[t.name]
+        # 配置项声明也一起下发，工具页据此渲染表单（声明在代码里，不落库）
+        fields = TOOL_CONFIG_FIELDS.get(t.name)
+        if fields:
+            out["config_fields"] = [
+                {"key": f.key, "label": f.label, "description": f.description, "kind": f.kind,
+                 "min": f.min, "max": f.max, "step": f.step, "unit": f.unit,
+                 "placeholder": f.placeholder, "default": f.default}
+                for f in fields
+            ]
+        return out
     return t.config
 
 

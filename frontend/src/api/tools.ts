@@ -6,7 +6,26 @@ export interface ToolProperty { type: ToolPropertyType; description?: string; en
 // HTTP 工具参数声明（docs/03-数据库设计.md 4.2 的 JSON Schema 子集）；后端保存时校验并规范化
 export interface ToolParameters { type: 'object'; properties: Record<string, ToolProperty>; required: string[] }
 // 目标地址白名单（docs/16 P3a）：只写主机名，执行时按域名后缀匹配；不填表示过渡期放行但每次留日志
-export interface ToolConfig { url?: string; method?: string; headers?: Record<string, string>; parameters?: ToolParameters; allowed_hosts?: string[] }
+// 内置工具自己的配置项声明（后端 tools/tool_config.py 下发），工具页据此渲染表单。
+// 配置属于工具而不属于系统：同一平台上的两个 web_search 可以指向不同的搜索服务。
+export interface ToolConfigField {
+  key: string
+  label: string
+  description: string
+  kind: 'str' | 'int' | 'secret'
+  min: number
+  max: number
+  step: number
+  unit: string
+  placeholder: string
+  default: string | number
+}
+export interface ToolConfig {
+  url?: string; method?: string; headers?: Record<string, string>
+  parameters?: ToolParameters; allowed_hosts?: string[]
+  config_fields?: ToolConfigField[]
+  [key: string]: unknown
+}
 // 鉴权（docs/04 4.7，2026-09-29 起）：凭据加密托管、任何接口不回传，只告诉你配没配（has_secret）
 export type ToolAuthType = 'none' | 'api_key' | 'bearer' | 'basic'
 export interface ToolAuth { type: ToolAuthType; location?: 'header' | 'query' | null; name?: string | null }

@@ -38,7 +38,6 @@ CACHE_TTL_SECONDS = 5.0
 GROUPS = {
     "ingest": {"key": "ingest", "label": "文档导入", "description": "对下一篇开始处理的文档生效，处理中的文档不受影响"},
     "retrieval": {"key": "retrieval", "label": "检索与重排", "description": "对之后的每次检索生效（最多 5 秒延迟）"},
-    "tools": {"key": "tools", "label": "内置工具", "description": "联网搜索与 HTTP 请求工具的地址、密钥与限额；改完下一次调用即生效"},
 }
 
 
@@ -100,42 +99,6 @@ SPECS: dict = {
         "rerank_timeout", "重排超时",
         "重排服务调用超时秒数，超时退回词法重排并在系统状态里报降级。",
         "retrieval", "RERANK_TIMEOUT", 1, 60, unit="秒"),
-    # ---- 内置工具 ----
-    "search_endpoint": SettingSpec(
-        "search_endpoint", "搜索接口地址",
-        "联网搜索调用的接口。默认是腾讯云 SearchPro；换成自建或其它兼容服务时改这里。",
-        "tools", "SEARCHPRO_ENDPOINT", kind=KIND_STR,
-        placeholder="https://api.wsa.cloud.tencent.com/SearchPro"),
-    "search_api_key": SettingSpec(
-        "search_api_key", "搜索 API Key",
-        "联网搜索的鉴权密钥。写入后不再回显，只能覆盖或清空；留空则沿用 .env 里的 SEARCHPRO_KEY。",
-        "tools", "SEARCHPRO_KEY", kind=KIND_SECRET,
-        placeholder="sk-..."),
-    "search_default_limit": SettingSpec(
-        "search_default_limit", "默认返回条数",
-        "模型没指定 limit 时返回几条结果。条数越多占用的上下文越长。",
-        "tools", "TOOL_SEARCH_DEFAULT_LIMIT", 1, 10, unit="条"),
-    "search_max_limit": SettingSpec(
-        "search_max_limit", "最多返回条数",
-        "模型显式要求更多时也不超过这个数。",
-        "tools", "TOOL_SEARCH_MAX_LIMIT", 1, 20, unit="条"),
-    "search_timeout": SettingSpec(
-        "search_timeout", "搜索超时",
-        "单次搜索的等待上限，超时即返回错误，不重试。",
-        "tools", "TOOL_SEARCH_TIMEOUT", 3, 60, unit="秒"),
-    "http_allowed_hosts": SettingSpec(
-        "http_allowed_hosts", "HTTP 工具域名白名单",
-        "逗号分隔，支持 *.example.com 后缀通配。留空 = 放行所有公网域名（内网地址段始终拦死）。",
-        "tools", "TOOL_HTTP_ALLOWED_HOSTS", kind=KIND_STR,
-        placeholder="api.example.com,*.openai.com"),
-    "http_timeout": SettingSpec(
-        "http_timeout", "HTTP 请求超时",
-        "内置 http_request 工具的单次请求等待上限。",
-        "tools", "TOOL_HTTP_TIMEOUT", 3, 120, unit="秒"),
-    "http_max_bytes": SettingSpec(
-        "http_max_bytes", "HTTP 返回体上限",
-        "响应体超过这个大小会被截断，避免把几十 MB 的页面塞进上下文。",
-        "tools", "TOOL_HTTP_MAX_BYTES", 10_000, 2_000_000, unit="字节"),
 }
 
 # 进程内缓存：{key: 值}，供检索热路径使用
