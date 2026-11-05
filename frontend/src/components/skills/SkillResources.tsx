@@ -19,7 +19,8 @@ interface Props {
   onChanged: () => void
 }
 
-const kbText = (bytes: number) => (bytes / 1024).toFixed(1) + 'KB'
+// 小于 1KB 按字节显示：脚本只有几十字节时「0.0KB」没有信息量
+const kbText = (bytes: number) => (bytes < 1024 ? bytes + 'B' : (bytes / 1024).toFixed(1) + 'KB')
 
 export default function SkillResources({ skillId, onChanged }: Props) {
   const [items, setItems] = useState<SkillResource[]>([])
