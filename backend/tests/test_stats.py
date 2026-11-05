@@ -11,7 +11,7 @@ from app.db.session import SessionLocal
 from app.services import run_service
 
 SIMPLE_GRAPH = {
-    "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "c", "type": "code", "config": {"code": "import time; time.sleep(0.05); result = 'ok'"}}, {"id": "e", "type": "end", "config": {}}],
+    "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "c", "type": "code", "config": {"code": "import time; time.sleep(0.05); result = 'ok'"}}, {"id": "e", "type": "end", "config": {}}],
     "edges": [{"from": "s", "to": "c"}, {"from": "c", "to": "e"}],
 }
 
@@ -25,7 +25,7 @@ def workflow(client, auth_headers):
 
 
 def _run(client, auth_headers, workflow_id: int) -> dict:
-    r = client.post(f"/api/v1/workflows/{workflow_id}/run", headers=auth_headers, json={"input": "x"})
+    r = client.post(f"/api/v1/workflows/{workflow_id}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
     assert r.status_code == 200 and r.json()["status"] == "success", r.text
     return r.json()
 

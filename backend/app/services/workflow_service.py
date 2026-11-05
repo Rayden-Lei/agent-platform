@@ -13,14 +13,16 @@ from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, Run, ScheduledJob, User, Workflow
 from app.services import api_key_service, run_service
 from app.workflow.engine import build_workflow
+from app.workflow.io_contract import build_initial_state, end_outputs, start_variables
 from app.workflow.validation import validate_graph
 
 logger = logging.getLogger(__name__)
 
 
-def _check_graph(graph: dict) -> None:
+def check_graph(graph: dict) -> None:
     """图校验（FR-029）：保存与运行前显式调用。不能只靠 build_workflow 内部抛错 ——
-    test_run_workflow / execute_workflow 会把执行期异常吞成 failed，400 到不了调用方，还会白建一条 failed 运行记录。"""
+    test_run_workflow / execute_workflow 会把执行期异常吞成 failed，400 到不了调用方，还会白建一条 failed 运行记录。
+    公开导出：工作流对话（workflow_chat）在建设话之前也要用它，与运行同一套拒绝口径。"""
     errors = validate_graph(graph or {})
     if errors:
         raise BizError(400, "图校验失败：" + "；".join(errors))
@@ -80,7 +82,7 @@ def list_workflows(db: Session, params: PageParams, q: str | None = None, status
 
 def create_workflow(db: Session, data, user) -> dict:
     """新建工作流（graph 为图定义 JSON），记录创建人。图结构不合法 400。"""
-    _check_graph(data.graph)
+    check_graph(data.graph)
     w = Workflow(name=data.name, description=data.description, graph=data.graph, created_by=user.id)
     db.add(w)
     db.commit()
@@ -105,6 +107,21 @@ def get_workflow_detail(db: Session, workflow_id: int) -> dict:
     return {**_serialize(db, [w], with_graph=True)[0], "agents": agents, "schedules": schedules}
 
 
+def workflow_parameters(db: Session, workflow_id: int) -> dict:
+    """开始 / 结束节点的声明（docs/15 WF-04）：运行弹窗、定时任务表单与 API 访问页签按它生成表单项。
+
+    返回变量列表（含是否必填：没有默认值即必填）与输出声明；声明本身不合法时 400，
+    与运行时的报错口径一致，不让前端拿到一半能用的表单。
+    """
+    w = get_workflow(db, workflow_id)
+    variables = [
+        {"name": v.name, "type": v.type, "description": v.description, "default": v.default, "required": v.default is None}
+        for v in start_variables(w.graph)
+    ]
+    outputs = [{"name": o.name, "ref": o.ref} for o in end_outputs(w.graph)]
+    return {"workflow_id": w.id, "variables": variables, "outputs": outputs}
+
+
 def duplicate_workflow(db: Session, workflow_id: int, user) -> dict:
     """复制一份工作流（草稿态、版本 1、名称加"副本"），供在既有编排上改出新流程。"""
     w = get_workflow(db, workflow_id)
@@ -122,7 +139,7 @@ def apply_batch_action(db: Session, workflow_id: int, action: str) -> None:
 
 def update_workflow(db: Session, workflow_id: int, data) -> dict:
     """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。图结构不合法 400。"""
-    _check_graph(data.graph)
+    check_graph(data.graph)
     w = get_workflow(db, workflow_id)
     w.name = data.name
     w.description = data.description
@@ -154,13 +171,17 @@ def _interrupt_value(result: dict):
     return None
 
 
-async def test_run_workflow(graph: dict, input_text: str, role: str | None = None) -> dict:
-    """编辑器内测试运行：用当前图直接执行，不落库。图结构不合法 400（在 try 之外，不能被吞成 failed）。"""
-    _check_graph(graph)
+async def test_run_workflow(graph: dict, inputs: dict | None, role: str | None = None) -> dict:
+    """编辑器内测试运行：用当前图直接执行，不落库。图结构不合法 400、入参不合法 400（都在 try 之外，不能被吞成 failed）。
+
+    入参按开始节点声明校验（io_contract），与正式运行同一套规则——测试通过就意味着正式运行也能跑通。
+    """
+    check_graph(graph)
+    initial = build_initial_state(graph, inputs)
     try:
         g = build_workflow(graph, role=role)
         thread_id = "test-" + uuid.uuid4().hex[:12]
-        result = await asyncio.to_thread(g.invoke, {"input": input_text, "steps": []}, {"configurable": {"thread_id": thread_id}})
+        result = await asyncio.to_thread(g.invoke, initial, {"configurable": {"thread_id": thread_id}})
         iv = _interrupt_value(result)
         if iv is not None:
             return {"status": "awaiting_review", "interrupt": iv, "steps": result.get("steps", [])}
@@ -198,16 +219,19 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
     return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": steps}
 
 
-async def run_workflow(db: Session, workflow_id: int, input_text: str, user, api_key: ApiKey | None = None) -> dict:
-    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构不合法 400 且不建运行记录。
+async def run_workflow(db: Session, workflow_id: int, inputs: dict | None, user, api_key: ApiKey | None = None) -> dict:
+    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构或入参不合法 400 且不建运行记录。
     api_key 不为空表示 Key 调用：工作流须在 Key 的作用域内（否则 403 且不建运行记录，docs/15 3.7.1——2026-10-05 前
     Key 能调归属人能调的任意工作流），运行记录 source=api_key 并记 api_key_id，与定时任务的 schedule 一起供运行记录页追溯。"""
     api_key_service.check_workflow_scope(api_key, workflow_id)
     w = get_workflow(db, workflow_id)
-    _check_graph(w.graph)
-    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"input": input_text},
+    check_graph(w.graph)
+    # 入参校验放在建运行记录之前：不合法不该留下一条 failed 运行
+    initial = build_initial_state(w.graph, inputs)
+    # 记声明层面的入参字典（initial["vars"]），不是"主输入"——运行记录要能回答"这次填了什么"
+    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"inputs": initial["vars"]},
                                  source="api_key" if api_key else "ui", api_key_id=api_key.id if api_key else None)
-    return await asyncio.to_thread(execute_workflow, db, w, run, {"input": input_text, "steps": []}, user.role)
+    return await asyncio.to_thread(execute_workflow, db, w, run, initial, user.role)
 
 
 async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict, api_key: ApiKey | None = None) -> dict:

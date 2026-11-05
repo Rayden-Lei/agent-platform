@@ -49,9 +49,46 @@ def _branches(graph: dict) -> tuple[dict[str, dict], dict[str, list[str]], dict[
     return nodes, in_edges, result
 
 
+def _declared(node: dict, field: str) -> list:
+    """读一个节点的声明字段；结构或内容不合法时抛出 BizError，由 _validate_io_declarations 汇总成错误文本。"""
+    from app.workflow.io_contract import _parse_list, WorkflowOutput, WorkflowVariable  # 局部导入：io_contract 不反向依赖本模块
+
+    # 注意这里是"单条声明"的模型：_parse_list 逐条校验数组元素，传整份 Config 会把 name/type 判成多余字段
+    model = WorkflowVariable if node.get("type") == "start" else WorkflowOutput
+    return _parse_list(node.get("config"), model, field)
+
+
+def _validate_io_declarations(graph: dict) -> list[str]:
+    """输入输出声明（docs/15 WF-04）：变量名 / 输出名合法且不重名。
+
+    多个开始节点声明同名变量会让 {{start.x}} 指代不清，直接拒绝；
+    结束节点输出重名会让响应里的键被覆盖，同样拒绝。声明本身写坏（不是数组、变量名不合法）也算错误，
+    保存时就该拦下，而不是运行到一半才失败。
+    """
+    from app.core.exceptions import BizError
+
+    errors: list[str] = []
+    for node_type, field_name, what in (("start", "variables", "输入变量"), ("end", "outputs", "输出")):
+        seen: set[str] = set()
+        for node in (graph or {}).get("nodes") or []:
+            if node.get("type") != node_type:
+                continue
+            try:
+                declared = _declared(node, field_name)
+            except BizError as e:
+                errors.append(f"节点 {node.get('id')} 的{what}声明不合法：{e.detail}")
+                continue
+            for item in declared:
+                if item.name in seen:
+                    errors.append(f"{what} {item.name} 重名")
+                seen.add(item.name)
+    return errors
+
+
 def validate_graph(graph: dict) -> list[str]:
     """返回错误文本列表（空列表即通过），规则见 11-差距补齐PRD 4.5.3。"""
     errors: list[str] = []
+    errors.extend(_validate_io_declarations(graph))
     nodes, in_edges, branches = _branches(graph)
     tail_owner: dict[str, str] = {}  # 分支末节点 id → 所属 parallel id，供汇聚节点入边校验
     for pid, chains in branches.items():

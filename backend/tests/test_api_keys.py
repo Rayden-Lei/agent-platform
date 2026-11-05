@@ -10,7 +10,7 @@ from app.db.models import AuditLog
 from app.db.session import SessionLocal
 
 START_END_GRAPH = {
-    "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}],
+    "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}],
     "edges": [{"from": "s", "to": "e"}],
 }
 
@@ -67,7 +67,7 @@ def test_api_key_can_run_workflow(client, auth_headers):
     wid = w.json()["id"]
     k = _create_key(client, auth_headers, {"workflow_ids": [wid]})
     try:
-        r = client.post(f"/api/v1/workflows/{wid}/run", headers=_bearer(k["key"]), json={"input": "hello"})
+        r = client.post(f"/api/v1/workflows/{wid}/run", headers=_bearer(k["key"]), json={"inputs": {"input": "hello"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "success"
     finally:

@@ -22,6 +22,7 @@ from app.runtime.agent_config import resolve_live_config, usable_model
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
+from app.workflow.io_contract import end_outputs
 from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class WorkflowState(TypedDict, total=False):
     """
 
     input: Any
+    vars: dict
     output: Annotated[Any, _last_write]
     condition_result: bool
     loop_index: int
@@ -189,7 +191,11 @@ def _resolve_ref(state: WorkflowState, ref: str) -> Any:
         return state.get("output")
     parts = ref.split(".")
     first = parts[0]
-    if first == "input":
+    # start 指向开始节点声明的全部变量（{{start.变量名}}，docs/15 WF-04）；input 是"主输入"，
+    # 两者不是同一个值：只有单变量或变量名叫 input 时才重合（见 io_contract.main_input）
+    if first == "start":
+        value = state.get("vars") or (state.get("node_outputs") or {}).get("start")
+    elif first == "input":
         value = state.get("input")
     elif first == "output":
         value = state.get("output")
@@ -252,6 +258,19 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
     return run
 
 
+def _resolve_param_value(state: WorkflowState, value: Any) -> Any:
+    """固定参数里的一个值：整串是 {{xxx}} 时按引用取值，其余原样（不拼接、不做模板插值）。
+
+    只支持"整串就是一个引用"：部分替换会把数字变成字符串（3 → "3"），
+    而工具参数声明是有类型的，静默转字符会掩盖调用错误。
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{{") and text.endswith("}}") and text.count("{{") == 1:
+            return _resolve_ref(state, text)
+    return value
+
+
 def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
     """工具节点工厂：按 config.tool_name 查工具；配了固定 args 用固定参数，否则把输入按 JSON 解析为参数。
 
@@ -274,7 +293,9 @@ def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | 
             if not tool_db.is_enabled:
                 raise ValueError(f"工具已停用: {tool_name}")
             if fixed_args:
-                args = fixed_args
+                # 固定参数里可以填变量引用（{{start.question}} / {{node_1.data}}）：按声明逐字段配置时，
+                # 用户既要能填常量也要能接上游，这里统一在调用前解析
+                args = {k: _resolve_param_value(state, v) for k, v in fixed_args.items()}
             else:
                 args = json.loads(input_val) if isinstance(input_val, str) else (input_val or {})
             # HTTP 工具按参数声明校验（FR-030）：不合法抛 ValueError → 节点 failed，错误文本"参数校验失败：..."
@@ -445,26 +466,40 @@ def _make_review_node(config: dict, run_id: int, node_id: str, default_ref: str 
 
 
 def _make_start_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
-    """开始节点工厂：不改状态，只落一条 start 节点日志。
+    """开始节点工厂：不改状态，只落一条 start 节点日志（入参已在 state.input 里，由 _resolve_ref 的 start 分支解析）。
 
+    入参的校验与转换在 io_contract.build_initial_state 里完成（保存 / 运行 / 定时任务同一套规则）。
+    刻意不往 node_outputs 里写 start：node_outputs 是"节点输出"的集合，塞进入参会让汇聚节点、
+    调试面板这些按 node_outputs 渲染的地方多出一条冒充节点的记录。
     返回空增量而不是整个 state：steps 带 reducer，回传整个 state 会把已有轨迹再追加一遍。
     """
 
     def run(state: WorkflowState) -> dict:
-        rn_id = _start_node(run_id, node_id, "start", state.get("input"))
-        _finish_node(rn_id, "success", state.get("input"))
+        values = state.get("input")
+        rn_id = _start_node(run_id, node_id, "start", values)
+        _finish_node(rn_id, "success", values)
         return {}
 
     return run
 
 
 def _make_end_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
-    """结束节点工厂：不改状态，只落一条 end 节点日志（同 start，返回空增量）。"""
+    """结束节点工厂：按 config.outputs 声明收集输出，落一条 end 节点日志（同 start，返回增量而非整个 state）。
+
+    没声明输出时保持原行为（output 仍是上游最后一个节点的输出），存量图不受影响；
+    声明了输出时 output 变成 {输出名: 值}，引用不到的字段为 None（与 {{node.x}} 取不到字段一致）。
+    """
 
     def run(state: WorkflowState) -> dict:
-        rn_id = _start_node(run_id, node_id, "end", state.get("output"))
-        _finish_node(rn_id, "success", state.get("output"))
-        return {}
+        outputs = end_outputs({"nodes": [{"type": "end", "config": config}]})
+        if not outputs:
+            rn_id = _start_node(run_id, node_id, "end", state.get("output"))
+            _finish_node(rn_id, "success", state.get("output"))
+            return {}
+        collected = {o.name: _resolve_ref(state, o.ref) for o in outputs}
+        rn_id = _start_node(run_id, node_id, "end", collected)
+        _finish_node(rn_id, "success", collected)
+        return {"output": collected}
 
     return run
 

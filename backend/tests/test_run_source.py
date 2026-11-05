@@ -16,7 +16,7 @@ from app.runtime.agent_config import snapshot_of
 from app.services import run_service
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "migrations" / "20260925_171639_f9uow2_agent_publish_and_run_source.py"
-START_END = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
+START_END = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
 
 
 def _script():
@@ -43,15 +43,16 @@ def test_workflow_run_records_ui_and_api_key_sources(client, auth_headers):
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-source-wf", "description": "", "graph": START_END}).json()
     key = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-source-key", "quota": 5, "workflow_ids": [wf["id"]]}).json()
     try:
-        by_ui = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "x"}).json()
-        by_key = client.post(f"/api/v1/workflows/{wf['id']}/run", headers={"Authorization": "Bearer " + key["key"]}, json={"input": "x"}).json()
+        by_ui = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "x"}}).json()
+        by_key = client.post(f"/api/v1/workflows/{wf['id']}/run", headers={"Authorization": "Bearer " + key["key"]}, json={"inputs": {"input": "x"}}).json()
         ui_run = client.get(f"/api/v1/runs/{by_ui['run_id']}", headers=auth_headers).json()
         key_run = client.get(f"/api/v1/runs/{by_key['run_id']}", headers=auth_headers).json()
         assert (ui_run["source"], ui_run["api_key_id"]) == ("ui", None)
         assert (key_run["source"], key_run["api_key_id"], key_run["schedule_id"]) == ("api_key", key["id"], None)
         db = SessionLocal()
         try:
-            assert db.get(Run, by_key["run_id"]).input == {"input": "x"}  # 来源只在列里，input 只放业务输入
+            # 来源只在列里；input 只放业务输入，2026-11-05 起是 {inputs: {...}}（docs/15 WF-04 / D-32 一次切换）
+            assert db.get(Run, by_key["run_id"]).input == {"inputs": {"input": "x"}}
         finally:
             db.close()
     finally:

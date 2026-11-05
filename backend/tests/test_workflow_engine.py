@@ -39,7 +39,7 @@ def _code(node_id: str, code: str, **config) -> dict:
 def _condition_graph() -> dict:
     return {
         "nodes": [
-            _node("s", "start"), _node("cond", "condition", expression="input == 'yes'"),
+            _node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _node("cond", "condition", expression="input == 'yes'"),
             _code("code_a", "result = 'A'"), _code("code_b", "result = 'B'"), _node("e", "end"),
         ],
         "edges": [_edge("s", "cond"), _edge("cond", "code_a", "true"), _edge("cond", "code_b", "false"), _edge("code_a", "e"), _edge("code_b", "e")],
@@ -72,7 +72,7 @@ def test_condition_expression_error_takes_false_branch():
 def _loop_graph(**loop_config) -> dict:
     # loop 节点每经过一次 loop_index + 1；回环走 body 再回到 loop；退出到 end
     return {
-        "nodes": [_node("s", "start"), _node("loop", "loop", **loop_config), _code("body", "result = 'ran'"), _node("e", "end")],
+        "nodes": [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _node("loop", "loop", **loop_config), _code("body", "result = 'ran'"), _node("e", "end")],
         "edges": [_edge("s", "loop"), _edge("loop", "body", "loop"), _edge("loop", "e", "exit"), _edge("body", "loop")],
     }
 
@@ -96,7 +96,7 @@ def test_loop_by_expression_exits_when_false():
 def test_human_review_interrupt_then_resume_runs_to_end():
     graph = {
         "nodes": [
-            _node("s", "start"), _code("pre", "result = 'draft'"), _node("review", "human_review", instruction="请审核"),
+            _node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _code("pre", "result = 'draft'"), _node("review", "human_review", instruction="请审核"),
             _code("post", "result = 'post:' + str(input)"), _node("e", "end"),
         ],
         "edges": [_edge("s", "pre"), _edge("pre", "review"), _edge("review", "post"), _edge("post", "e")],
@@ -119,7 +119,7 @@ def test_human_review_interrupt_then_resume_runs_to_end():
 
 def _chain(second_code: str, **second_config) -> dict:
     return {
-        "nodes": [_node("s", "start"), _code("code_a", "result = 'a:' + str(input)"), _code("code_b", second_code, **second_config), _node("e", "end")],
+        "nodes": [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _code("code_a", "result = 'a:' + str(input)"), _code("code_b", second_code, **second_config), _node("e", "end")],
         "edges": [_edge("s", "code_a"), _edge("code_a", "code_b"), _edge("code_b", "e")],
     }
 
@@ -155,7 +155,7 @@ def test_input_ref_missing_node_gives_none():
 def test_output_field_dot_path_on_dict_and_json_string():
     graph = {
         "nodes": [
-            _node("s", "start"),
+            _node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]),
             _code("code_a", "result = {'data': {'code': 200}}", output_field="data.code"),
             _code("code_b", "result = '{\"a\": {\"b\": [1, 2]}}'", output_field="a.b.1"),
             _node("e", "end"),
@@ -169,7 +169,7 @@ def test_output_field_dot_path_on_dict_and_json_string():
 
 def test_node_outputs_accumulate_over_all_executed_nodes():
     graph = {
-        "nodes": [_node("s", "start"), _code("c1", "result = 1"), _code("c2", "result = input + 1"), _code("c3", "result = input * 10"), _node("e", "end")],
+        "nodes": [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _code("c1", "result = 1"), _code("c2", "result = input + 1"), _code("c3", "result = input * 10"), _node("e", "end")],
         "edges": [_edge("s", "c1"), _edge("c1", "c2"), _edge("c2", "c3"), _edge("c3", "e")],
     }
     result = _run(graph, "ignored")
@@ -180,7 +180,7 @@ def test_node_outputs_accumulate_over_all_executed_nodes():
 
 def test_code_node_without_result_falls_back_to_output_variable():
     graph = {
-        "nodes": [_node("s", "start"), _code("c1", "output = 'via-output'"), _node("e", "end")],
+        "nodes": [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _code("c1", "output = 'via-output'"), _node("e", "end")],
         "edges": [_edge("s", "c1"), _edge("c1", "e")],
     }
     result = _run(graph, "x")
