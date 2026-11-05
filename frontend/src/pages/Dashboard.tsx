@@ -39,8 +39,9 @@ export default function Dashboard() {
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto pr-0.5">
       <div className="dash-banner">
         <div className="relative z-[1]">
-          <h1 className="m-0 mb-1.5 text-[20px] font-semibold text-white">欢迎回来，{user?.username}</h1>
-          <p className="m-0 mb-4 text-[14px] leading-relaxed text-white/85">
+          {/* 前景用 --accent-fg：深色主题的主色偏亮，写死 text-white 只有 2.8:1 */}
+          <h1 className="m-0 mb-1.5 text-[20px] font-semibold text-[var(--accent-fg)]">欢迎回来，{user?.username}</h1>
+          <p className="m-0 mb-4 text-[14px] leading-relaxed text-[var(--accent-fg)]/85">
             {isManager ? '这里汇总今天的运行、消耗与待处理事项；点击卡片可进入对应列表。' : '选择一个已发布的智能体开始对话。'}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -50,7 +51,7 @@ export default function Dashboard() {
                 size="sm"
                 icon={a.icon}
                 onClick={() => navigate(a.path)}
-                className="border-white/35 bg-white/10 text-white hover:bg-white/20"
+                className="border-current/35 bg-current/10 text-[var(--accent-fg)] hover:bg-current/20"
               >
                 {a.label}
               </Button>
