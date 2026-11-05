@@ -30,6 +30,30 @@ def calculator(expression: str) -> str:
         return f"计算错误: {e}"
 
 
+def _build_load_skill(skills: list):
+    """把本次装配的技能做成 load_skill 工具（docs/17 §4.4 第 2 条）。
+
+    白名单在装配时定死：闭包里只有这些技能，模型传别的名字一律「技能不存在」。
+    不在执行时查库、也不按名字全局搜 —— 那样等于给模型一个读全库技能的越权入口。
+    技能正文装配时已经取过（目录与常驻正文都要用），这里复用同一份，不多查一次库。
+    """
+    by_name = {s.name: s for s in skills}
+
+    def _load(name: str) -> str:
+        s = by_name.get(name)
+        if s is None:
+            # 不区分「不存在」与「没绑定」：区分了等于告诉模型哪些技能存在但读不到，把清单泄露出去
+            logger.warning("load_skill 请求了未绑定的技能：%r（本次可用 %s）", name, sorted(by_name))
+            return f"技能不存在：{name}"
+        return s.content
+
+    return StructuredTool.from_function(
+        name="load_skill",
+        description="加载一份操作手册的正文。遇到【可用技能】目录里列出的任务时先调用它取正文，再按里面的步骤做。参数 name 取目录里列出的名字。",
+        func=_load,
+    )
+
+
 def _build_http_tool(t: Tool, ctx: ToolCallContext | None = None):
     """把 DB 中的 HTTP 工具转成 LangChain StructuredTool（FR-030）。
 
@@ -65,16 +89,22 @@ def _build_http_tool(t: Tool, ctx: ToolCallContext | None = None):
     )
 
 
-def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = None, run_id: int | None = None) -> list:
+def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = None, run_id: int | None = None,
+                skills: list | None = None) -> list:
     """组装 Agent 可用的工具列表：内置工具（current_time/calculator）恒有，DB 中启用的 http 类型工具追加进来。
     停用的工具仍绑定在智能体上，但不暴露给模型（工具页的启停开关就是靠这里生效）。
 
     source / agent_id / run_id 在装配时定死、随工具对象带进一次对话，执行时不再猜：一次对话的来源不会
     中途变化，而执行那一刻（模型决定调用哪个工具）拿不到可靠的来源信息，只能靠闭包提前传进来。
     它们不影响暴露哪些工具，只用于执行闸门判定与拒绝留痕（docs/16 P3a）。
+
+    skills 是本次装配的已启用技能行（docs/17 §4）：非空时追加 load_skill，白名单就是这份列表。
+    不传或空列表时不追加 —— 没绑技能的智能体不该看到一个永远返回「技能不存在」的工具，那只会诱导模型乱试。
     """
     tools = [current_time, calculator]
     for t in tool_dbs:
         if t.type == "http" and t.is_enabled:
             tools.append(_build_http_tool(t, ToolCallContext(tool=t, source=source, agent_id=agent_id, run_id=run_id)))
+    if skills:
+        tools.append(_build_load_skill(skills))
     return tools

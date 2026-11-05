@@ -20,7 +20,7 @@ from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve, retrieve_with_stats
 from app.runtime.agent_config import AgentRunConfig, load_version_config, resolve_live_config, run_config_from_snapshot, snapshot_of, usable_model
 from app.schemas import AgentIn
-from app.services import agent_service, api_key_service, chat_trace, chat_turn, conversation_service, run_service, settings_service
+from app.services import agent_service, api_key_service, chat_trace, chat_turn, conversation_service, run_service, settings_service, skill_service
 from app.tools.langchain_tools import build_tools
 
 logger = logging.getLogger(__name__)
@@ -272,6 +272,23 @@ def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int
     return replay if replay is not None else prepared
 
 
+def _skills_block(skills: list) -> str:
+    """技能进系统提示的两段文本（docs/17 §4.2）：常驻正文在前、目录在后，都没有时返回空串。
+
+    顺序有意为之：always_on 是"每轮都要遵守的规则"，模型对提示词开头更敏感；
+    目录放后面，它是"还有哪些手册可查"的索引，属于按需参考。
+
+    目录只列**非** always_on 的技能：常驻的正文已经在上面了，再列一次会让模型以为要去 load_skill，
+    白白多一次工具调用与一轮 token。
+    """
+    if not skills:
+        return ""
+    on_demand = [s for s in skills if not s.always_on]
+    parts = [skill_service.always_on_text(skills), skill_service.catalog_text(on_demand)]
+    body = "\n\n".join(p for p in parts if p)
+    return ("\n\n" + body) if body else ""
+
+
 def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, role: str | None, trace: bool = False,
                          kb_scope: list | None = None, allow_http_tools: bool = True,
                          run_id: int | None = None, source: str = "chat") -> ChatContext:
@@ -283,7 +300,9 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
     model = usable_model(db, cfg.model_id)
     llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）
     tool_dbs = db.query(Tool).filter(Tool.id.in_(cfg.tool_ids)).all() if cfg.tool_ids and allow_http_tools else []
-    tools = build_tools(tool_dbs, source=source, agent_id=cfg.agent_id, run_id=run_id)
+    # 技能（docs/17 §4）：按 skill_ids 现查 skills 表，正文不进快照，改技能立刻对线上生效
+    skills = skill_service.enabled_skills(db, cfg.skill_ids)
+    tools = build_tools(tool_dbs, source=source, agent_id=cfg.agent_id, run_id=run_id, skills=skills)
 
     kb_context = ""
     retrieval = Retrieval([], 0, None, [])
@@ -305,7 +324,8 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
                 + "\n\n约束：参考片段未覆盖的内容，如实回答『知识库中没有相关信息』，禁止编造。"
             )
     retrieval_ms = int((time.perf_counter() - started) * 1000)
-    system_prompt = cfg.system_prompt + (("\n\n" + kb_context) if kb_context else "")
+    # 技能分两段进系统提示：always_on 的正文常驻（每轮都要的规则），其余只进目录等模型按需加载
+    system_prompt = cfg.system_prompt + _skills_block(skills) + (("\n\n" + kb_context) if kb_context else "")
     return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=retrieval.citations, history_messages=[],
                        acl_rejected=retrieval.acl_rejected, rerank_mode=retrieval.rerank_mode, trace=steps if trace else [], retrieval_ms=retrieval_ms)
 
