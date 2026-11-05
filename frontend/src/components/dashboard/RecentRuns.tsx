@@ -26,8 +26,11 @@ export default function RecentRuns({ runs, loading }: Props) {
         <Link to="/runs" className="text-[12.5px] text-primary hover:underline">全部</Link>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <table className="w-full border-collapse text-[13.5px]">
+      {/* 窄屏横向滚动：五列固定宽合计 360px，320px 屏上装不下。
+          原来外层是 overflow-hidden，最后两列被直接裁掉、也滑不出来 —— 改成可横向滚动。
+          行高与列宽保持不变，只是允许滑动。 */}
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
+        <table className="w-full min-w-[360px] border-collapse text-[13.5px]">
           <thead className="bg-secondary">
             <tr>
               {COLUMNS.map((c) => (
