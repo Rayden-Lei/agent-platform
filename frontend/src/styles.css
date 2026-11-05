@@ -12,30 +12,22 @@ body {
   color: var(--fg);
 }
 
-/* ===== 登录页 ===== */
+/* ===== 登录页 =====
+   背景跟站内一致（主题令牌 + 装饰层），换主题 / 明暗时登录页跟着变；
+   卡片高度可能超过视口（手机横屏、放大字体），所以用 min-height + overflow auto，
+   不能写死 100vh —— 那是整页滚动的老坑（docs/07 第 1 节）。 */
 .login-page {
   min-height: 100%;
   overflow: auto;
   position: relative;
-  background: #111827;
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-}
-.login-card {
-  width: 100%;
-  max-width: 400px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
-}
-.login-card-header {
-  background: var(--accent);
-  padding: 28px 24px;
-  color: var(--accent-fg);
-  text-align: center;
+  /* 上下留够：矮屏（笔记本 768 高、手机横屏）时整块内容可以滚，不裁切 */
+  padding: clamp(20px, 4vh, 48px) 24px;
+  /* 装饰层是 fixed 的，卡片要盖在它上面 */
+  isolation: isolate;
 }
 
 /* ===== 品牌 logo ===== */
