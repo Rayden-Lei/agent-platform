@@ -29,6 +29,23 @@ TUNNEL_LOG="$LOG_DIR/tunnel.log"
 PID_DIR="$LOG_DIR/.pids"
 mkdir -p "$PID_DIR"
 
+# 代理：cloudflared 只认 HTTPS_PROXY 环境变量，不读 macOS 系统代理设置。
+# 开着 Clash / Surge 这类工具时，不显式传代理它就连不上 api.trycloudflare.com
+# （表现为 "context deadline exceeded"，等 15 秒超时）。
+detect_proxy() {
+  if [ -n "${HTTPS_PROXY:-}" ] || [ -n "${https_proxy:-}" ]; then
+    return 0
+  fi
+  local host port
+  host="$(scutil --proxy 2>/dev/null | awk '/HTTPSProxy/ {print $3}')"
+  port="$(scutil --proxy 2>/dev/null | awk '/HTTPSPort/ {print $3}')"
+  if [ -n "$host" ] && [ -n "$port" ]; then
+    export HTTPS_PROXY="http://$host:$port"
+    export HTTP_PROXY="$HTTPS_PROXY"
+    c_dim "检测到系统代理 ${host}:${port}，隧道走它"
+  fi
+}
+
 c_green() { printf '\033[32m%s\033[0m\n' "$*"; }
 c_red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 c_dim()   { printf '\033[2m%s\033[0m\n' "$*"; }
@@ -117,6 +134,7 @@ start_tunnel() {
     c_dim "brew install cloudflared"
     return 1
   fi
+  detect_proxy
   echo "==> 启动外网隧道"
   rm -f "$TUNNEL_LOG"
   nohup cloudflared tunnel --url "http://localhost:$FE_PORT" --no-autoupdate > "$TUNNEL_LOG" 2>&1 &
