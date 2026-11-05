@@ -18,6 +18,7 @@ from app.db.models import RunNode, Tool
 from app.db.session import SessionLocal
 from app.model_gateway.gateway import build_llm, guarded_invoke
 from app.rag.retriever import retrieve
+from app.runtime import sandbox
 from app.runtime.agent_config import resolve_live_config, usable_model
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
@@ -363,11 +364,40 @@ def _make_kb_node(config: dict, run_id: int | None, node_id: str, role: str | No
     return run
 
 
-def _make_code_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
-    """代码节点工厂：在受限命名空间里 exec 用户配置的代码，取 result（缺省用 output）作为节点输出。
+# 代码节点的执行外壳：把用户的片段包进一个从 stdin 读输入、把 result 打到 stdout 的程序。
+# 用户写的仍是 "result = ..." 这种平铺语句，与原来 exec 的体验一致；差别在于它现在跑在子进程里。
+# 末尾用 repr 的 JSON 形式回传：result 是字符串时原样给出，是 dict / list / 数字时保持结构，
+# 由引擎侧 _finalize_node_output 照旧按 output_field 提取。
+# 占位符用 %s 而不是 str.format：用户代码里到处是花括号（dict 字面量、f-string），
+# 用 format 会被当成占位符解析，轻则报错重则把代码吃掉一段。
+CODE_NODE_WRAPPER = '''
+import json, sys
 
-    注意：这里放行完整 __builtins__（区别于条件表达式的白名单），属设计内的高风险能力，
-    只应授权给可信工作流使用；异常统一走失败分支并留堆栈。
+payload = json.loads(sys.stdin.read() or "{}")
+input = payload.get("input")
+output = input
+result = None
+
+%s
+
+_value = result if result is not None else output
+try:
+    print(json.dumps(_value, ensure_ascii=False))
+except (TypeError, ValueError):
+    print(json.dumps(str(_value), ensure_ascii=False))
+'''
+
+
+def _make_code_node(config: dict, run_id: int, node_id: str, default_ref: str | None = None) -> Callable:
+    """代码节点工厂：把用户配置的代码放进沙箱子进程执行，取 result（缺省用 output）作为节点输出。
+
+    2026-11-05 起改走 runtime/sandbox（docs/15 WF-18 / D-33）。此前是进程内 exec 且放行完整
+    __builtins__，等于让有工作流编辑权限的人读到进程环境里的数据库口令与 AES_KEY（docs/01 NFR-002）。
+    现在：清空环境变量 + rlimit（CPU / 内存 / 文件大小 / 进程数）+ 超时强杀；Linux 且有 bwrap 时
+    再加命名空间隔离（断网、只读系统目录、独立 /proc）。降级时 /system/status 会报 degraded。
+
+    子进程只拿到 input 与写 stdout 的约定，拿不到 state、拿不到 session，也改不了运行记录；
+    运行记录仍由引擎侧写（_start_node / _finish_node / _node_failed）。
     """
     code = config.get("code", "")
 
@@ -375,11 +405,18 @@ def _make_code_node(config: dict, run_id: int, node_id: str, default_ref: str | 
         input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "code", input_val)
         try:
-            namespace = {"input": input_val, "output": input_val, "result": None}
-            exec(code, {"__builtins__": __builtins__}, namespace)
-            raw = namespace.get("result") if namespace.get("result") is not None else namespace.get("output", "")
+            script = CODE_NODE_WRAPPER % code
+            result = sandbox.run_python(script, {"input": input_val})
+            if not result.ok:
+                raise BizError(500, f"代码执行失败：{result.error}")
+            try:
+                raw = json.loads(result.output)
+            except json.JSONDecodeError as e:
+                # 程序把结果 print 成了非 JSON（例如自己 print 了别的东西）：明确报错，
+                # 不猜"大概想输出什么"，否则节点会拿着半截文本往下走
+                raise BizError(500, f"代码执行结果不是合法 JSON：{result.output[:200]}") from e
             out = _finalize_node_output(node_id, raw, config)
-            out["steps"] = ["code"]
+            out["steps"] = [f"code:{result.mode}"] if result.mode == sandbox.MODE_BWRAP else ["code"]
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:

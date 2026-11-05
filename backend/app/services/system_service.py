@@ -4,6 +4,7 @@
 它们不报错、不影响接口返回，只会让效果变差。没有这个接口就只能等人肉发现。
 """
 import logging
+import sys
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -16,6 +17,7 @@ from app.db.models import ScheduledJob
 from app.model_gateway import breaker
 from app.rag.embeddings import MODE_MODEL, embedding_status
 from app.rag.rerank import rerank_status
+from app.runtime import sandbox
 from app.services import auth_service
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,8 @@ def get_system_status(db: Session, real_ip_header: bool = False) -> dict:
     model_breakers = breaker.status()
     scheduler = _scheduler_status(db)
     client_ip = _client_ip_status(real_ip_header)
+    # 沙箱降级意味着代码节点与技能脚本能读到宿主文件（挡不住越权读），必须让人看得见
+    sandbox_status = sandbox.status()
 
     degraded = []
     if not client_ip["ok"]:
@@ -88,6 +92,10 @@ def get_system_status(db: Session, real_ip_header: bool = False) -> dict:
     elif scheduler["registered_jobs"] < scheduler["enabled_jobs"]:
         missing = scheduler["enabled_jobs"] - scheduler["registered_jobs"]
         degraded.append({"item": "scheduler", "message": f"{missing} 个启用的定时任务未注册，通常是 cron 表达式非法"})
+    # 只在 Linux 上进 degraded 列表：macOS 本机开发永远降级（bwrap 只有 Linux 版），
+    # 每次都弹全局横幅只是噪音。但降级原因仍然原样放在 sandbox 字段里，系统参数页能看到。
+    if sandbox_status["degraded"] and sys.platform.startswith("linux"):
+        degraded.append({"item": "sandbox", "message": f"代码执行沙箱降级：{sandbox_status['reason']}"})
 
     return {
         "app": settings.APP_NAME,
@@ -99,5 +107,6 @@ def get_system_status(db: Session, real_ip_header: bool = False) -> dict:
         "model_breakers": model_breakers,
         "scheduler": scheduler,
         "client_ip": client_ip,
+        "sandbox": sandbox_status,
         "degraded": degraded,
     }
