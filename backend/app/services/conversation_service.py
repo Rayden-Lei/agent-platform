@@ -138,6 +138,8 @@ def list_messages(db: Session, conversation_id: int, caller: Caller, full_tool_r
             "tool_calls": _tool_calls_for_display(m.tool_calls, full_tool_results),
             "citations": m.citations,
             "token_usage": m.token_usage or None,
+            # 思维链全文随历史返回：刷新后"思考过程"折叠行才能回放（空串归 None，前端按有无内容决定渲染）
+            "reasoning": m.reasoning or None,
             "created_at": m.created_at.isoformat(),
         }
         for m in rows

@@ -255,7 +255,7 @@ async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
                 yield event
             usage = state.usage()
             assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, state.citations,
-                                                    usage, state.tool_calls, turn.run_id)
+                                                    usage, state.tool_calls, turn.run_id, reasoning=state.reasoning)
             await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
             finished = True
             logger.info("对话完成 run_id=%s 首字节 %sms 总 %dms", turn.run_id, state.first_token_ms if state.first_token_ms is not None else "-", int((time.perf_counter() - started) * 1000))

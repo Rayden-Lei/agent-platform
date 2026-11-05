@@ -239,6 +239,8 @@ class Message(Base):
     tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     token_usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # 模型思维链（reasoning_content 全文，可空）：回答下方的"思考过程"折叠行，刷新后要能回看
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
 
 

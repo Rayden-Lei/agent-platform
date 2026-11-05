@@ -16,6 +16,8 @@ export function toChatMessages(rows: MessageRow[]): Msg[] {
     id: m.id, role: m.role as Msg['role'], content: m.content, citations: (m.citations as Msg['citations']) || [],
     tools: ((m.tool_calls || []) as Array<{ id?: string; name: string; args?: unknown; arguments?: unknown; result?: string }>)
       .map((t): ToolStep => ({ id: t.id, name: t.name, args: t.args ?? t.arguments ?? {}, status: 'done', result: t.result })),
-    usage: m.token_usage || undefined, createdAt: m.created_at,
+    usage: m.token_usage || undefined,
+    // 思维链随历史回放：刷新/切会话后"思考过程"折叠行才不丢（2026-11-05 补）
+    reasoning: m.reasoning || undefined, createdAt: m.created_at,
   }))
 }

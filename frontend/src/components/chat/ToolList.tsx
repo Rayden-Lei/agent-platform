@@ -72,18 +72,20 @@ function ToolRow({ tool, showDetails }: { tool: ToolStep; showDetails: boolean }
       </button>
 
       {open && showDetails && (
-        <div className="mt-2 mb-1 ml-5 pl-3" style={{ borderLeft: '1px solid var(--border)' }}>
-          <div className="text-[10px] uppercase tracking-[1px] mb-1" style={{ color: 'var(--fg-subtle)' }}>参数</div>
+        // 展开区整体收紧：参数/返回各限高 120px 内部滚动（长结果不把消息区撑开），
+        // 多行 JSON 压成单行缩进式，间距减半 —— 2026-11-05 使用者反馈展开占地方太大
+        <div className="mt-1 mb-0.5 ml-5 pl-3" style={{ borderLeft: '1px solid var(--border)' }}>
+          <div className="text-[10px] uppercase tracking-[1px] mb-0.5" style={{ color: 'var(--fg-subtle)' }}>参数</div>
           <pre
-            className="m-0 mb-2.5 p-2 rounded-lg text-[11.5px] leading-relaxed overflow-auto whitespace-pre-wrap break-all"
-            style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: '"SF Mono",Consolas,monospace' }}
+            className="m-0 mb-1.5 px-2 py-1 rounded-md text-[11px] leading-[1.5] overflow-auto whitespace-pre-wrap break-all"
+            style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: '"SF Mono",Consolas,monospace', maxHeight: 120 }}
           >
-            {JSON.stringify(tool.args ?? {}, null, 2)}
+            {JSON.stringify(tool.args ?? {})}
           </pre>
-          <div className="text-[10px] uppercase tracking-[1px] mb-1" style={{ color: 'var(--fg-subtle)' }}>返回</div>
+          <div className="text-[10px] uppercase tracking-[1px] mb-0.5" style={{ color: 'var(--fg-subtle)' }}>返回</div>
           <pre
-            className="m-0 p-2 rounded-lg text-[11.5px] leading-relaxed overflow-auto whitespace-pre-wrap break-all"
-            style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: '"SF Mono",Consolas,monospace' }}
+            className="m-0 px-2 py-1 rounded-md text-[11px] leading-[1.5] overflow-auto whitespace-pre-wrap break-all"
+            style={{ background: 'var(--bg-soft-2)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: '"SF Mono",Consolas,monospace', maxHeight: 120 }}
           >
             {tool.status === 'running' ? '执行中…' : (tool.result || '（无返回值）')}
           </pre>

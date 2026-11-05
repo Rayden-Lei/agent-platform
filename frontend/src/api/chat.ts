@@ -21,6 +21,7 @@ export interface MessageRow {
   tool_calls: unknown[]
   citations: unknown[]
   token_usage: ChatTokenUsage | null
+  reasoning: string | null
   created_at: string
 }
 
