@@ -11,6 +11,9 @@
 #   ./scripts/dev.sh status     看状态（含公网地址）
 #
 # 环境：后端用 ENV_FILE=.env.local（本机这套），前端 Vite 把 ^/api/ 反代到 127.0.0.1:8000。
+# 依赖：PG / Redis / MinIO 都在云服务器 47.118.52.252 上，本机经 SSH 隧道访问
+#       （15432/16379/19000）。隧道由 launchd 常驻服务维护，不归这个脚本管；
+#       连不上先看 launchctl list | grep agent-platform-tunnel。
 # 隧道：cloudflared 免费快速隧道，域名每次重启都会变（没有自有域名时无法固定）。
 #       前端启动时已放行通配符 .trycloudflare.com，所以域名怎么变都不用改配置。
 # 日志：agent-platform/logs/{backend,frontend,tunnel}.log（已进 .gitignore）
@@ -70,11 +73,28 @@ tunnel_url() {
     | head -1
 }
 
+# 依赖服务在云服务器上，本机只能经 SSH 隧道访问。隧道由 launchd 常驻，
+# 不归本脚本管；但后端起不来时这是第一个该查的地方，所以先探一下、给一句明确提示，
+# 免得看到一堆 connection refused 还以为是代码问题。
+check_tunnel() {
+  local missing=""
+  for p in 15432 16379 19000; do
+    nc -z -G 2 127.0.0.1 "$p" 2>/dev/null || missing="$missing $p"
+  done
+  if [ -n "$missing" ]; then
+    c_red "隧道端口未就绪：${missing}"
+    c_dim "依赖服务在云服务器上，先恢复 SSH 隧道："
+    c_dim "  launchctl kickstart -k gui/$(id -u)/com.lei.agent-platform-tunnel"
+    return 1
+  fi
+}
+
 start_backend() {
   if port_busy "$BE_PORT"; then
     c_dim "后端已在 $BE_PORT 运行，跳过"
     return 0
   fi
+  check_tunnel || return 1
   if [ ! -x "$BE/.venv/bin/uvicorn" ]; then
     c_red "找不到 $BE/.venv/bin/uvicorn"
     c_dim "先建虚拟环境：cd backend && uv venv .venv --python 3.12 && uv pip install --python .venv/bin/python -r requirements.txt"
