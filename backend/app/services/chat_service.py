@@ -456,10 +456,10 @@ def build_debug_context(db: Session, turn: DebugTurn) -> ChatContext:
 
 
 def save_assistant_message(db: Session, conversation_id: int, content: str, citations: list, usage: dict, tool_calls: list | None = None,
-                           run_id: int | None = None) -> Message:
+                           run_id: int | None = None, reasoning: str | None = None) -> Message:
     """落一条 assistant 消息（含引用、token 用量与工具调用记录）并返回。run_id 是这一轮的运行记录，幂等回放据此找回首次的回答。"""
     msg = Message(conversation_id=conversation_id, role="assistant", content=content, citations=citations, token_usage=usage,
-                  tool_calls=tool_calls or [], run_id=run_id)
+                  tool_calls=tool_calls or [], run_id=run_id, reasoning=(reasoning or None))
     db.add(msg)
     db.commit()
     db.refresh(msg)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Citation, ToolStep } from './types'
 
 // 思考过程：折叠成一行，进行中显示呼吸脉冲与实时计时；点开看模型的实际推理与步骤。
@@ -24,6 +24,8 @@ export default function ThinkingTrace({ citations, tools, reasoning, running }: 
   const [elapsed, setElapsed] = useState(0)
   const startRef = useRef<number>(0)
   const doneMsRef = useRef<number | null>(null)
+  // 思维链是限高滚动的：新 token 进来时必须跟着滚到底，否则读者看到的永远是开头那几句
+  const reasonRef = useRef<HTMLDivElement>(null)
 
   const hasCitations = Array.isArray(citations) && citations.length > 0
   const hasTools = Array.isArray(tools) && tools.length > 0
@@ -50,13 +52,22 @@ export default function ThinkingTrace({ citations, tools, reasoning, running }: 
   // 三者都没有：不渲染这一行
   if (!hasReasoning && !hasCitations && !hasTools && !running) return null
 
-  // 摘要：有推理内容才说"思考了 N 秒"，否则只说做了什么
+  // 摘要：有推理内容才说"思考了 N 秒"，否则只说做了什么。
+  // 历史回放（从库里读出的旧消息）没有真实计时，doneMsRef 与 elapsed 都是 0，
+  // 那时不能显示"思考了 0.0 秒"——那个数字是假的，改成只说"思考过程"。
+  const timedMs = doneMsRef.current ?? (elapsed > 0 ? elapsed * 1000 : null)
   const summary = hasReasoning
-    ? (running ? '正在思考' : `思考了 ${((doneMsRef.current ?? elapsed * 1000) / 1000).toFixed(1)} 秒`)
+    ? (running ? '正在思考' : timedMs === null ? '思考过程' : `思考了 ${(timedMs / 1000).toFixed(1)} 秒`)
     : [
         hasCitations ? `检索 ${citations!.length} 条` : '',
         toolCount ? `调用 ${toolCount} 个工具` : '',
       ].filter(Boolean).join(' · ') || '已处理'
+
+  // 推理内容增长时钉到底部（流式期间才有意义，结束后保留当前位置让用户自己看）
+  useLayoutEffect(() => {
+    const el = reasonRef.current
+    if (el && running) el.scrollTop = el.scrollHeight
+  }, [reasoning, running])
 
   // 有推理内容时默认展开，让用户看到模型在想什么；纯步骤则默认收起
   const expanded = open || (hasReasoning && running)
@@ -93,9 +104,17 @@ export default function ThinkingTrace({ citations, tools, reasoning, running }: 
           className="mt-[7px] ml-0.5 pl-3 text-[12.5px] leading-[1.75]"
           style={{ borderLeft: '1px solid var(--border)', color: 'var(--fg-muted)' }}
         >
-          {/* 模型的真实推理：斜体 + 更淡的颜色，和回答正文区分开 */}
+          {/* 模型的真实推理：斜体 + 更淡的颜色，和回答正文区分开。
+              限高 200px 内部滚动：思维链经常上千字，不限高会把整条回答顶到屏幕外（2026-11-05 反馈）。
+              滚动条与全站一致（细滚动条），滚到底能看到末尾，不会被截断。 */}
           {hasReasoning && (
-            <div className="whitespace-pre-wrap italic mb-1.5" style={{ color: 'var(--fg-muted)' }}>{reasoning}</div>
+            <div
+              ref={reasonRef}
+              className="whitespace-pre-wrap italic mb-1.5 overflow-y-auto"
+              style={{ color: 'var(--fg-muted)', maxHeight: 200 }}
+            >
+              {reasoning}
+            </div>
           )}
           {hasCitations && (
             <div className="flex items-center gap-1.5">
@@ -103,14 +122,8 @@ export default function ThinkingTrace({ citations, tools, reasoning, running }: 
               <span>命中 {citations!.length} 条相关片段</span>
             </div>
           )}
-          {hasTools && tools!.map((t) => (
-            <div key={t.id ?? t.name} className="flex items-center gap-1.5">
-              <span style={{ color: 'var(--fg)' }}>{t.name}</span>
-              <span style={{ color: 'var(--fg-subtle)' }}>
-                {t.status === 'running' ? '执行中…' : t.status === 'error' ? '执行出错' : '已完成'}
-              </span>
-            </div>
-          ))}
+          {/* 工具调用不再在这里列：下方 ToolList 已经一行一个完整渲染（名称 + 入参 + 可展开的结果），
+              这里再列一遍就是 2026-11-05 使用者指出的"calculator 出现两次"。摘要行仍保留"调用 N 个工具"。 */}
         </div>
       )}
     </div>
