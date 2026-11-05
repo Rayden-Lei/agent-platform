@@ -28,12 +28,17 @@ SOURCE_DEFAULT = "default"
 SOURCE_DB = "db"
 KIND_INT = "int"
 KIND_FLOAT = "float"
+KIND_STR = "str"
+# 密钥类：可以写、可以改，但**读不回来**。list_settings 只给 configured 与掩码，
+# 明文只活在 _values() 里供内部调用（security.md 第三节：密钥不能落到能被读回的接口上）。
+KIND_SECRET = "secret"
 # 检索路径读参数的缓存时长：热路径不能每次查库，又要让页面上的改动很快生效
 CACHE_TTL_SECONDS = 5.0
 
 GROUPS = {
     "ingest": {"key": "ingest", "label": "文档导入", "description": "对下一篇开始处理的文档生效，处理中的文档不受影响"},
     "retrieval": {"key": "retrieval", "label": "检索与重排", "description": "对之后的每次检索生效（最多 5 秒延迟）"},
+    "tools": {"key": "tools", "label": "内置工具", "description": "联网搜索与 HTTP 请求工具的地址、密钥与限额；改完下一次调用即生效"},
 }
 
 
@@ -44,11 +49,16 @@ class SettingSpec:
     description: str
     group: str
     default_attr: str  # config.Settings 上的属性名，默认值从那里取（即 .env 的值）
-    min: float
-    max: float
+    min: float = 0
+    max: float = 0
     kind: str = KIND_INT
     step: float = 1
     unit: str = ""
+    placeholder: str = ""  # str / secret 类型的输入提示
+
+    @property
+    def is_text(self) -> bool:
+        return self.kind in (KIND_STR, KIND_SECRET)
 
 
 SPECS: dict = {
@@ -90,6 +100,42 @@ SPECS: dict = {
         "rerank_timeout", "重排超时",
         "重排服务调用超时秒数，超时退回词法重排并在系统状态里报降级。",
         "retrieval", "RERANK_TIMEOUT", 1, 60, unit="秒"),
+    # ---- 内置工具 ----
+    "search_endpoint": SettingSpec(
+        "search_endpoint", "搜索接口地址",
+        "联网搜索调用的接口。默认是腾讯云 SearchPro；换成自建或其它兼容服务时改这里。",
+        "tools", "SEARCHPRO_ENDPOINT", kind=KIND_STR,
+        placeholder="https://api.wsa.cloud.tencent.com/SearchPro"),
+    "search_api_key": SettingSpec(
+        "search_api_key", "搜索 API Key",
+        "联网搜索的鉴权密钥。写入后不再回显，只能覆盖或清空；留空则沿用 .env 里的 SEARCHPRO_KEY。",
+        "tools", "SEARCHPRO_KEY", kind=KIND_SECRET,
+        placeholder="sk-..."),
+    "search_default_limit": SettingSpec(
+        "search_default_limit", "默认返回条数",
+        "模型没指定 limit 时返回几条结果。条数越多占用的上下文越长。",
+        "tools", "TOOL_SEARCH_DEFAULT_LIMIT", 1, 10, unit="条"),
+    "search_max_limit": SettingSpec(
+        "search_max_limit", "最多返回条数",
+        "模型显式要求更多时也不超过这个数。",
+        "tools", "TOOL_SEARCH_MAX_LIMIT", 1, 20, unit="条"),
+    "search_timeout": SettingSpec(
+        "search_timeout", "搜索超时",
+        "单次搜索的等待上限，超时即返回错误，不重试。",
+        "tools", "TOOL_SEARCH_TIMEOUT", 3, 60, unit="秒"),
+    "http_allowed_hosts": SettingSpec(
+        "http_allowed_hosts", "HTTP 工具域名白名单",
+        "逗号分隔，支持 *.example.com 后缀通配。留空 = 放行所有公网域名（内网地址段始终拦死）。",
+        "tools", "TOOL_HTTP_ALLOWED_HOSTS", kind=KIND_STR,
+        placeholder="api.example.com,*.openai.com"),
+    "http_timeout": SettingSpec(
+        "http_timeout", "HTTP 请求超时",
+        "内置 http_request 工具的单次请求等待上限。",
+        "tools", "TOOL_HTTP_TIMEOUT", 3, 120, unit="秒"),
+    "http_max_bytes": SettingSpec(
+        "http_max_bytes", "HTTP 返回体上限",
+        "响应体超过这个大小会被截断，避免把几十 MB 的页面塞进上下文。",
+        "tools", "TOOL_HTTP_MAX_BYTES", 10_000, 2_000_000, unit="字节"),
 }
 
 # 进程内缓存：{key: 值}，供检索热路径使用
@@ -114,7 +160,15 @@ def _default(spec: SettingSpec):
 
 def _coerce(spec: SettingSpec, raw):
     """把库里 / .env 里的原始值收敛成合法值：类型不对或越界都夹到范围内，
-    一个坏值不能让导入或检索跑不起来（页面上的写入路径另有严格校验，见 update_settings）。"""
+    一个坏值不能让导入或检索跑不起来（页面上的写入路径另有严格校验，见 update_settings）。
+
+    文本类（str / secret）不做范围夹取：空串是合法值（表示"没配"），
+    超长则截断到 512 字符，防止有人往键值表里塞整篇文档。
+    """
+    if spec.is_text:
+        if raw is None:
+            return ""
+        return str(raw).strip()[:512]
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -165,16 +219,33 @@ def runtime_value(key: str):
     return _cached_values()[key]
 
 
+def _mask_secret(value: str) -> str:
+    """密钥只回显掩码：长度与首尾几位，够确认"配没配、是不是这一把"，不足以还原。"""
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return value[:4] + "*" * 6 + value[-2:]
+
+
 def _item(spec: SettingSpec, row: SystemSetting | None) -> dict:
-    return {
+    """单条参数的对外形态。secret 类型永远不回明文：只给 masked 与 configured。"""
+    value = _coerce(spec, row.value) if row is not None else _default(spec)
+    item = {
         "key": spec.key, "label": spec.label, "description": spec.description, "group": spec.group,
         "unit": spec.unit, "kind": spec.kind, "step": spec.step, "min": spec.min, "max": spec.max,
-        "default": _default(spec),
-        "value": _coerce(spec, row.value) if row is not None else _default(spec),
+        "placeholder": spec.placeholder,
+        "default": None if spec.kind == KIND_SECRET else _default(spec),
+        "value": None if spec.kind == KIND_SECRET else value,
         "source": SOURCE_DB if row is not None else SOURCE_DEFAULT,
         "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
         "updated_by": row.updated_by if row is not None else None,
     }
+    if spec.kind == KIND_SECRET:
+        # configured：库里有值或 .env 里有值都算配好了，页面据此显示"已配置 / 未配置"
+        item["configured"] = bool(value)
+        item["masked"] = _mask_secret(value)
+    return item
 
 
 def list_settings(db: Session) -> dict:
@@ -212,6 +283,15 @@ def update_settings(db: Session, user, values: dict) -> dict:
         if raw is None:
             changes[key] = None
             continue
+        if spec.is_text:
+            if not isinstance(raw, str):
+                raise BizError(400, f"{spec.label} 必须是字符串")
+            text = raw.strip()
+            if len(text) > 512:
+                raise BizError(400, f"{spec.label} 不能超过 512 字符")
+            # 空串 = 清掉覆盖、回到 .env 默认，与传 null 同义（前端清空输入框走这里）
+            changes[key] = text or None
+            continue
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise BizError(400, f"{spec.label} 必须是数字")
         if spec.kind == KIND_INT and not float(raw).is_integer():
@@ -235,7 +315,11 @@ def update_settings(db: Session, user, values: dict) -> dict:
             row.value = value
             row.updated_at = now
             row.updated_by = username
-        detail[key] = {"old": old, "new": value}
+        # 密钥类只记"改没改"，不记明文：审计日志是能被管理员读回的，写进去等于泄露
+        if SPECS[key].kind == KIND_SECRET:
+            detail[key] = {"old": "***" if old else None, "new": "***" if value else None}
+        else:
+            detail[key] = {"old": old, "new": value}
     db.commit()
     invalidate_cache()
     record_audit(db, user, "update", "system_setting", None, detail={"changes": detail})

@@ -18,19 +18,25 @@ import { errorText } from '../utils/errors'
 // 系统参数：导入与检索的调优项在页面上改、立刻生效（docs/04 4.14）。
 // 草稿态与已保存值分开：改动先落 draft，点保存才提交；null 表示"恢复默认"（删掉库里的覆盖，回到 .env）。
 // 连接类配置（模型地址、密钥）不在这里 —— 属于部署环境，密钥也不能放在能读回的接口上。
-type Draft = Record<string, number | null>
+type Draft = Record<string, number | string | null>
 
-// 参数一行：标签行（含来源 / 待保存徽章）、数值输入 + 范围说明、参数用途说明
+// 参数一行：标签行（含来源 / 待保存徽章）、输入控件 + 范围说明、参数用途说明。
+// 按 kind 分三种控件：int/float 用数字框并按范围夹取；str 用文本框；
+// secret 用密码框——值永远读不回来（后端只给 masked），所以"已配置"时显示掩码占位，
+// 输入新值即覆盖，留空保存即清除。
 function SettingRow({ item, draft, canEdit, onEdit }: {
   item: SystemSettingItem
   draft: Draft
   canEdit: boolean
-  onEdit: (item: SystemSettingItem, value: number | null) => void
+  onEdit: (item: SystemSettingItem, value: number | string | null) => void
 }) {
   const pending = item.key in draft
   const value = pending ? draft[item.key] : item.value
+  const isSecret = item.kind === 'secret'
+  const isText = item.kind === 'str' || isSecret
   const shown = value === null ? item.default : value
   const clamp = () => {
+    if (isText || typeof shown !== 'number') return
     const next = Math.min(item.max, Math.max(item.min, shown))
     if (next !== shown) onEdit(item, next)
   }
@@ -50,20 +56,39 @@ function SettingRow({ item, draft, canEdit, onEdit }: {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="number"
-          value={String(shown)}
-          min={item.min}
-          max={item.max}
-          step={item.step}
-          disabled={!canEdit}
-          aria-label={item.label}
-          className="h-9 w-[140px]"
-          onChange={(e) => onEdit(item, e.target.value === '' ? item.value : Number(e.target.value))}
-          onBlur={clamp}
-        />
+        {isText ? (
+          <Input
+            type={isSecret ? 'password' : 'text'}
+            // secret 的值读不回来：已配置时输入框留空，用 placeholder 显示掩码，
+            // 让使用者知道"这里有一把钥匙"而不暴露它；输入即覆盖，留空保存则清除
+            value={pending ? String(value ?? '') : ''}
+            placeholder={isSecret
+              ? (item.configured ? `已配置 ${item.masked}（留空则保持，输入新值则覆盖）` : '未配置')
+              : (item.placeholder || String(shown ?? ''))}
+            disabled={!canEdit}
+            aria-label={item.label}
+            className="h-9 w-full max-w-[420px]"
+            onChange={(e) => onEdit(item, e.target.value)}
+          />
+        ) : (
+          <Input
+            type="number"
+            value={String(shown)}
+            min={item.min}
+            max={item.max}
+            step={item.step}
+            disabled={!canEdit}
+            aria-label={item.label}
+            className="h-9 w-[140px]"
+            onChange={(e) => onEdit(item, e.target.value === '' ? item.value : Number(e.target.value))}
+            onBlur={clamp}
+          />
+        )}
         {item.unit && <span className="text-[12.5px] text-muted-foreground">{item.unit}</span>}
-        <span className="text-[12px] text-muted-foreground">范围 {item.min}～{item.max}，默认 {item.default}</span>
+        {!isText && <span className="text-[12px] text-muted-foreground">范围 {item.min}～{item.max}，默认 {item.default}</span>}
+        {isSecret && !pending && item.configured && (
+          <Badge tone="success">已配置</Badge>
+        )}
         {canEdit && (item.source === 'db' || pending) && (
           <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />} onClick={() => onEdit(item, null)}>恢复默认</Button>
         )}
@@ -86,10 +111,19 @@ export default function SystemSettings() {
   const changed = useMemo(() => Object.keys(draft), [draft])
   useEffect(() => { setDirty(changed.length > 0); return () => setDirty(false) }, [changed.length, setDirty])
 
-  const edit = (item: SystemSettingItem, value: number | null) => {
+  const edit = (item: SystemSettingItem, value: number | string | null) => {
     setDraft((prev) => {
       const next = { ...prev }
       const restoring = value === null
+      // 文本类（含 secret）的"当前值"在页面上读不到（secret 恒为 null），
+      // 因此不能像数字那样用 value === item.value 判断"改回原值"，只能按是否为空串处理：
+      // 空串 = 想清除，与恢复默认同义。
+      const isText = item.kind === 'str' || item.kind === 'secret'
+      if (isText) {
+        if (value === '' || value === null) next[item.key] = null
+        else next[item.key] = value
+        return next
+      }
       // 恢复默认：只有当前确实来自库里的覆盖才算改动
       if ((restoring && item.source === 'default') || (!restoring && value === item.value)) delete next[item.key]
       else next[item.key] = value
@@ -111,7 +145,7 @@ export default function SystemSettings() {
     <PageHeader
       title="系统参数"
       icon={<Settings />}
-      description="导入与检索的调优参数，改完立刻生效，不用改配置文件重启后端。模型地址与密钥仍在服务端配置文件里。"
+      description="导入、检索与内置工具的运行参数，改完立刻生效，不用改配置文件重启后端。模型地址与密钥仍在服务端配置文件里。"
       extra={(
         <>
           <Button variant="secondary" size="md" icon={<RefreshCw />} disabled={loading} onClick={() => reload()}>
