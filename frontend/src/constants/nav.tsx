@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench } from 'lucide-react'
+import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench, BookOpen } from 'lucide-react'
 
 // 导航表：菜单项、分组、角色可见性与页面标题的唯一来源（docs/01 第 3 节权限矩阵、docs/17 §2 分组）。
 // 详情页（/agents/3）按路径前缀匹配到父菜单，标题显示父菜单名。
@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/workflows', label: '工作流', icon: <Network />, group: 'build', roles: ['admin', 'developer'] },
   { key: '/models', label: '模型', icon: <Zap />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/tools', label: '工具', icon: <Wrench />, group: 'capability', roles: ['admin', 'developer'] },
+  { key: '/skills', label: '技能', icon: <BookOpen />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/runs', label: '运行记录', icon: <History />, group: 'operation', roles: ['admin', 'developer'] },
   { key: '/schedules', label: '定时任务', icon: <Clock />, group: 'operation', roles: ['admin', 'developer'] },
   { key: '/api-keys', label: 'API Key', icon: <KeyRound />, group: 'operation', roles: ['admin', 'developer'] },
