@@ -5,7 +5,7 @@ import { useAuth } from '../../store/auth'
 import { useGuardedNavigate } from '../../hooks/useGuardedNavigate'
 
 // 侧边导航：菜单按角色过滤（docs/01 第 3 节权限矩阵），详情页高亮父菜单；有未保存改动时先确认再跳转。
-// 视觉走新的浅色玻璃侧栏，不再用 antd Menu（迁移期两套并存，antd Menu 仅在其他页面内部还有用到）。
+// 视觉走新的浅色玻璃侧栏，导航项自绘（不在任何 UI 库里找 Menu）。
 interface Props { onNavigate?: () => void }
 
 export default function SideNav({ onNavigate }: Props) {

@@ -1,7 +1,7 @@
 import type { Citation } from './types'
 
 // 引用来源：回答下方按命中顺序列出知识片段，点标题看全文。
-// 迁移期改为自绘卡片，不再用 antd Card；相关度用百分比展示，比原始 score 好读。
+// 改造后改为自绘卡片，不再用 antd Card；相关度用百分比展示，比原始 score 好读。
 interface Props {
   citations?: Citation[]
 }

@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { errorText } from '../../utils/errors'
 
 // 列内启停开关：乐观更新，失败回滚并提示；请求中禁用防连点。
-// 迁移期改为自绘开关（原实现用 antd Switch），props 保持兼容。
+// 改造后改为自绘开关（原实现用 antd Switch），props 保持兼容。
 interface Props {
   checked: boolean
   onToggle: () => Promise<unknown>
