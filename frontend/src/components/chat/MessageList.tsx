@@ -41,9 +41,12 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
       {messages.map((m, i) => {
         // 只有"最后一条且正在发送中的 assistant 消息"才算流式中，驱动脉冲与占位文案
         const isStreaming = i === messages.length - 1 && sending && m.role === 'assistant'
+        // key 用索引，不用 m.id：流式时 assistant 还没有 id（key=i），流结束时 onDone 赋上真实 id（key=160），
+        // React 会把整棵子树当成新组件重挂 —— Markdown 重新解析重排，肉眼就是"回答完闪一下"。
+        // 消息只会在尾部追加 / 替换最后一条 / 整体清空重载，索引始终稳定。
         if (m.role === 'user') {
           return (
-            <div key={m.id ?? i} className="flex flex-col items-end gap-1">
+            <div key={i} className="flex flex-col items-end gap-1">
               <div
                 className="whitespace-pre-wrap text-[14px] leading-[1.7]"
                 style={{
@@ -61,7 +64,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
           )
         }
         return (
-          <div key={m.id ?? i} style={{ maxWidth: isMobile ? '100%' : '88%' }}>
+          <div key={i} style={{ maxWidth: isMobile ? '100%' : '88%' }}>
             <AssistantMessage
               msg={m}
               streaming={isStreaming}

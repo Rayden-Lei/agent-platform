@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import AnswerMarkdown from './AnswerMarkdown'
 import ContextCards from './ContextCards'
@@ -25,11 +26,36 @@ const ICON = {
   retry: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1015.5-6.2M21 3v6h-6" /></svg>,
 }
 
+// 元信息之间的分隔点：用伪元素级别的独立 span，换行时不会孤零零留在行尾
+function Dot() {
+  return <span aria-hidden="true" className="select-none opacity-60">·</span>
+}
+
+// 脚注上的小按钮：h-6 保证 24px 命中高度，hover 才有底色（不然一行图标按钮看着发灰）
+function ToolButton({ label, onClick, icon, accent }: { label: string; onClick: () => void; icon?: ReactNode; accent?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="inline-flex h-6 min-w-6 items-center justify-center gap-1 rounded-md px-1.5 text-[12px] transition-colors hover:bg-accent"
+      style={{ color: accent ? 'var(--accent)' : 'var(--fg-muted)' }}
+    >
+      {icon}
+    </button>
+  )
+}
+
 export default function AssistantMessage({ msg, streaming, capabilities, onShowDetails, agentName = '智枢', onRegenerate }: Props) {
   const hasContent = msg.content.length > 0
   const usageText = capabilities.showUsage && msg.usage?.total_tokens
-    ? `Token ${formatNumber(msg.usage.total_tokens)}（输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} / 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}）`
+    ? `${formatNumber(msg.usage.total_tokens)} tokens`
     : ''
+  // 输入 / 输出分开只放在 title 里：脚注默认只显示总量，鼠标悬停看明细
+  const usageTitle = msg.usage?.total_tokens
+    ? `输入 ${formatNumber(msg.usage.prompt_tokens ?? 0)} · 输出 ${formatNumber(msg.usage.completion_tokens ?? 0)}`
+    : undefined
   const m = capabilities.showDebugMeta ? msg.metrics : undefined
   const debugText = m
     ? [m.first_token_ms != null ? `首字 ${formatDuration(m.first_token_ms)}` : '', `总 ${formatDuration(m.latency_ms)}`,
@@ -61,25 +87,39 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
 
       {capabilities.showCitations && <ContextCards citations={msg.citations} />}
 
+      {/* 脚注：一行紧凑排列，元信息在前、操作紧跟其后。
+          原来用 justify-between 把操作推到容器最右边（回答宽 88%，按钮离正文很远），
+          现在不留空白，鼠标从正文滑到按钮的距离更短。 */}
       {!streaming && (hasContent || msg.usage) && (
-        <div className="flex items-center justify-between gap-3 flex-wrap pt-0.5">
-          <span className="text-[12px] leading-relaxed" style={{ color: 'var(--fg-subtle)' }}>
-            {debugText && <>{debugText}<br /></>}
-            {usageText}
-            {msg.createdAt ? `${usageText ? ' · ' : ''}${fromNow(msg.createdAt)}` : ''}
-          </span>
-          <span className="flex items-center gap-1">
-            {capabilities.showDebugMeta && onShowDetails && (msg.trace?.length || msg.prompt) && (
-              <button type="button" onClick={() => onShowDetails(msg)} className="text-[12px] px-1.5 py-1 rounded" style={{ color: 'var(--accent)' }}>详情</button>
-            )}
-            {msg.runId && capabilities.showRunLink && (
-              <Link to={`/runs/${msg.runId}`} className="text-[12px] px-1.5 py-1 rounded hover:underline" style={{ color: 'var(--accent)' }}>运行记录</Link>
-            )}
-            {onRegenerate && (
-              <button type="button" onClick={onRegenerate} className="p-1.5 rounded-lg" style={{ color: 'var(--fg-muted)' }} title="重新生成" aria-label="重新生成">{ICON.retry}</button>
-            )}
-            <button type="button" onClick={() => copyText(msg.content)} className="p-1.5 rounded-lg" style={{ color: 'var(--fg-muted)' }} title="复制回答" aria-label="复制回答">{ICON.copy}</button>
-          </span>
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-0.5 text-[12px] leading-none" style={{ color: 'var(--fg-subtle)' }}>
+          {debugText && <span className="tabular-nums">{debugText}</span>}
+          {debugText && usageText && <Dot />}
+          {usageText && <span className="tabular-nums" title={usageTitle}>{usageText}</span>}
+          {msg.createdAt && (
+            <>
+              {(debugText || usageText) && <Dot />}
+              <span>{fromNow(msg.createdAt)}</span>
+            </>
+          )}
+
+          <span className="mx-1 h-3 w-px shrink-0" style={{ background: 'var(--border)' }} aria-hidden="true" />
+
+          {capabilities.showDebugMeta && onShowDetails && (msg.trace?.length || msg.prompt) ? (
+            <ToolButton label="详情" onClick={() => onShowDetails(msg)} accent />
+          ) : null}
+          {msg.runId && capabilities.showRunLink && (
+            <Link
+              to={`/runs/${msg.runId}`}
+              className="inline-flex h-6 items-center rounded-md px-1.5 text-[12px] transition-colors hover:bg-accent"
+              style={{ color: 'var(--accent)' }}
+            >
+              运行记录
+            </Link>
+          )}
+          {onRegenerate && (
+            <ToolButton label="重新生成" onClick={onRegenerate} icon={ICON.retry} />
+          )}
+          <ToolButton label="复制回答" onClick={() => copyText(msg.content)} icon={ICON.copy} />
         </div>
       )}
     </div>
