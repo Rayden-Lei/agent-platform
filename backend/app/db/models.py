@@ -57,6 +57,9 @@ class Agent(Base, TimestampMixin):
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     kb_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     tool_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # 技能绑定（docs/17 §4.3）：与 kb_ids / tool_ids 同风格，JSONB 数组无外键，技能删除后残留 ID 装配时忽略。
+    # 不塞进 tool_ids：技能不是"动作"，混进去会让工具列表与执行器都要多判一次类型
+    skill_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     workflow_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True)
     # draft 从未发布 / published 线上可用 / offline 有线上版本但已下线（docs/15 3.2，FR-039）
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
@@ -110,6 +113,31 @@ class PromptTemplateVersion(Base):
     variables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Skill(Base, TimestampMixin):
+    """技能（docs/17 §4）：一套"怎么做事"的知识 + 可选附带资源，运行时按需加载。
+
+    与提示词模板的分工：模板是"人设"（保存时渲染进 system_prompt，一变就升版本），
+    技能是"操作手册"（只把 name + description 放进提示词，模型需要时调内置工具 load_skill 取正文）。
+    always_on 为真的技能正文常驻注入系统提示，适合短小且每轮都要的规则。
+    正文可能含内部地址与操作规则，与提示词模板同口径：接口不回传给分享访客、改动写审计。
+    """
+
+    __tablename__ = "skills"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # 模型看到的名字，英文小写短横线（如 expense-form）：load_skill(name) 按它查找，重名会让模型取错手册
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 给模型看的一句话，决定它会不会调用这个技能；非空是硬要求，空的描述等于技能永远不被加载
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 附带资源清单 [{name, type, content}]，首版只存文本，不做文件上传
+    resources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    always_on: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")  # content / description 变化 +1
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
 class Tool(Base):
