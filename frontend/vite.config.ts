@@ -22,9 +22,10 @@ function frameAncestors(): Plugin {
   }
 }
 
-// 用临时隧道（cloudflared 等）从外网访问时，Vite 的 DNS rebinding 防护会拒绝外部域名
+// 用域名从外网访问时（反向代理、临时隧道等），Vite 的 DNS rebinding 防护会拒绝外部域名
 // （"Blocked request. This host ... is not allowed"）。用 VITE_ALLOWED_HOSTS 逗号分隔放行；
 // 不配则完全不设该项，保持 Vite 默认（只放行本机与 IP）。
+// 线上用 IP 直连（47.118.52.252:19173），走默认规则即可，不需要配这个。
 const ALLOWED_HOSTS = (process.env.VITE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim()).filter(Boolean)
 
 export default defineConfig({
@@ -35,7 +36,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  // preview 也要放行隧道域名：线上预览走它，不放行同样是 "Blocked request"。
+  // preview 也要放行：预览模式同样受 DNS rebinding 防护约束，不放行是 "Blocked request"。
   ...(ALLOWED_HOSTS.length ? { preview: { allowedHosts: ALLOWED_HOSTS } } : {}),
   server: {
     host: '0.0.0.0',

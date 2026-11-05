@@ -98,4 +98,4 @@
   这次就是靠它定位灰带的（顶栏 156 vs 内容区 253）。`browser_run_code_unsafe` 传函数会报 `__fn__ is not a function`。
 - shadcn 的 `button.tsx`/`badge.tsx` 原生成代码是 React 19 写法（ref 当普通 prop），已手工改成 forwardRef，**重新 `shadcn add` 时要注意别覆盖**
 - `@ant-design/plots` 是图表库不是 antd 组件库，**保留**，只换外层卡片
-- 外网访问：`cloudflared tunnel --url http://localhost:5173`，Vite 需带 `VITE_ALLOWED_HOSTS=<隧道域名>,.trycloudflare.com`，preview 模式还要 `preview.allowedHosts`
+- 外网访问：直接看云服务器（生产 http://47.118.52.252:19080、开发 :19173）。本地不再起 cloudflared 隧道（2026-11-06 移除）。Vite 的 `VITE_ALLOWED_HOSTS` 保留，用于将来接域名反代时放行 DNS rebinding 防护
