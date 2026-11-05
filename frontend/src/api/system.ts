@@ -45,17 +45,23 @@ export interface SystemSettingItem {
   description: string
   group: string
   unit: string
-  kind: 'int' | 'float'
+  kind: 'int' | 'float' | 'str' | 'secret'
   step: number
   min: number
   max: number
-  default: number      // .env / 后端默认值
-  value: number        // 当前生效值
+  placeholder: string
+  default: number | string | null  // .env / 后端默认值；secret 类恒为 null（不回显）
+  value: number | string | null    // 当前生效值；secret 类恒为 null（只给 masked / configured）
   source: 'default' | 'db'  // db = 页面改过，default = 用的还是 .env 默认
   updated_at: string | null
   updated_by: string | null
+  // 仅 secret 类型：是否已配置、掩码后的样子（明文永远不下发）
+  configured?: boolean
+  masked?: string
 }
 export interface SystemSettings { groups: SystemSettingGroup[]; items: SystemSettingItem[] }
 export const getSystemSettings = () => get<SystemSettings>('/system/settings')
-// 值传 null 表示恢复默认（删掉库里的覆盖）；越界或未知键整批 400，不会只改一半
-export const updateSystemSettings = (values: Record<string, number | null>) => put<SystemSettings>('/system/settings', { values })
+// 值传 null 表示恢复默认（删掉库里的覆盖）；文本类传字符串，空串同 null。
+// 越界或未知键整批 400，不会只改一半
+export const updateSystemSettings = (values: Record<string, number | string | null>) =>
+  put<SystemSettings>('/system/settings', { values })

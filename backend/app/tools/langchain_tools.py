@@ -9,7 +9,8 @@ from app.core.exceptions import BizError
 from app.db.models import Tool
 from app.services import skill_resource
 from app.services.skill_resource import SCRIPT_SUFFIXES
-from app.tools.executor import _safe_eval, execute_tool
+from app.tools.builtin import BUILTIN_PARAMETERS
+from app.tools.executor import _GENERAL_HANDLERS, _call_general, _safe_eval, execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import ToolParameters, build_args_model, format_validation_error, parse_parameters
 
@@ -136,6 +137,47 @@ def _build_http_tool(t: Tool, ctx: ToolCallContext | None = None):
     )
 
 
+# 能力型内置工具给模型看的说明。写清"什么时候用它"比写清"它做什么"更能减少误调用。
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "text_stats": "统计一段文本的字符数、词数与行数。需要知道长度、字数或行数时用。",
+    "random_int": "生成指定区间内的随机整数。抽奖、随机编号、模拟数据时用。",
+    "random_choice": "从若干候选项里随机挑一个。候选项用换行或英文逗号分隔。",
+    "base64_encode": "把文本编码成 base64 字符串。",
+    "base64_decode": "把 base64 字符串解码回文本。",
+    "json_query": "按点路径从 JSON 文档里取值，如 data.items[0].name。处理接口返回、配置文件等 JSON 时用。",
+    "http_request": "发起一次 HTTP 请求（GET/POST/PUT/DELETE/PATCH/HEAD）并返回状态码与响应体。需要访问外部接口时用；不能访问内网地址。",
+    "web_search": "联网搜索网页，返回标题、链接、站点、日期与摘要片段。需要查实时信息、新闻或不确定的事实时用。",
+}
+def _build_optional_builtin(name: str):
+    """把能力型内置工具包装成 LangChain StructuredTool（tools/general.py 里的实现）。
+
+    参数声明取自 builtin.BUILTIN_PARAMETERS，与工具页展示的同一份，避免两处不一致。
+    未知的 name 返回 None（库里残留了已删掉的工具名时不至于让整轮装配炸掉）。
+    """
+    entry = _GENERAL_HANDLERS.get(name)
+    if entry is None:
+        logger.warning("未知的内置工具名，跳过装配：%s", name)
+        return None
+    fn, _is_async = entry
+    params = BUILTIN_PARAMETERS.get(name) or {"type": "object", "properties": {}, "required": []}
+
+    async def _run(**kwargs) -> str:
+        # 走与工具页 / 工作流同一条实现，不重复写一遍逻辑
+        try:
+            result = await _call_general(entry, {k: v for k, v in kwargs.items() if v is not None})
+        except Exception as e:
+            logger.exception("内置工具 %s 执行失败", name)
+            return json.dumps({"error": f"工具执行失败：{e}"}, ensure_ascii=False)
+        return json.dumps(result, ensure_ascii=False)
+
+    return StructuredTool.from_function(
+        name=name,
+        description=TOOL_DESCRIPTIONS[name],
+        coroutine=_run,
+        args_schema=build_args_model(ToolParameters(**params), f"{name}_args"),
+    )
+
+
 def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = None, run_id: int | None = None,
                 skills: list | None = None) -> list:
     """组装 Agent 可用的工具列表：内置工具（current_time/calculator）恒有，DB 中启用的 http 类型工具追加进来。
@@ -150,8 +192,17 @@ def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = 
     """
     tools = [current_time, calculator]
     for t in tool_dbs:
-        if t.type == "http" and t.is_enabled:
-            tools.append(_build_http_tool(t, ToolCallContext(tool=t, source=source, agent_id=agent_id, run_id=run_id)))
+        if not t.is_enabled:
+            # 停用的工具仍绑在智能体上，但不暴露给模型（工具页的启停开关靠这里生效）
+            continue
+        if t.type == "builtin":
+            # 能力型内置工具（text_stats / web_search 等）：按 name 从分发表取实现，
+            # 由 LangChain 包装成 StructuredTool，参数声明来自 builtin.BUILTIN_PARAMETERS
+            wrapped = _build_optional_builtin(t.name)
+            if wrapped is not None:
+                tools.append(wrapped)
+            continue
+        tools.append(_build_http_tool(t, ToolCallContext(tool=t, source=source, agent_id=agent_id, run_id=run_id)))
     if skills:
         tools.append(_build_load_skill(skills))
         # 只有真的登记了 .py 资源的技能才给执行工具：一个永远返回「脚本不存在」的工具只会诱导模型乱试

@@ -13,6 +13,7 @@ from app.core.exceptions import BizError
 from app.core.security import decrypt_secret
 from app.db.models import Tool
 from app.services.middleware import ToolPermissionMiddleware, run_acting
+from app.tools import general
 from app.tools.permission import ToolCallContext
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,35 @@ async def _dispatch(tool: Tool, arguments: dict) -> dict:
     return await _execute_http(tool, arguments)
 
 
+# 能力型内置工具的分发表：name → (实现函数, 是否 async)。
+# 放在这里而不是写一串 if：新增工具只改这张表与 builtin.py 的参数声明，两处对齐即可。
+_GENERAL_HANDLERS = {
+    "text_stats": (general.text_stats, False),
+    "random_int": (general.random_int, False),
+    "random_choice": (general.random_choice, False),
+    "base64_encode": (general.base64_encode, False),
+    "base64_decode": (general.base64_decode, False),
+    "json_query": (general.json_query, False),
+    "http_request": (general.http_request, True),
+    "web_search": (general.web_search, False),
+}
+
+
+async def _call_general(handler: tuple, args: dict) -> dict:
+    """按声明把参数喂给实现：多余的键丢掉、缺的键用默认值，避免模型多传一个字段就报 TypeError。"""
+    fn, is_async = handler
+    import inspect
+
+    sig = inspect.signature(fn)
+    kwargs = {}
+    for pname, param in sig.parameters.items():
+        if pname in args:
+            kwargs[pname] = args[pname]
+        elif param.default is inspect.Parameter.empty:
+            return {"error": f"缺少必填参数：{pname}"}
+    return await fn(**kwargs) if is_async else fn(**kwargs)
+
+
 async def _execute_builtin(name: str, args: dict) -> dict:
     if name == "current_time":
         return {"result": datetime.now().isoformat()}
@@ -55,6 +85,15 @@ async def _execute_builtin(name: str, args: dict) -> dict:
             # 表达式非法或除零属调用方输入问题，返回错误即可，但要留痕以便发现模型总是传错格式
             logger.warning("计算器工具执行失败：expr=%r error=%s", expr, e)
             return {"error": str(e)}
+    # 能力型内置工具（文本 / 编码 / 随机 / JSON / HTTP / 搜索）实现在 tools/general.py，
+    # 都是纯函数或自带上限，参数错误一律返回 {"error": ...} 而不抛异常
+    handler = _GENERAL_HANDLERS.get(name)
+    if handler is not None:
+        try:
+            return await _call_general(handler, args)
+        except Exception as e:
+            logger.exception("内置工具 %s 执行失败：args=%r", name, args)
+            return {"error": f"工具执行失败：{e}"}
     return {"error": f"unknown builtin tool: {name}"}
 
 

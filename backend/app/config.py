@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIM: int = 1536
 
+    # 联网搜索（内置 web_search 工具）：腾讯云 SearchPro 接口，key 不进代码库。
+    # 留空则工具仍可见，但调用时返回"未配置"，不会静默失败成空结果。
+    SEARCHPRO_KEY: str = ""
+    SEARCHPRO_ENDPOINT: str = "https://api.wsa.cloud.tencent.com/SearchPro"
+    TOOL_SEARCH_DEFAULT_LIMIT: int = 5
+    TOOL_SEARCH_MAX_LIMIT: int = 10
+    TOOL_SEARCH_TIMEOUT: int = 20
+    # 内置 http_request 工具的域名白名单，逗号分隔，支持 *.example.com 后缀通配。
+    # 留空 = 放行所有公网域名（内网地址段一律拦死，见 tools/general.py 的 SSRF 防护）。
+    TOOL_HTTP_ALLOWED_HOSTS: str = ""
+    TOOL_HTTP_TIMEOUT: int = 20
+    TOOL_HTTP_MAX_BYTES: int = 200_000
+
     # 入口治理（FR-025 / FR-026）。列表类配置用字符串承载再自行拆分：
     # pydantic-settings 对 list 字段默认按 JSON 解析，.env 里写逗号分隔会直接报错。
     # CORS 只在浏览器直连后端时起作用；经同源反代（vite preview / nginx 的 /api 代理）不涉及。
