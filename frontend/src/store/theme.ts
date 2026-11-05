@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 // 主题与玻璃开关：只存"选了什么"，真正的样式由 <html data-theme data-glass> + CSS 变量驱动。
-// 持久化到 localStorage，刷新后保持；antd 的 ConfigProvider 也从这里读同一份 token，保证过渡期换肤一致。
+// 持久化到 localStorage，刷新后保持。
 
 export type ThemeKey = 'indigo' | 'celadon' | 'navy' | 'sand' | 'fuchsia' | 'graphite' | 'deep' | 'midnight'
 
@@ -73,8 +73,8 @@ export const useTheme = create<ThemeState>((set, get) => ({
     } catch {
       // 存不了就只在本次会话生效
     }
-    // 属性必须在 React 重渲染之前写到 <html> 上：AntdBridge 在渲染期间读 CSS 变量，
-    // 如果等 ThemeProvider 的 useEffect 去写，读到的还是旧值，antd 会慢一拍。
+    // 属性必须在 React 重渲染之前写到 <html> 上：等 ThemeProvider 的 useEffect 去写的话，
+    // 首帧取到的还是旧值，深色主题会闪一下白。
     applyToDom(theme, get().glass)
     set({ theme })
   },

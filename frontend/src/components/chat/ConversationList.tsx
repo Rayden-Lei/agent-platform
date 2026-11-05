@@ -3,7 +3,7 @@ import type { ConversationRow } from '../../api'
 import { fromNow } from '../../utils/time'
 
 // 会话列表：搜索 + 新建 + 按更新时间倒序；当前会话高亮，悬停出现删除。
-// 迁移期改为自绘列表（原实现用 antd List），不再有内建分页，改为"加载更多"。
+// 改造后改为自绘列表（原实现用 antd List），不再有内建分页，改为"加载更多"。
 interface Props {
   conversations: ConversationRow[]
   total: number
