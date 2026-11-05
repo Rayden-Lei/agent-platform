@@ -17,11 +17,6 @@ interface Props {
   modelName?: string
 }
 
-const ICON_ATTACH = (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-  </svg>
-)
 const ICON_SEND = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 19V5M5 12l7-7 7 7" />
@@ -46,7 +41,8 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
     if (areaRef.current) areaRef.current.style.height = 'auto'
   }
 
-  const pad = compact ? 8 : 12
+  // 输入条整体收紧：原来 12px 外圈 + 10px 内圈 + 30px 按钮行，在小屏上占了近 1/4 高度
+  const pad = compact ? 6 : 10
 
   return (
     <div
@@ -58,7 +54,7 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
         style={{ borderRadius: 'var(--radius-lg)', background: glass ? 'transparent' : 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}
       >
         <GlassSurface enabled={glass} cornerRadius={12} />
-        <div className="relative" style={{ padding: '10px 12px' }}>
+        <div className="relative" style={{ padding: '8px 10px' }}>
         <textarea
           ref={areaRef}
           value={text}
@@ -85,17 +81,9 @@ export default function ChatInput({ disabled, sending, onSend, onStop, compact, 
           style={{ color: 'var(--fg)', maxHeight: 6 * 22 + 16, minHeight: 22 }}
         />
 
-        <div className="flex items-center gap-1.5 mt-2">
-          <button
-            type="button"
-            disabled
-            title="附件（暂未开放）"
-            aria-label="添加附件"
-            className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-40"
-            style={{ color: 'var(--fg-muted)' }}
-          >
-            {ICON_ATTACH}
-          </button>
+        <div className="flex items-center gap-1.5 mt-1.5">
+          {/* 回形针（附件）已移除：后端没有 /chat/attachments（docs/15 CH-13 未实施），
+              摆一个 disabled 按钮只会让使用者以为点了没反应。等功能做出来再加回来。 */}
           {modelName && (
             <span className="text-[12px] px-2 py-1 rounded-lg truncate" style={{ color: 'var(--fg-muted)' }} title={modelName}>
               {modelName}
