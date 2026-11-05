@@ -15,7 +15,7 @@
   --bg-soft-2: #F8FAFE;
   --fg: #0F172A;
   --fg-muted: #4E5A6B;
-  --fg-subtle: #6A7584;
+  --fg-subtle: #66707F;
   --border: #E4E9F0;
   --border-strong: #CBD5E1;
   --accent: #4F46E5;
@@ -40,7 +40,7 @@
   --bg-soft-2: #EDF4F2;
   --fg: #14201E;
   --fg-muted: #4C5B58;
-  --fg-subtle: #6A7572;
+  --fg-subtle: #66706D;
   --border: #DCE6E3;
   --border-strong: #C4D3CF;
   --accent: #0F766E;
@@ -62,7 +62,7 @@
   --bg-soft-2: #F0F4FC;
   --fg: #111C33;
   --fg-muted: #4E5C74;
-  --fg-subtle: #6C7687;
+  --fg-subtle: #646C7D;
   --border: #DFE5EF;
   --border-strong: #C3CDDD;
   --accent: #1E40AF;
@@ -84,10 +84,10 @@
   --bg-soft-2: #FBF7F1;
   --fg: #241E17;
   --fg-muted: #5F5648;
-  --fg-subtle: #7A7266;
+  --fg-subtle: #756D62;
   --border: #E8E1D6;
   --border-strong: #D3C9B9;
-  --accent: #B45309;
+  --accent: #AA4E09;
   --accent-fg: #FFFFFF;
   --accent-soft: #F7EBDD;
   --shadow: 0 1px 2px rgba(36, 30, 23, 0.05);
@@ -106,10 +106,10 @@
   --bg-soft-2: #FEF7FF;
   --fg: #22132A;
   --fg-muted: #5F4A6B;
-  --fg-subtle: #7D6E87;
+  --fg-subtle: #786A82;
   --border: #EBE1F0;
   --border-strong: #D6C6DE;
-  --accent: #C026D3;
+  --accent: #AE24C1;
   --accent-fg: #FFFFFF;
   --accent-soft: #FAE8FD;
   --shadow: 0 1px 2px rgba(34, 19, 42, 0.05);
@@ -128,7 +128,7 @@
   --bg-soft-2: #F9F9FA;
   --fg: #18181B;
   --fg-muted: #55555C;
-  --fg-subtle: #75757C;
+  --fg-subtle: #6C6C72;
   --border: #E4E4E7;
   --border-strong: #C9C9CF;
   --accent: #27272A;
@@ -150,7 +150,7 @@
   --bg-soft-2: #151922;
   --fg: #E7E9ED;
   --fg-muted: #9AA2B0;
-  --fg-subtle: #707883;
+  --fg-subtle: #7C838C;
   --border: #1E242E;
   --border-strong: #2C3442;
   --accent: #7C93FF;
@@ -172,7 +172,7 @@
   --bg-soft-2: #1C1330;
   --fg: #EDE8F5;
   --fg-muted: #A599BD;
-  --fg-subtle: #7C7193;
+  --fg-subtle: #867D9B;
   --border: #251B38;
   --border-strong: #33264A;
   --accent: #A78BFA;
@@ -225,8 +225,9 @@
 /* 危险色（删除、停用这类破坏性操作）：浅色用深红，深色提亮保证对比度。
    单独放在这里而不是塞进 8 个主题块，是因为它跟配色方案无关、全站固定语义。 */
 :root {
-  --danger: #DC2626;
-  --danger-soft: rgba(220, 38, 38, 0.13);
+  /* 4.5:1 达标线：原 #DC2626 在青瓷 / 暖砂 / 品红这类带色调的背景上只有 4.43 */
+  --danger: #D42424;
+  --danger-soft: rgba(212, 36, 36, 0.13);
   --success: #15803D;
   --success-soft: rgba(22, 163, 74, 0.14);
   --warning: #B45309;
