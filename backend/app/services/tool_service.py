@@ -6,6 +6,7 @@ from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import encrypt_secret
 from app.db.session import rows_to_dict
 from app.db.models import Agent, Tool, User
+from app.tools.builtin import BUILTIN_PARAMETERS
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
@@ -27,10 +28,21 @@ def _auth_out(t: Tool) -> dict:
     return {"type": auth.get("type") or "none", "location": auth.get("location"), "name": auth.get("name"), "has_secret": bool(t.secret_enc)}
 
 
+def _config_out(t: Tool) -> dict:
+    """对外返回的 config：内置工具补上代码里的参数声明（tools/builtin.py）。
+
+    这样工具页的在线测试、工作流的工具节点都能按声明生成输入项，不必让人手写 JSON 参数。
+    声明只存在于代码、不落库——落库迟早和代码实际接受的不一致。
+    """
+    if t.type == "builtin" and t.name in BUILTIN_PARAMETERS:
+        return {**(t.config or {}), "parameters": BUILTIN_PARAMETERS[t.name]}
+    return t.config
+
+
 def _to_dict(t: Tool, agents_count: int = 0, creator: str | None = None) -> dict:
     return {
         "id": t.id, "name": t.name, "description": t.description, "type": t.type,
-        "config": t.config, "timeout": t.timeout, "is_enabled": t.is_enabled, "agents_count": agents_count,
+        "config": _config_out(t), "timeout": t.timeout, "is_enabled": t.is_enabled, "agents_count": agents_count,
         "auth": _auth_out(t), "created_by": t.created_by, "created_by_username": creator,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }

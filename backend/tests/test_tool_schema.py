@@ -181,7 +181,7 @@ def test_workflow_tool_node_with_invalid_fixed_args_fails(client, auth_headers, 
     t = make_tool("pytest-schema-wf", WEATHER)
     graph = {
         "nodes": [
-            {"id": "s", "type": "start", "config": {}},
+            {"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}},
             {"id": "t", "type": "tool", "config": {"tool_name": t["name"], "args": {"days": "三"}}},
             {"id": "e", "type": "end", "config": {}},
         ],
@@ -190,7 +190,7 @@ def test_workflow_tool_node_with_invalid_fixed_args_fails(client, auth_headers, 
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-schema-wf", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
-        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"input": "x"})
+        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "failed"
         assert "参数校验失败" in r.json()["error"] and "city" in r.json()["error"]
