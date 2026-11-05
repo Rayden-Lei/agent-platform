@@ -14,6 +14,7 @@ from app.core.http import async_client, sync_client
 from app.core.security import decrypt_secret
 from app.db.models import ModelConfig
 from app.model_gateway import breaker
+from app.model_gateway.reasoning import ReasoningChatOpenAI
 
 
 # 按 (模型 id, updated_at, 生效参数) 缓存 ChatOpenAI 实例：底层 httpx 连接池得以复用，省掉每次对话的 TLS 握手；
@@ -94,7 +95,8 @@ def _new_llm(model: ModelConfig, params: dict):
     # 思考模式（DeepSeek 等混合推理模型）：关闭后首字节从 8 秒级降到 3 秒级；未设置时不发该字段，避免不认识的上游报 400
     if params.get("thinking") in ("disabled", "enabled"):
         kwargs["extra_body"] = {"thinking": {"type": params["thinking"]}}
-    return ChatOpenAI(**kwargs)
+    # 用子类而不是 ChatOpenAI：1.6.0 起它不再提取 reasoning_content（见 reasoning.py 顶部说明）
+    return ReasoningChatOpenAI(**kwargs)
 
 
 def guarded_invoke(model: ModelConfig, llm, input_value):

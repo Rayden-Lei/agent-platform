@@ -1,6 +1,6 @@
 """模型调用熔断（`12-差距补齐开发计划.md` 1.4，FR-027）：状态机单元测试 + 经工作流智能体节点 / 连通测试的集成测试。
 
-上游模型一律 mock（monkeypatch gateway.ChatOpenAI），不发网络请求。
+上游模型一律 mock（monkeypatch gateway.ReasoningChatOpenAI），不发网络请求。
 """
 import threading
 from types import SimpleNamespace
@@ -234,25 +234,25 @@ def _create_model(client, auth_headers, name: str) -> int:
 
 
 def test_agent_node_fails_fast_after_threshold(client, auth_headers, monkeypatch):
-    monkeypatch.setattr(gateway, "ChatOpenAI", _FailingChatOpenAI)
+    monkeypatch.setattr(gateway, "ReasoningChatOpenAI", _FailingChatOpenAI)
     _FailingChatOpenAI.calls = 0
     mid = _create_model(client, auth_headers, "pytest-breaker-model")
     agent = client.post("/api/v1/agents", headers=auth_headers, json={"name": "pytest-breaker-agent", "description": "", "system_prompt": "你是助手", "model_id": mid}).json()
     # 工作流智能体节点只跑线上版本（docs/15 3.2），没发布的会以"智能体未发布"失败、碰不到模型
     assert client.post(f"/api/v1/agents/{agent['id']}/publish", headers=auth_headers).status_code == 200
     graph = {
-        "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
+        "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
         "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}],
     }
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-breaker-wf", "description": "", "graph": graph}).json()
     try:
         for i in range(5):
-            r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "hi"})
+            r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}})
             assert r.status_code == 200 and r.json()["status"] == "failed", r.text
             assert "熔断中" not in r.json()["error"]
         assert _FailingChatOpenAI.calls == 5
 
-        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "hi"})
+        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}})
         assert r.json()["status"] == "failed"
         assert "熔断中" in r.json()["error"]
         assert _FailingChatOpenAI.calls == 5  # 第 6 次没有打到上游
@@ -272,7 +272,7 @@ def test_connectivity_test_closes_open_breaker(client, auth_headers, monkeypatch
     try:
         _open(mid, "pytest-breaker-recover")
         assert breaker.status()[0]["state"] == "open"
-        monkeypatch.setattr(gateway, "ChatOpenAI", _HealthyChatOpenAI)
+        monkeypatch.setattr(gateway, "ReasoningChatOpenAI", _HealthyChatOpenAI)
         r = client.post(f"/api/v1/models/{mid}/test", headers=auth_headers)
         assert r.status_code == 200, r.text
         assert r.json()["data"]["ok"] is True

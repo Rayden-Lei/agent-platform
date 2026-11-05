@@ -33,7 +33,7 @@ def _model(default_params: dict, model_id: int = 990042, updated_at: str = "2026
 @pytest.fixture
 def recording(monkeypatch):
     reset_llm_cache()
-    monkeypatch.setattr(gateway, "ChatOpenAI", _RecordingChatOpenAI)
+    monkeypatch.setattr(gateway, "ReasoningChatOpenAI", _RecordingChatOpenAI)
     yield
     reset_llm_cache()
 
@@ -113,11 +113,11 @@ def test_chat_and_workflow_agent_node_use_agent_params(client, auth_headers, mod
         finally:
             db.close()
         graph = {
-            "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
+            "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
             "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}],
         }
         wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-params-wf", "description": "", "graph": graph}).json()
-        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "hi"})
+        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}})
         assert r.status_code == 200 and r.json()["status"] == "success", r.text
         cached = [llm for llm in gateway._LLM_CACHE.values() if llm.kwargs.get("temperature") == 0.9]
         assert cached, "工作流智能体节点没有按智能体参数构造模型"
