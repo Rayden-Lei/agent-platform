@@ -111,17 +111,28 @@ def run_script(skill: Skill, path: str, payload: dict | None = None, limits: san
 
 
 def list_resources(db: Session, skill_id: int) -> list[dict]:
-    """技能的资源清单：文件型的补上实际大小（对象可能已被外部删掉，stat 不到就标 missing）。"""
+    """技能的资源清单：文件型的补上实际大小，对象被外部删掉时标 missing。
+
+    只发**一次** list_objects 取回该技能前缀下所有对象，再在内存里装配 ——
+    逐个 stat_object 是循环里发 IO，20 个资源就是 20 次往返（docs/09）。
+    """
     skill = db.get(Skill, skill_id)
     if skill is None:
         raise BizError(404, "技能不存在")
+    entries = skill.resources or []
+    # 没有文件型资源时不必访问对象存储（纯文本资源的技能页不产生一次网络往返）
+    objects = (
+        minio_client.list_objects(f"{OBJECT_PREFIX}/{skill_id}/")
+        if any(r.get("type") == "file" and r.get("object") for r in entries)
+        else {}
+    )
     out = []
-    for r in skill.resources or []:
+    for r in entries:
         item = dict(r)
         if r.get("type") == "file" and r.get("object"):
-            st = minio_client.stat_object(r["object"])
-            item["size"] = st["size"] if st else None
-            item["missing"] = st is None
+            size = objects.get(r["object"])
+            item["size"] = size
+            item["missing"] = size is None
         else:
             item["size"] = len((r.get("content") or "").encode("utf-8"))
             item["missing"] = False

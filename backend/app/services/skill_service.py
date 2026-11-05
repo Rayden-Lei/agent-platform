@@ -111,7 +111,7 @@ def create_skill(db: Session, data, user: User) -> dict:
     _check_name_taken(db, data.name)
     s = Skill(
         name=data.name, display_name=data.display_name, description=data.description, content=data.content,
-        resources=[r.model_dump() for r in data.resources], always_on=data.always_on, is_enabled=data.is_enabled,
+        resources=[], always_on=data.always_on, is_enabled=data.is_enabled,
         version=1, created_by=user.id,
     )
     db.add(s)
@@ -136,8 +136,8 @@ def update_skill(db: Session, skill_id: int, data, user: User) -> dict:
     if data.name != s.name:
         _check_name_taken(db, data.name, exclude_id=s.id)
     before = {field: getattr(s, field) for field in MODEL_FACING}
+    # resources 不在这里改：资源由 /skills/{id}/resources 子接口增删（见 SkillIn 的说明）
     s.name, s.display_name, s.description, s.content = data.name, data.display_name, data.description, data.content
-    s.resources = [r.model_dump() for r in data.resources]
     s.always_on, s.is_enabled = data.always_on, data.is_enabled
     changed = [field for field in MODEL_FACING if getattr(s, field) != before[field]]
     if changed:
