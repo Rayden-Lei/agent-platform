@@ -29,16 +29,19 @@ class WorkflowIn(BaseModel):
 
 
 class RunIn(BaseModel):
-    """工作流正式运行请求体：input 为运行输入。"""
+    """工作流正式运行请求体：inputs 为按开始节点声明填的变量字典（docs/15 WF-04，D-32 一次切换）。
 
-    input: str = ""
+    声明与校验在 workflow.io_contract：未声明的键 400、必填缺值 400、类型不符按声明宽松转换后仍不符 400。
+    """
+
+    inputs: dict = {}
 
 
 class TestRunIn(BaseModel):
     """工作流试运行请求体：graph 直接内联在请求中，不落库。"""
 
     graph: dict
-    input: str = ""
+    inputs: dict = {}
 
 
 class ResumeIn(BaseModel):
@@ -74,8 +77,8 @@ def create_workflow(data: WorkflowIn, db: Session = Depends(get_db), user: User 
 # 固定路径必须声明在 /{workflow_id} 之前，否则 "test-run" / "batch" 会被当成 workflow_id 解析失败
 @router.post("/test-run")
 async def test_run_workflow(data: TestRunIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """试运行：用请求内联的 graph 直接执行，不落库；graph 不合法 400。"""
-    return await workflow_service.test_run_workflow(data.graph, data.input, role=user.role)
+    """试运行：用请求内联的 graph 直接执行，不落库；graph 或入参不合法 400。"""
+    return await workflow_service.test_run_workflow(data.graph, data.inputs, role=user.role)
 
 
 @router.post("/batch")
@@ -88,6 +91,15 @@ def batch_workflows(data: WorkflowBatchIn, db: Session = Depends(get_db), user: 
 def get_workflow(workflow_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """工作流详情（含 graph、节点统计、引用它的智能体、绑定的定时任务）。"""
     return workflow_service.get_workflow_detail(db, workflow_id)
+
+
+@router.get("/{workflow_id}/parameters")
+def get_workflow_parameters(workflow_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
+    """开始 / 结束节点的输入输出声明（docs/15 WF-04）：运行弹窗、定时任务表单、API 访问页签按它生成表单项。
+
+    开放 API Key 调用，外部系统可以据此知道该传哪些参数，不必读平台文档。
+    """
+    return workflow_service.workflow_parameters(db, workflow_id)
 
 
 @router.put("/{workflow_id}")
@@ -112,7 +124,7 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
 @router.post("/{workflow_id}/run")
 async def run_workflow(workflow_id: int, data: RunIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
     """运行指定工作流。允许 API Key 调用，供外部系统触发执行（工作流须在 Key 的作用域内）；运行记录记下触发来源（ui / api_key）。"""
-    return await workflow_service.run_workflow(db, workflow_id, data.input, user, api_key=current_api_key(request))
+    return await workflow_service.run_workflow(db, workflow_id, data.inputs, user, api_key=current_api_key(request))
 
 
 @router.post("/{workflow_id}/runs/{run_id}/resume")

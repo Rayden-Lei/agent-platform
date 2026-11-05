@@ -121,7 +121,7 @@ def test_tokens_issued_before_versioning_still_work(client, account):
 
 def test_disabled_creators_schedule_leaves_a_failed_run_instead_of_running(client, auth_headers, account):
     dev = _login(client, account["username"], account["password"])
-    graph = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
+    graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
     wf = client.post("/api/v1/workflows", headers=dev, json={"name": "pytest-acct-wf-" + _uid(), "description": "", "graph": graph}).json()
     account["workflows"].append(wf["id"])
     job = client.post("/api/v1/schedules", headers=dev, json={"name": "pytest-acct-job-" + _uid(), "workflow_id": wf["id"], "cron": "0 3 1 1 *"}).json()

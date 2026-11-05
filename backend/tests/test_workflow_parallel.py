@@ -28,7 +28,7 @@ def _code(node_id: str, code: str, **config) -> dict:
 def _parallel_graph(branch_a: list[dict], branch_b: list[dict], tail: list[dict] | None = None) -> dict:
     """start → par → [branch_a…] / [branch_b…] → join → (tail…) → end。分支节点按列表顺序串联。"""
     tail = tail or []
-    nodes = [_node("s", "start"), _node("par", "parallel"), *branch_a, *branch_b, _node("join", "join"), *tail, _node("e", "end")]
+    nodes = [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _node("par", "parallel"), *branch_a, *branch_b, _node("join", "join"), *tail, _node("e", "end")]
     edges = [_edge("s", "par")]
     for branch in (branch_a, branch_b):
         prev = "par"
@@ -99,7 +99,7 @@ def test_join_output_field_extracts_from_collected_dict():
 
 def _single_branch() -> dict:
     return {
-        "nodes": [_node("s", "start"), _node("par", "parallel"), _code("a", "result = 1"), _node("join", "join"), _node("e", "end")],
+        "nodes": [_node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _node("par", "parallel"), _code("a", "result = 1"), _node("join", "join"), _node("e", "end")],
         "edges": [_edge("s", "par"), _edge("par", "a"), _edge("a", "join"), _edge("join", "e")],
     }
 
@@ -160,7 +160,7 @@ def test_updating_to_invalid_graph_returns_400(client, auth_headers):
 
 
 def test_test_run_with_invalid_graph_returns_400(client, auth_headers):
-    r = client.post("/api/v1/workflows/test-run", headers=auth_headers, json={"graph": _output_ref_in_branch(), "input": "x"})
+    r = client.post("/api/v1/workflows/test-run", headers=auth_headers, json={"graph": _output_ref_in_branch(), "inputs": {"input": "x"}})
     assert r.status_code == 400, r.text
     assert "不能引用 {{output}}" in r.json()["detail"]
 
@@ -177,7 +177,7 @@ def test_running_invalid_graph_returns_400_without_creating_run(client, auth_hea
     finally:
         db.close()
     try:
-        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"input": "x"})
+        r = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
         assert r.status_code == 400, r.text
         assert "至少需要 2 条分支" in r.json()["detail"]
         db = SessionLocal()
@@ -192,7 +192,7 @@ def test_running_invalid_graph_returns_400_without_creating_run(client, auth_hea
 def test_graph_without_parallel_is_unaffected_by_validation(client, auth_headers):
     graph = {
         "nodes": [
-            _node("s", "start"), _node("cond", "condition", expression="input == 'go'"),
+            _node("s", "start", variables=[{"name": "input", "type": "text", "description": ""}]), _node("cond", "condition", expression="input == 'go'"),
             _node("loop", "loop", count=2), _code("body", "result = 'ran'"), _code("other", "result = 'skipped'"), _node("e", "end"),
         ],
         "edges": [
@@ -204,7 +204,7 @@ def test_graph_without_parallel_is_unaffected_by_validation(client, auth_headers
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-parallel-plain", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
-        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"input": "go"})
+        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "go"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "success" and r.json()["steps"] == ["condition:True", "loop:1", "code", "loop:2"]
     finally:
@@ -221,7 +221,7 @@ def test_one_branch_failure_fails_run_while_other_branch_node_logs_success(clien
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-parallel-fail", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
-        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"input": "x"})
+        r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["status"] == "failed" and "boom" in body["error"]

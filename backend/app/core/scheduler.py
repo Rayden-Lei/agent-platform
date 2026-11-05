@@ -10,7 +10,9 @@ from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.core.exceptions import BizError
 from app.db.models import ScheduledJob, User, Workflow
+from app.workflow.io_contract import build_initial_state
 from app.db.session import SessionLocal
 from app.services import run_service, workflow_service
 
@@ -44,9 +46,10 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
             logger.warning("定时任务 %s 没有有效的创建者，跳过", job_id)
             return
 
-        input_text = (sj.input or {}).get("input", "")
+        # 定时任务保存的就是"运行入参字典"本身（{变量名: 值}），与 POST /run 的 inputs 同一份结构
+        scheduled_inputs = sj.input or {}
         run = run_service.create_run(
-            db, "workflow", user.id, workflow_id=wf.id, input_data={"input": input_text}, source="schedule", schedule_id=sj.id,
+            db, "workflow", user.id, workflow_id=wf.id, input_data={"inputs": scheduled_inputs}, source="schedule", schedule_id=sj.id,
         )
         if not user.is_active:
             # 停用账号的任务不再以其身份执行（API Key 路径同样拒绝停用账号，2026-10-05 前这里只判存在）；
@@ -56,7 +59,17 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
             db.commit()
             logger.warning("定时任务 %s 的创建人 %s 已停用，未执行", job_id, user.id)
             return
-        result = workflow_service.execute_workflow(db, wf, run, {"input": input_text, "steps": []}, role=user.role)
+        # 定时任务的固定输入按开始节点声明校验（docs/15 WF-04）：声明改了而任务里还填着旧变量时，
+        # 这里抛 400，运行记录被置 failed 并带上原因——不静默按"没有输入"跑
+        try:
+            initial = build_initial_state(wf.graph, scheduled_inputs)
+        except BizError as e:
+            run_service.finalize_run(db, run, "failed", error=f"定时任务的固定输入与工作流声明不符：{e.detail}")
+            sj.last_run_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning("定时任务 %s 的固定输入不合法，未执行：%s", job_id, e.detail)
+            return
+        result = workflow_service.execute_workflow(db, wf, run, initial, role=user.role)
         sj.last_run_at = datetime.now(timezone.utc)
         db.commit()
         logger.info("定时任务 %s 执行完成 run_id=%s status=%s", job_id, run.id, result.get("status"))

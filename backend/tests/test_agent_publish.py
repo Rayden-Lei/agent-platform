@@ -214,11 +214,11 @@ def test_available_list_reads_live_snapshot_not_draft(client, auth_headers, make
 
 def test_workflow_agent_node_refuses_unpublished_agent(client, auth_headers, make_agent):
     agent = make_agent(publish=False)
-    graph = {"nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
+    graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "a", "type": "agent", "config": {"agent_id": agent["id"]}}, {"id": "e", "type": "end", "config": {}}],
              "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}]}
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-pub-wf", "description": "", "graph": graph}).json()
     try:
-        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"input": "hi"}).json()
+        r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}}).json()
         assert r["status"] == "failed" and "智能体未发布" in r["error"]
     finally:
         client.delete(f"/api/v1/workflows/{wf['id']}", headers=auth_headers)

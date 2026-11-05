@@ -23,7 +23,7 @@ KEYS = "/api/v1/api-keys"
 CONTENT = "智枢报销流程：发票先交财务初审再由部门负责人签字"
 QUERY = "报销流程"
 REVIEW_GRAPH = {
-    "nodes": [{"id": "s", "type": "start", "config": {}}, {"id": "r", "type": "human_review", "config": {"instruction": "请审核"}},
+    "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "r", "type": "human_review", "config": {"instruction": "请审核"}},
               {"id": "e", "type": "end", "config": {}}],
     "edges": [{"from": "s", "to": "r"}, {"from": "r", "to": "e"}],
 }
@@ -195,7 +195,7 @@ def test_key_without_workflow_scope_cannot_run_it(client, auth_headers, made):
     made["workflows"].append(wf["id"])
     model_id = _model(client, auth_headers, made)
     key = _key(client, auth_headers, made, agent_ids=[_published_agent(client, auth_headers, made, model_id)])
-    r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=_bearer(key), json={"input": "x"})
+    r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=_bearer(key), json={"inputs": {"input": "x"}})
     assert r.status_code == 403 and r.json()["detail"] == "该 API Key 无权调用此工作流"
     assert _runs(workflow_id=wf["id"]) == []
 
@@ -205,8 +205,8 @@ def test_key_can_only_resume_runs_it_started(client, auth_headers, made):
     made["workflows"].append(wf["id"])
     mine, other = _key(client, auth_headers, made, workflow_ids=[wf["id"]]), _key(client, auth_headers, made, workflow_ids=[wf["id"]])
     run_url = f"/api/v1/workflows/{wf['id']}/run"
-    by_key = client.post(run_url, headers=_bearer(mine), json={"input": "x"}).json()
-    by_ui = client.post(run_url, headers=auth_headers, json={"input": "x"}).json()
+    by_key = client.post(run_url, headers=_bearer(mine), json={"inputs": {"input": "x"}}).json()
+    by_ui = client.post(run_url, headers=auth_headers, json={"inputs": {"input": "x"}}).json()
     assert by_key["status"] == by_ui["status"] == "awaiting_review"
     resume = lambda run_id, headers: client.post(f"/api/v1/workflows/{wf['id']}/runs/{run_id}/resume", headers=headers, json={"decision": {"approved": True}})
     for run_id, headers in ((by_key["run_id"], _bearer(other)), (by_ui["run_id"], _bearer(mine))):
