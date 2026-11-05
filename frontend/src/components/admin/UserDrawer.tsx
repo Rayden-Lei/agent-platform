@@ -57,7 +57,8 @@ export default function UserDrawer({ user, onClose, onEdit, onResetPassword }: P
     >
       {user && (
         <div className="flex flex-col gap-4">
-          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5">
+          {/* 窄屏单列：两列时每格只剩一百多像素，时间戳这类长值会折行成两三行 */}
+          <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-2">
             <Field label="角色"><StatusTag domain="role" value={user.role} /></Field>
             <Field label="状态"><StatusTag domain="enabled" value={user.is_active} /></Field>
             <Field label="创建时间"><TimeCell value={user.created_at} /></Field>

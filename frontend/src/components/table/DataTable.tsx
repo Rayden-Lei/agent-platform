@@ -186,7 +186,10 @@ export default function DataTable<T>({
   return (
     <div className="flex flex-col min-h-0 flex-1">
       {/* ---------- 桌面：表格 ---------- */}
-      <div className="hidden md:block flex-1 min-h-0 overflow-auto rounded-xl" style={{ border: '1px solid var(--border)' }}>
+      {/* 断点用 lg(1024) 而不是 md(768)：竖握的平板只有 768px，而智能体表宽 1182px、
+          模型表也已过千 —— 在 768~1023 之间用表格只能横向拽，卡片反而更好读。
+              105 行处注释的「窄屏卡片」同理。 */}
+      <div className="hidden lg:block flex-1 min-h-0 overflow-auto rounded-xl" style={{ border: '1px solid var(--border)' }}>
         <table className="w-full border-collapse text-[13.5px]">
           <thead className="sticky top-0 z-[2]">
             <tr style={{ background: 'var(--bg-soft-2)' }}>
@@ -308,7 +311,7 @@ export default function DataTable<T>({
       </div>
 
       {/* ---------- 窄屏：卡片 ---------- */}
-      <div className="md:hidden flex-1 min-h-0 overflow-auto flex flex-col gap-2.5">
+      <div className="lg:hidden flex-1 min-h-0 overflow-auto flex flex-col gap-2.5">
         {loading
           ? skeletonRows.slice(0, 4).map((_, i) => (
               <div key={`skc-${i}`} className="rounded-xl p-3.5" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}>
@@ -319,7 +322,11 @@ export default function DataTable<T>({
             ))
           : rows.map((row) => {
               const primary = columns.find((c) => c.primary) ?? columns[0]
-              const rest = columns.filter((c) => c !== primary && !c.hideOnMobile)
+              // 操作列（pinRight）单独占一行按钮区：它原来混在「字段名 : 值」的行里，
+              // 4 个按钮被塞进一个可截断的右对齐窄格，智能体一多、按钮变长就互相挤成省略号。
+              // 按钮本来就该占满整行宽度，能并排就并排、放不下换行。
+              const actions = columns.find((c) => c.pinRight)
+              const rest = columns.filter((c) => c !== primary && c !== actions && !c.hideOnMobile)
               return (
                 <div
                   key={String(rowKey(row))}
@@ -354,6 +361,15 @@ export default function DataTable<T>({
                       </div>
                     ))}
                   </div>
+                  {actions && (
+                    <div
+                      className="data-card-actions flex flex-wrap items-center gap-1.5 px-3.5 py-2"
+                      style={{ borderTop: '1px solid var(--border)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {actions.cell(row)}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -365,7 +381,9 @@ export default function DataTable<T>({
           <span className="text-[12px]" style={{ color: 'var(--fg-subtle)' }}>
             共 {total} 条{selectedKeys.length > 0 ? `，已选 ${selectedKeys.length} 条` : ''}
           </span>
-          <div className="flex items-center gap-1">
+          {/* 窄屏分页：页码按钮 + 每页条数在 320px 屏上放不下（实测顶出 385px），
+              允许换行并把「每页条数」推到下一行，而不是横向溢出 */}
+          <div className="flex flex-wrap items-center justify-end gap-1">
             <button
               type="button"
               disabled={page <= 1}

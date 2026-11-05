@@ -26,7 +26,8 @@ interface Props {
 
 export default function AgentFilters({ values, onChange, onReset, onRefresh, models, loading }: Props) {
   return (
-    <FilterBar onReset={onReset} onRefresh={onRefresh} loading={loading}>
+    <FilterBar onReset={onReset} onRefresh={onRefresh} loading={loading}
+      activeCount={Object.values(values).filter(Boolean).length}>
       <SearchInput value={values.q} onChange={(q) => onChange({ q })} placeholder="搜索智能体名称" />
       <Select value={values.status ?? ALL} onValueChange={(v) => onChange({ status: v === ALL ? undefined : v })}>
         <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="状态">

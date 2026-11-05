@@ -28,7 +28,8 @@ const ALL = '__all__'
 
 export default function AuditFilters({ values, onChange, onReset, onRefresh, onExport, loading }: Props) {
   return (
-    <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}>
+    <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}
+      activeCount={Object.values(values).filter(Boolean).length}>
       <SearchInput value={values.username} onChange={(username) => onChange({ username })} placeholder="用户名" width={140} />
 
       {/* 原来 antd 的 allowClear 改成一项"全部"：清空也走同一个 onChange 通道 */}

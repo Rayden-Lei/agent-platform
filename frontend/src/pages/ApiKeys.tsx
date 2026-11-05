@@ -75,7 +75,8 @@ export default function ApiKeys() {
         />
       }
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
+        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+          activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称" />
           <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
             <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态">

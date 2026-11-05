@@ -126,13 +126,15 @@ export default function SkillForm({ open, editing, prefill, onClose, onSaved }: 
       }
     >
       <div className="flex flex-col gap-4">
-        <div className="flex gap-3">
+        {/* 窄屏单列：显示名 + name 并排时各占一半，390px 屏上两边都只剩一百多像素，
+            而 name 的说明文字有一整句，挤在窄栏里会折成四五行 */}
+        <div className="flex flex-col gap-3 sm:flex-row">
           <div className="flex flex-1 flex-col gap-1.5">
             <Label htmlFor="skill-display-name">显示名</Label>
             <Input id="skill-display-name" value={values.display_name} maxLength={128} onChange={(e) => set('display_name', e.target.value)} placeholder="例如：网页制作手册" />
             <p className="m-0 text-[12px] text-muted-foreground">只给人在列表和装配页里看，模型看不到</p>
           </div>
-          <div className="flex w-[280px] flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 sm:w-[280px]">
             <Label htmlFor="skill-name">name</Label>
             <Input
               id="skill-name"

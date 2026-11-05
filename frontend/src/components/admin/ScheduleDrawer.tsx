@@ -40,7 +40,7 @@ export default function ScheduleDrawer({ schedule: s, schedulerRunning, onClose,
     >
       {s && (
         <div className="flex flex-col gap-4">
-          <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5">
+          <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-2">
             <Field label="工作流"><ResourceLink type="workflow" id={s.workflow_id} name={s.workflow_name || `#${s.workflow_id}`} showIcon /></Field>
             <Field label="状态"><StatusTag domain="enabled" value={s.is_enabled} /></Field>
             <Field label="Cron">

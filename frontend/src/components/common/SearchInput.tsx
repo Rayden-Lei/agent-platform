@@ -19,8 +19,10 @@ export default function SearchInput({ value, onChange, placeholder = '搜索名�
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text])
 
+  // 宽度用 maxWidth 而不是 width：窄屏的筛选条把它压成半宽两列时，固定 width 会溢出
+  // （内联 width 的优先级高于任何 class，CSS 里的 flex-basis 压不住它）
   return (
-    <div className="relative" style={{ width }}>
+    <div className="relative" style={{ maxWidth: width, flex: '1 1 auto', minWidth: 0 }}>
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
         value={text}

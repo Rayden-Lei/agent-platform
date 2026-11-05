@@ -95,7 +95,8 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
   }, [lockOwner])
 
   return (
-    <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}>
+    <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}
+      activeCount={Object.values(values).filter(Boolean).length}>
       <Select value={values.run_type ?? 'all'} onValueChange={(v) => onChange({ run_type: v === 'all' ? undefined : v })}>
         <SelectTrigger size="sm" className="w-[110px] text-[13px]" aria-label="类型"><SelectValue placeholder="类型" /></SelectTrigger>
         <SelectContent>
