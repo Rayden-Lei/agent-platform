@@ -4,6 +4,7 @@ import type { RunRow } from '../../api'
 import type { DataColumn } from '../table/DataTable'
 import Button from '../ui/Button'
 import ResourceLink from '../common/ResourceLink'
+import RunOwner from './RunOwner'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import TokenUsage from '../common/TokenUsage'
@@ -27,9 +28,8 @@ export function buildRunColumns({ onReview, reviewing, hideOwner = false }: Opti
   if (!hideOwner) {
     columns.push({
       key: 'owner', header: '归属', width: 180, hideOnMobile: true,
-      cell: (r) => r.run_type === 'chat'
-        ? <ResourceLink type="agent" id={r.agent_id} name={r.agent_name} />
-        : <ResourceLink type="workflow" id={r.workflow_id} name={r.workflow_name} />,
+      // 归属按实际填了哪个归属列判断：模型对话的 run_type 也是 chat，但没有智能体（docs/17 §3.1）
+      cell: (r) => <RunOwner run={r} />,
     })
   }
   columns.push(

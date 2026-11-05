@@ -93,7 +93,7 @@ export default function CallerHome({ agents, agentsTotal, conversations, agentsE
                     <MessageSquare className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13.5px] text-foreground">{c.title || '未命名会话'}</span>
-                      <span className="block truncate text-[12px] text-muted-foreground">{c.agent_name || '已删除的智能体'} · {fromNow(c.updated_at)}</span>
+                      <span className="block truncate text-[12px] text-muted-foreground">{c.target_name || '已删除的智能体'} · {fromNow(c.updated_at)}</span>
                     </span>
                   </button>
                 </li>

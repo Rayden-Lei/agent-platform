@@ -63,8 +63,8 @@ export default function Dashboard() {
       {!isManager ? (
         <CallerHome agents={callerAgents.data?.items ?? null} agentsTotal={callerAgents.data?.total} conversations={recent.data?.items ?? null}
           agentsError={callerAgents.error} conversationsError={recent.error} onRetry={() => { callerAgents.reload(); recent.reload() }}
-          onOpenAgent={(a) => navigate(`/chat?agent=${a.id}`)}
-          onOpenConversation={(c) => navigate(`/chat?${c.agent_id ? `agent=${c.agent_id}&` : ''}conversation=${c.id}`)} />
+          onOpenAgent={(a) => navigate(`/chat?target=${a.id}`)}
+          onOpenConversation={(c) => navigate(`/chat?conversation=${c.id}`)} />
       ) : overview.error ? (
         <ErrorState message={overview.error} onRetry={() => overview.reload()} />
       ) : (

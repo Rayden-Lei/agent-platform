@@ -51,7 +51,7 @@ export default function Agents() {
   }
   const columns = useMemo(() => buildAgentColumns({
     sort: list.sort,
-    onChat: (a) => navigate(`/chat?agent=${a.id}`),
+    onChat: (a) => navigate(`/chat?target=${a.id}`),
     onPublish: openPublish,
     onEdit: (a) => navigate(`/agents/${a.id}/edit`),
     onDelete: (a) => act(() => deleteAgent(a.id), '删除失败'),

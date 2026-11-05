@@ -5,8 +5,11 @@ import { del, get, type Page, type PageQuery } from './core'
 // ===== 会话与消息（docs/04 4.6）=====
 export interface ConversationRow {
   id: number
-  agent_id: number | null
-  agent_name: string | null
+  // 会话归属的对话类型：三种类型的归属列互斥（agent_id / model_id / workflow_id），对外统一成 kind + target_id，
+  // 页面据此决定左侧会话列表按哪个对象过滤、发送走哪个接口
+  kind: 'model' | 'agent' | 'workflow'
+  target_id: number | null // 归属对象（智能体 / 模型 / 工作流）的 ID
+  target_name: string | null // 归属对象当时的名字；对象删除后仍保留，列表里不至于只剩一个数字
   title: string | null
   summary: string | null // 更早消息的持久化摘要，用于排查模型"记错上下文"
   message_count: number
@@ -195,6 +198,14 @@ export async function streamSse(url: string, body: ChatPayload | DebugChatPayloa
 // 登录用户与已发布智能体对话
 export const chatAgentStream = (agentId: number, payload: ChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal) =>
   streamSse(`/agents/${agentId}/chat`, payload, handlers, signal)
+
+// 模型对话：直接和某个模型聊天，没有工具与知识库；事件结构与智能体对话完全一致，因此共用同一个 streamSse
+export const chatModelStream = (modelId: number, payload: ChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal) =>
+  streamSse(`/models/${modelId}/chat`, payload, handlers, signal)
+
+// 工作流对话：一句话触发一次运行；节点进度借 tool_call / tool_result 事件推送，最终回答走 delta
+export const chatWorkflowStream = (workflowId: number, payload: ChatPayload, handlers: ChatStreamHandlers, signal?: AbortSignal) =>
+  streamSse(`/workflows/${workflowId}/chat`, payload, handlers, signal)
 
 // 装配页当场调试（docs/04 4.5）：调试历史由前端带上；inline 时 config 是编辑器当前内容（含未保存修改）
 export interface DebugHistoryItem { role: 'user' | 'assistant'; content: string }

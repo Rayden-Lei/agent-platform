@@ -3,6 +3,7 @@ import { AlertTriangle, XCircle } from 'lucide-react'
 import type { RunDetail } from '../../api'
 import JsonView from '../common/JsonView'
 import ResourceLink from '../common/ResourceLink'
+import RunOwner from './RunOwner'
 import StatusTag from '../common/StatusTag'
 import TokenUsage from '../common/TokenUsage'
 import { formatDateTime, formatDuration } from '../../utils/time'
@@ -52,11 +53,8 @@ export default function RunOverview({ run }: Props) {
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-2">
         <Cell label="类型"><StatusTag domain="runType" value={run.run_type} /></Cell>
         <Cell label="状态"><StatusTag domain="run" value={run.status} /></Cell>
-        <Cell label="归属">
-          {run.run_type === 'chat'
-            ? <ResourceLink type="agent" id={run.agent_id} name={run.agent_name} showIcon />
-            : <ResourceLink type="workflow" id={run.workflow_id} name={run.workflow_name} showIcon />}
-        </Cell>
+        {/* 归属按实际填了哪个归属列判断：模型对话的 run_type 也是 chat，但没有智能体（docs/17 §3.1） */}
+        <Cell label="归属"><RunOwner run={run} showIcon /></Cell>
         <Cell label="触发">
           <span className="inline-flex flex-wrap items-center gap-1.5">
             <StatusTag domain="runSource" value={run.source} />

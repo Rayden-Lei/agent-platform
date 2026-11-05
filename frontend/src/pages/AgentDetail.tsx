@@ -83,7 +83,7 @@ export default function AgentDetail() {
         backTo="/agents"
         extra={agent && (
           <>
-            <Button variant="primary" size="md" disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?agent=${agent.id}`)}>
+            <Button variant="primary" size="md" disabled={agent.status !== 'published'} onClick={() => navigate(`/chat?target=${agent.id}`)}>
               <MessageSquare className="size-3.5" />对话
             </Button>
             <Button variant="secondary" size="md" onClick={() => navigate('?tab=channels')}>
