@@ -75,7 +75,7 @@ export default function AgentVersionsTab({ agent, onChanged }: Props) {
       cell: (v) => (
         <span className="inline-flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => setCompare(v)}>与草稿对比</Button>
-          <InlineConfirm message={`草稿恢复为 v${v.version}？当前草稿会被覆盖，线上不变`} confirmLabel="恢复" onConfirm={() => restore(v)}>
+          <InlineConfirm message={`草稿恢复为 v${v.version}？当前草稿会被覆盖，线上不变`} confirmLabel="恢复" danger onConfirm={() => restore(v)}>
             <Button size="sm" variant="secondary">恢复到草稿</Button>
           </InlineConfirm>
           {v.is_live ? (
@@ -86,7 +86,7 @@ export default function AgentVersionsTab({ agent, onChanged }: Props) {
               <TooltipContent>已是线上版本</TooltipContent>
             </Tooltip>
           ) : (
-            <InlineConfirm message={`用 v${v.version} 生成新版本并立即上线？草稿不变`} confirmLabel="回滚" onConfirm={() => rollback(v)}>
+            <InlineConfirm message={`用 v${v.version} 生成新版本并立即上线？草稿不变`} confirmLabel="回滚" danger onConfirm={() => rollback(v)}>
               <Button size="sm" variant="danger">回滚上线</Button>
             </InlineConfirm>
           )}

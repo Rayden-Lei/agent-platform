@@ -80,7 +80,7 @@ export function buildScheduleColumns({ schedulerRunning, onOpen, onToggle, onRun
             <Button size="sm" variant="ghost" icon={<Play />}>立即运行</Button>
           </InlineConfirm>
           <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除该定时任务？" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除该定时任务？" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

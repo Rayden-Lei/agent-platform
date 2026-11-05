@@ -62,7 +62,7 @@ export default function WorkflowDetail() {
             <Button variant="primary" size="md" icon={<Play />} disabled={!wf.node_count} onClick={() => setRunning(true)}>运行</Button>
             <Button variant="secondary" size="md" icon={<Pencil />} onClick={() => navigate(`/workflows/${wf.id}/edit`)}>编辑</Button>
             <Button variant="secondary" size="md" icon={<Copy />} onClick={duplicate}>复制</Button>
-            <InlineConfirm message="确定删除？关联的定时任务会一并删除" onConfirm={remove}>
+            <InlineConfirm message="确定删除？关联的定时任务会一并删除" danger onConfirm={remove}>
               <Button variant="danger" size="md" icon={<Trash2 />}>删除</Button>
             </InlineConfirm>
           </>

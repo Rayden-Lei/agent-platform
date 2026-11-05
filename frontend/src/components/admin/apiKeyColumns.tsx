@@ -92,7 +92,7 @@ export function buildApiKeyColumns({ isAdmin, onOpen, onToggle, onEdit, onDelete
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除？使用该 Key 的调用会立即失效" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？使用该 Key 的调用会立即失效" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>
         </span>

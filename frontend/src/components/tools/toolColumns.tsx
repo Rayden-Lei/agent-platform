@@ -69,7 +69,7 @@ export function buildToolColumns({ canManage, onOpen, onToggle, onTest, onEdit, 
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" icon={<FlaskConical />} onClick={() => onTest(r)}>测试</Button>
           <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除？绑定了该工具的智能体会失去这项能力" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？绑定了该工具的智能体会失去这项能力" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger" disabled={!canManage}>删除</Button>
           </InlineConfirm>
         </span>

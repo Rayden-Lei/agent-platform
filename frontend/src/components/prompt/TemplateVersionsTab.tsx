@@ -72,7 +72,7 @@ export default function TemplateVersionsTab({ template, onRolledBack }: Props) {
                 {isCurrent ? (
                   <Button size="sm" variant="secondary" disabled>回滚</Button>
                 ) : (
-                  <InlineConfirm message={`回滚到 v${v.version}？会生成新版本，已绑定的智能体重新保存草稿并发布后才用到它`} onConfirm={() => rollback(v)}>
+                  <InlineConfirm message={`回滚到 v${v.version}？会生成新版本，已绑定的智能体重新保存草稿并发布后才用到它`} danger onConfirm={() => rollback(v)}>
                     <Button size="sm" variant="secondary">回滚</Button>
                   </InlineConfirm>
                 )}

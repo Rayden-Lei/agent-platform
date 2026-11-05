@@ -94,7 +94,7 @@ export function buildModelColumns({ breakers, usage, testingId, canManage, onOpe
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" onClick={() => onTest(r)}>{testingId === r.id ? '测试中…' : '测试'}</Button>
           <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onEdit(r)}>编辑</Button>
-          <InlineConfirm message="确定删除？绑定了该模型的智能体将无法对话" onConfirm={() => onDelete(r)}>
+          <InlineConfirm message="确定删除？绑定了该模型的智能体将无法对话" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger" disabled={!canManage}>删除</Button>
           </InlineConfirm>
         </span>

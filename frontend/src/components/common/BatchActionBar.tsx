@@ -23,7 +23,7 @@ export default function BatchActionBar({ count, onClear, actions, running }: Pro
       <span>已选 <b>{count}</b> 项</span>
       <div className="flex items-center gap-2">
         {actions.map((a) => a.confirm ? (
-          <InlineConfirm key={a.key} message={a.confirm} onConfirm={a.run}>
+          <InlineConfirm key={a.key} message={a.confirm} danger={a.danger} onConfirm={a.run}>
             <Button size="sm" variant={a.danger ? 'danger' : 'secondary'} disabled={running}>{a.label}</Button>
           </InlineConfirm>
         ) : (
