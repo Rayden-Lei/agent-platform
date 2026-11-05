@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Copy } from 'lucide-react'
+import { Copy, FileCode2 } from 'lucide-react'
 import { toast } from 'sonner'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
@@ -15,6 +15,8 @@ interface Props {
   onEdit: (skill: SkillRow) => void
 }
 
+const kbText = (bytes?: number | null) => (bytes == null ? '-' : (bytes / 1024).toFixed(1) + 'KB')
+
 export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
   if (!skill) return null
   const copyName = async () => {
@@ -25,6 +27,7 @@ export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
       toast.error('复制失败，请手动选中')
     }
   }
+  const resources = skill.resources ?? []
 
   return (
     <Drawer
@@ -32,7 +35,7 @@ export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
       onClose={onClose}
       width={760}
       title={skill.display_name}
-      description={`v${skill.version} · ${skill.always_on ? '常驻（正文每轮进提示词）' : '按需加载（模型调 load_skill 取正文）'}`}
+      description={'v' + skill.version + ' · ' + (skill.always_on ? '常驻（正文每轮进提示词）' : '按需加载（模型调 load_skill 取正文）')}
       extra={<Button size="sm" variant="secondary" onClick={() => onEdit(skill)}>编辑</Button>}
       footer={<Button variant="primary" size="md" onClick={onClose}>关闭</Button>}
     >
@@ -40,8 +43,8 @@ export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={skill.is_enabled ? 'success' : 'neutral'}>{skill.is_enabled ? '已启用' : '已停用'}</Badge>
           <Badge tone={skill.always_on ? 'accent' : 'neutral'}>{skill.always_on ? '常驻' : '按需'}</Badge>
-          <Badge tone="neutral">{skill.agents_count ?? 0} 个智能体绑定</Badge>
-          {skill.resources.length > 0 && <Badge tone="info">{skill.resources.length} 个附带资源</Badge>}
+          <Badge tone="neutral">{(skill.agents_count ?? 0) + ' 个智能体绑定'}</Badge>
+          {resources.length > 0 && <Badge tone="info">{resources.length + ' 个附带资源'}</Badge>}
         </div>
 
         <div className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5">
@@ -54,10 +57,25 @@ export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
             </span>
           </Field>
           <Field label="描述">{skill.description}</Field>
-          <Field label="创建人">{skill.created_by_username || (skill.created_by ? `#${skill.created_by}` : '-')}</Field>
+          <Field label="创建人">{skill.created_by_username || (skill.created_by ? '#' + skill.created_by : '-')}</Field>
           <Field label="创建时间"><TimeCell value={skill.created_at} /></Field>
           <Field label="更新时间"><TimeCell value={skill.updated_at} /></Field>
         </div>
+
+        {resources.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[12px] font-medium text-muted-foreground">脚本资源（模型调 run_skill_script 执行）</span>
+            <ul className="m-0 flex list-none flex-col gap-1 rounded-lg border border-border px-2 py-1.5 p-0">
+              {resources.map((r) => (
+                <li key={r.name} className="flex items-center gap-2">
+                  <FileCode2 className="size-3.5 shrink-0 text-muted-foreground" />
+                  <code className="min-w-0 flex-1 truncate text-[12.5px]" style={{ fontFamily: '"SF Mono",Consolas,monospace' }}>{r.name}</code>
+                  {r.missing ? <Badge tone="danger">文件缺失</Badge> : <span className="shrink-0 text-[12px] text-muted-foreground">{kbText(r.size)}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] font-medium text-muted-foreground">正文（Markdown 原文）</span>
