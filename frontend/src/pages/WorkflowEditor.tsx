@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, useReactFlow } from '@xyflow/react'
 import type { XYPosition } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -46,8 +46,8 @@ function EditorInner() {
   // 节点配置表单的值（受控）：与选中节点一一对应
   const [nodeValues, setNodeValues] = useState<NodeFormValues>(() => configToFormValues({}))
   const [nodeErrorField, setNodeErrorField] = useState<string | null>(null)
-  // 测试运行状态：输入文本 / 结果 / 请求中标记
-  const [testInput, setTestInput] = useState('')
+  // 测试运行状态：按开始节点声明填的入参 / 结果 / 请求中标记（docs/15 WF-04：不再手写 JSON 字典）
+  const [testInputs, setTestInputs] = useState<Record<string, unknown>>({})
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
   const [edgeLabel, setEdgeLabel] = useState('')
@@ -162,7 +162,7 @@ function EditorInner() {
     const next = { ...nodeValues, ...patch }
     setNodeValues(next)
     const nid = selectedNode.id
-    const collected = collectNodeConfig(selectedNode.data.nodeType, next)
+    const collected = collectNodeConfig(selectedNode.data.nodeType, next, selectedNode.data.nodeType === 'tool' ? selectedToolParams : undefined)
     if ('error' in collected) {
       setNodeErrorField(collected.field)
       setNodes((nds) => nds.map((n) => (n.id === nid ? { ...n, data: { ...n.data, configError: collected.error, errorField: collected.field, formDraft: next } } : n)))
@@ -216,7 +216,10 @@ function EditorInner() {
   const doTest = async () => {
     if (blockedByInvalidNode()) return
     setTesting(true); setTestResult(null)
-    try { setTestResult(await testRunWorkflow({ graph: toGraph(nodes, edges), input: testInput }) as any) } catch (e: any) { toast.error(e.response?.data?.detail || '测试失败') } finally { setTesting(false) }
+    // 空串按未填处理（后端对必填缺值给 400，文案更准确，前端不重复校验）
+    const inputs: Record<string, unknown> = {}
+    Object.entries(testInputs).forEach(([k, v]) => { if (v !== undefined && v !== '') inputs[k] = v })
+    try { setTestResult(await testRunWorkflow({ graph: toGraph(nodes, edges), inputs }) as any) } catch (e: any) { toast.error(e.response?.data?.detail || '测试失败') } finally { setTesting(false) }
   }
 
   // 保存：同样序列化 graph；新建走 create，编辑走 update，成功后进详情页；图校验失败的 400 直接提示 detail
@@ -233,6 +236,26 @@ function EditorInner() {
     } catch (e) { toast.error(errorText(e, '保存失败')) }
   }
 
+  // 当前选中节点绑定的工具的参数声明：工具节点按声明逐字段渲染参数（docs/17 §3），
+  // 与工具页在线测试同一条路径；切工具/切节点时立刻换
+  const selectedToolParams = useMemo(() => {
+    if (selectedNode?.data?.nodeType !== 'tool') return undefined
+    const name = selectedNode.data.config?.tool_name
+    return tools.find((t: any) => t.name === name)?.config?.parameters
+  }, [selectedNode, tools])
+
+  // 开始节点声明的输入变量：测试运行区按它生成输入框（画布上改了声明，这里立刻跟着变）
+  const startVariables = useMemo(() => {
+    // 多个开始节点时取第一个"有声明"的：画布上多拖了一个空开始节点不该让已声明的表单突然变空
+    const starts = nodes.filter((n) => n.data.nodeType === 'start')
+    const start = starts.find((n) => Array.isArray((n.data.config as any)?.variables) && (n.data.config as any).variables.length) ?? starts[0]
+    const rows = (start?.data.config as any)?.variables
+    if (!Array.isArray(rows)) return []
+    return rows
+      .filter((v: any) => (v?.name || '').trim())
+      .map((v: any) => ({ name: String(v.name).trim(), type: v.type || 'text', description: v.description || '', default: v.default ?? null, required: v.default === undefined || v.default === '' || v.default === null }))
+  }, [nodes])
+
   // 连线的来源节点类型：决定连线配置面板的文案（条件分支 / 循环分支 / 并行分支无分支值）
   const edgeSourceType = selectedEdge ? nodes.find((n) => n.id === selectedEdge.source)?.data?.nodeType : null
 
@@ -248,11 +271,13 @@ function EditorInner() {
       agents={agents}
       tools={tools}
       kbs={kbs}
+      toolParams={selectedToolParams}
       edgeLabel={edgeLabel}
       onEdgeLabelChange={changeEdgeLabel}
       onDelete={deleteSelected}
-      testInput={testInput}
-      onTestInputChange={setTestInput}
+      testVariables={startVariables}
+      testInputs={testInputs}
+      onTestInputsChange={setTestInputs}
       testing={testing}
       testResult={testResult}
       onTest={doTest}
@@ -325,7 +350,7 @@ function EditorInner() {
         <div className="flex min-h-0 flex-1">{canvas}</div>
       ) : (
         <div className="flex min-h-0 flex-1 gap-3">
-          <div className="w-[160px] shrink-0 overflow-auto rounded-xl border border-border bg-card p-3">
+          <div className="w-[136px] shrink-0 overflow-auto rounded-xl border border-border bg-card p-2">
             <PaletteList onDragStart={onDragStart} onAdd={(t) => addNode(t)} />
           </div>
           {canvas}
