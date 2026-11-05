@@ -14,6 +14,7 @@ export interface AgentRow {
   params: ModelParams // 覆盖模型的 default_params，留空的键继承
   kb_ids: number[]
   tool_ids: number[]
+  skill_ids: number[]
   workflow_id: number | null
   status: AgentStatus | string
   version: number // 最近一次生成的版本号
@@ -44,18 +45,23 @@ export interface AgentInput {
   params?: ModelParams
   kb_ids?: number[]
   tool_ids?: number[]
+  skill_ids?: number[]
   workflow_id?: number | null
   prompt_template_id?: number | null
   prompt_variables?: Record<string, string>
 }
 // 更新草稿要带读到的 updated_at（乐观锁）：与库中不一致 409「已被他人修改」，防止两个人同时编辑互相覆盖
 export interface AgentUpdateInput extends AgentInput { expected_updated_at: string }
+// 技能引用：name 是模型调 load_skill 时传的标识，display_name 只用于展示
+export interface AgentSkillRef { id: number; name: string; display_name: string; always_on: boolean; is_enabled: boolean }
 export interface AgentDetail extends AgentRow {
   model: { id: number; name: string; provider: string; model_name: string; is_enabled: boolean } | null
   tools: { id: number; name: string; type: string; is_enabled: boolean }[]
   missing_tool_ids: number[]
   knowledge_bases: { id: number; name: string; is_public: boolean }[]
   missing_kb_ids: number[]
+  skills: AgentSkillRef[]
+  missing_skill_ids: number[]
   workflow: { id: number; name: string; status: string } | null
   prompt_template: { id: number; name: string; version: number; variables: { name: string; description?: string; required?: boolean; default?: string | null }[] } | null
   // 草稿与线上两份同形快照（字段由后端 snapshot_of 定义）：发布弹窗与版本对比据此做字段级差异；从未发布时线上为 null

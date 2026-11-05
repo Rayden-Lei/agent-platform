@@ -35,7 +35,11 @@ function Cell({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 export default function AgentOverview({ agent }: Props) {
-  const missing = [...agent.missing_tool_ids.map((i) => `工具 #${i}`), ...agent.missing_kb_ids.map((i) => `知识库 #${i}`)]
+  const missing = [
+    ...agent.missing_tool_ids.map((i) => `工具 #${i}`),
+    ...agent.missing_kb_ids.map((i) => `知识库 #${i}`),
+    ...agent.missing_skill_ids.map((i) => `技能 #${i}`),
+  ]
   return (
     <div className="flex flex-col gap-4">
       {missing.length > 0 && (
@@ -85,6 +89,20 @@ export default function AgentOverview({ agent }: Props) {
                 <span key={k.id} className="inline-flex items-center gap-1">
                   <ResourceLink type="kb" id={k.id} name={k.name} />
                   <StatusTag domain="visibility" value={k.is_public} />
+                </span>
+              ))}
+            </span>
+          ) : <span className="text-muted-foreground">未绑定</span>}
+        </Cell>
+        <Cell label="技能">
+          {agent.skills.length ? (
+            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+              {agent.skills.map((s) => (
+                <span key={s.id} className="inline-flex items-center gap-1">
+                  <span>{s.display_name}</span>
+                  <span className="text-[12px] text-muted-foreground">{s.name}</span>
+                  {s.always_on && <Badge tone="neutral">常驻</Badge>}
+                  {!s.is_enabled && <Badge tone="neutral">已停用</Badge>}
                 </span>
               ))}
             </span>
