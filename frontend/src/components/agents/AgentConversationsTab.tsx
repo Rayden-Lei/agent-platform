@@ -10,12 +10,13 @@ import DataTable, { type DataColumn } from '../table/DataTable'
 interface Props { agentId: number }
 
 export default function AgentConversationsTab({ agentId }: Props) {
-  const list = usePagedList<ConversationRow>(listConversations, { filters: { agent_id: agentId }, pageSize: 10 })
+  const list = usePagedList<ConversationRow>(listConversations, { filters: { kind: 'agent', target_id: agentId }, pageSize: 10 })
 
   const columns: DataColumn<ConversationRow>[] = [
     {
       key: 'title', header: '标题', primary: true,
-      cell: (c) => <Link to={`/chat?agent=${agentId}&conversation=${c.id}`} className="text-primary hover:underline">{c.title || '对话'}</Link>,
+      // 只带 conversation：对话页会按会话自己的 kind / target 补齐地址，免得链接里的参数与实际归属对不上
+      cell: (c) => <Link to={`/chat?conversation=${c.id}`} className="text-primary hover:underline">{c.title || '对话'}</Link>,
     },
     {
       key: 'message_count', header: '消息数', width: 90, align: 'right', hideOnMobile: true,

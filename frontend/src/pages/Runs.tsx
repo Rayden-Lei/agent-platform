@@ -34,7 +34,7 @@ export default function Runs() {
     { title: 'ID', value: (r: RunRow) => r.id },
     { title: '类型', value: (r) => statusLabel('runType', r.run_type) },
     { title: '状态', value: (r) => statusLabel('run', r.status) },
-    { title: '归属', value: (r) => r.agent_name || r.workflow_name || '' },
+    { title: '归属', value: (r) => r.agent_name || r.workflow_name || r.model_name || '' },
     { title: '触发人', value: (r) => r.username || '' },
     { title: '来源', value: (r) => statusLabel('runSource', r.source) },
     { title: '模型', value: (r) => r.model_name || '' },

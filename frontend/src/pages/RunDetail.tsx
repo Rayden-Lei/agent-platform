@@ -8,6 +8,7 @@ import StatusTag from '../components/common/StatusTag'
 import ResourceLink from '../components/common/ResourceLink'
 import TokenUsage from '../components/common/TokenUsage'
 import RunOverview from '../components/runs/RunOverview'
+import RunOwner from '../components/runs/RunOwner'
 import NodeLogTable from '../components/runs/NodeLogTable'
 import Button from '../components/ui/Button'
 import { useReview } from '../components/runs/useReview'
@@ -30,7 +31,8 @@ export default function RunDetail() {
   }, [live, reload])
 
   const meta = run ? [
-    { label: '归属', value: run.run_type === 'chat' ? <ResourceLink type="agent" id={run.agent_id} name={run.agent_name} /> : <ResourceLink type="workflow" id={run.workflow_id} name={run.workflow_name} /> },
+    // 归属按实际填了哪个归属列判断：模型对话的 run_type 也是 chat，但没有智能体（docs/17 §3.1）
+    { label: '归属', value: <RunOwner run={run} /> },
     { label: '触发', value: <span className="inline-flex items-center gap-1.5"><StatusTag domain="runSource" value={run.source} /> {run.username}</span> },
     { label: '开始', value: formatDateTime(run.started_at) },
     { label: '耗时', value: run.finished_at ? formatDuration(run.latency_ms) : (live ? '进行中' : '-') },
@@ -57,7 +59,7 @@ export default function RunDetail() {
             </>
           )}
           {run?.conversation_id && (
-            <Button size="md" variant="secondary" onClick={() => navigate(`/chat?conversation=${run.conversation_id}${run.agent_id ? `&agent=${run.agent_id}` : ''}`)}>查看会话</Button>
+            <Button size="md" variant="secondary" onClick={() => navigate(`/chat?conversation=${run.conversation_id}`)}>查看会话</Button>
           )}
           <Button size="md" variant="secondary" icon={<RotateCw />} onClick={() => reload()}>{live ? '自动刷新中' : '刷新'}</Button>
         </span>

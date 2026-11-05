@@ -26,8 +26,9 @@ export function useShareChat(code: string, ready: boolean, onUnauthorized: (deta
     if (!ready) return
     try {
       const res = await listShareConversations(code, page, PAGE, q)
-      // 会话侧栏与登录对话页共用，访客的会话没有智能体与摘要字段
-      const rows = res.items.map((c): ConversationRow => ({ ...c, agent_id: null, agent_name: null, summary: null }))
+      // 会话侧栏与登录对话页共用，访客的会话行是访客口径（没有 kind / target / 摘要）：
+      // 分享链接永远属于某个智能体，补成 agent 才不会在侧栏的类型判断里落空
+      const rows = res.items.map((c): ConversationRow => ({ ...c, kind: 'agent', target_id: null, target_name: null, summary: null }))
       setConversations((prev) => (page === 1 ? rows : [...prev, ...rows]))
       setTotal(res.total)
     } catch (e) { handleError(e, '加载会话失败') }
