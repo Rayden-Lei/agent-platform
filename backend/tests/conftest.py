@@ -15,6 +15,34 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
+from tests import cleanup  # noqa: E402
+
+
+def pytest_sessionstart(session):  # noqa: ARG001
+    """记下会话开始时间：结束时只回收这之后造的数据，不碰别人之前留下的行。"""
+    session.config._test_started_at = cleanup.session_start()
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    """兜底回收 pytest- 前缀的残留。
+
+    用例自己写 finally 清理是主路径，但进程被 kill、解释器崩溃、finally 里自己抛错时都会漏。
+    这里在会话结束统一扫一遍；清理失败只报告，不改退出码——它不该把一次正常的测试跑成失败。
+    """
+    started = getattr(session.config, "_test_started_at", None)
+    if started is None:
+        return
+    try:
+        deleted = cleanup.purge_since(started)
+    except cleanup.CleanupAborted as exc:
+        print(f"\n[清理跳过] {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001 清理是收尾动作，不能因此让测试失败
+        print(f"\n[清理失败] {type(exc).__name__}: {exc}")
+        return
+    if deleted:
+        detail = "、".join(f"{t} {n}" for t, n in deleted.items())
+        print(f"\n[清理] 回收测试残留：{detail}")
 
 
 @pytest.fixture(scope="session")
