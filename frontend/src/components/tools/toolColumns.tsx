@@ -26,7 +26,7 @@ export function buildToolColumns({ canManage, onOpen, onToggle, onTest, onEdit, 
     {
       key: 'name', header: '名称', sortable: true, primary: true, width: 170,
       cell: (r) => (
-        <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(r) }} className="hover:underline text-left truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
+        <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(r) }} className="relative after:absolute after:-inset-y-1.5 after:content-[''] hover:underline text-left truncate" style={{ color: 'var(--fg)', fontWeight: 550 }}>
           {r.name}
         </button>
       ),
