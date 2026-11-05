@@ -106,9 +106,13 @@ def plan_republish(conn, agent_ids: list[int] | None = None) -> list[dict]:
     """已发布但还没有线上版本指针的智能体，逐个判定：指向最新快照，还是按当前行补发一版。"""
     where, params = _id_filter(agent_ids)
     pointer = "AND published_version IS NULL" if _column_exists(conn, "agents", "published_version") else ""
+    # skill_ids 是 P2 技能（2026-11-05）才加的列，本脚本早于它。快照字段清单会继续演进，
+    # 这里按"列在不在"动态拼：不在就由下面 setdefault 补空数组，否则 snapshot_of 读不到键会抛 AttributeError。
+    # 不把新字段写死进 SELECT —— 那样在还没跑过 P2 迁移的库上本脚本就跑不起来了。
+    skill_col = ", skill_ids" if _column_exists(conn, "agents", "skill_ids") else ""
     stmt = text(f"""
         SELECT id, name, description, system_prompt, model_id, params, kb_ids, tool_ids, workflow_id,
-               prompt_template_id, prompt_template_version, prompt_variables, version
+               prompt_template_id, prompt_template_version, prompt_variables, version{skill_col}
         FROM agents WHERE status = 'published' {pointer}{where} ORDER BY id
     """)
     if agent_ids is not None:
@@ -116,7 +120,9 @@ def plan_republish(conn, agent_ids: list[int] | None = None) -> list[dict]:
     plans = []
     for row in conn.execute(stmt, params).mappings():
         latest = conn.execute(text("SELECT version, snapshot, created_at FROM agent_versions WHERE agent_id = :a ORDER BY version DESC LIMIT 1"), {"a": row["id"]}).mappings().first()
-        current = snapshot_of(SimpleNamespace(**row))
+        fields = dict(row)
+        fields.setdefault("skill_ids", [])  # 列不存在时补空数组，与 normalize_snapshot 对存量快照的补齐口径一致
+        current = snapshot_of(SimpleNamespace(**fields))
         if latest is not None and normalize_snapshot(latest["snapshot"]) == current:
             plans.append({"agent_id": row["id"], "name": row["name"], "action": "point", "version": latest["version"], "published_at": latest["created_at"]})
         else:
