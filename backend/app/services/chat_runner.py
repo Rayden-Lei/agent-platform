@@ -38,7 +38,8 @@ PROMPT_EVENT_MAX_CHARS = 20000  # prompt 事件里的系统提示词截断长度
 
 @dataclass(frozen=True)
 class ChatTurn:
-    """一轮对话的执行参数；conversation_id / run_id / agent_version 由 prepare_chat 事先定好，构建上下文按同一版本取配置。"""
+    """智能体对话一轮的执行参数；conversation_id / run_id / agent_version 由 prepare_chat 事先定好，
+    构建上下文按同一版本取配置。模型对话与工作流对话各有自己的 Turn（见本文件末尾）。"""
 
     agent_id: int
     user_id: int
@@ -95,12 +96,14 @@ def _tool_result_state(result: str, langchain_status: str) -> str:
 
 
 async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, events: EventStream, started: float, *,
-                        run_id: int, tool_result_chars: int, trace: bool) -> AsyncIterator[dict]:
+                        run_id: int, tool_result_chars: int, trace: bool, source: str = "chat") -> AsyncIterator[dict]:
     """模型与工具循环：产出 delta / tool_call / tool_result（trace=True 时另产出 llm 与 tool 两类 trace 事件）。
     结果经 apply_event 累积进 state（落库用），每条事件由 events 补 seq / reply_id；异常原样抛出，由调用方按线上或调试各自收尾。
 
     每条消息类事件都是"emit 补信封 → apply_event 累积 → yield 下发"三步相邻出现。漏掉中间那步不会报错，
-    只会让落库与事件重建少一段内容（静默失效），改动这里时三行要一起看。"""
+    只会让落库与事件重建少一段内容（静默失效），改动这里时三行要一起看。
+
+    source 只用于失败日志（模型对话没有智能体可记），不参与执行。"""
     max_rounds = settings.TOOL_CALL_MAX_ROUNDS
     # 中间件装配（docs/16 P1）。本步只把轮数守卫搬进来，它走 post_model_hook（模型返回后、工具执行前）。
     # pre_model_hook 现在没有实现者，chain_hooks 返回 None，create_react_agent 不建那个节点——
@@ -218,7 +221,7 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
 
 
 async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
-    """执行一轮线上对话并逐个产出事件。
+    """执行一轮智能体对话并逐个产出事件。模型对话与工作流对话各走 stream_model / stream_workflow。
 
     客户端中断（停止按钮 / 断网）时生成器被关闭，finally 收尾：已生成的部分回答落库、运行记录置 cancelled，
     避免运行记录永远停在 running。自己开数据库会话，路由请求结束后它还在用。
@@ -267,7 +270,7 @@ async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
                 # 摘要压缩是一次完整的模型调用，放到响应之后的后台线程，下一轮对话用到新摘要
                 chat_service.schedule_summary_refresh(ctx.model.id, turn.conversation_id)
         except Exception as e:
-            _log_failure(e, turn.run_id, turn.agent_id)
+            _log_failure(e, turn.run_id, f"agent={turn.agent_id}")
             chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
             finished = True
             error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
@@ -279,6 +282,180 @@ async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
                 chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, state.citations, state.usage(), state.tool_calls)
             except Exception:
                 logger.exception("对话中断收尾失败 run_id=%s", turn.run_id)
+        db.close()
+
+
+@dataclass(frozen=True)
+class ModelTurn:
+    """模型对话一轮的执行参数（docs/17 §3.1）：只认模型，没有智能体、没有发布版本。"""
+
+    model_id: int
+    user_id: int
+    message: str
+    conversation_id: int
+    run_id: int
+    source: str = "chat"
+
+
+async def stream_model(turn: ModelTurn) -> AsyncGenerator[dict, None]:
+    """执行一轮模型对话。与智能体对话共用 _agent_events（工具为空时它就是"调模型、流式吐字"），
+    所以事件形状、落库、幂等回放、中断收尾全部一致，前端不需要为它做任何特判。
+
+    客户端中断时与智能体对话同样收尾：已生成部分落库、运行记录置 cancelled。
+    """
+    from app.services import model_chat  # 局部导入：model_chat 依赖本模块的 ChatContext 装配路径
+
+    db = SessionLocal()
+    state = StreamState()
+    events = EventStream(f"run-{turn.run_id}")
+    finished = False
+    started = time.perf_counter()
+    try:
+        try:
+            ctx = await run_in_threadpool(model_chat.build_model_context, db, turn.model_id, turn.message, turn.conversation_id)
+        except Exception as e:
+            if not isinstance(e, BizError):
+                logger.exception("模型对话上下文构建失败 run_id=%s model_id=%s", turn.run_id, turn.model_id)
+            chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
+            finished = True
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
+            return
+        # 模型对话不检索，citations 恒为空：照常发一帧，前端不必判断"有没有这一步"
+        citations_event = events.emit("citations", citations=[])
+        apply_event(state, citations_event)
+        yield citations_event
+        try:
+            async for event in _agent_events(ctx, state, events, started, run_id=turn.run_id,
+                                             tool_result_chars=TOOL_RESULT_PREVIEW_CHARS, trace=False, source="model"):
+                yield event
+            usage = state.usage()
+            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, [],
+                                                    usage, [], turn.run_id)
+            await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
+            finished = True
+            done = events.emit("done", message_id=assistant_msg.id, run_id=turn.run_id, conversation_id=turn.conversation_id,
+                               usage=usage, finished_reason="completed")
+            apply_event(state, done)
+            yield done
+        except Exception as e:
+            _log_failure(e, turn.run_id, f"model={turn.model_id}")
+            chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
+            finished = True
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
+    finally:
+        if not finished:
+            try:
+                chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, [], state.usage(), [])
+            except Exception:
+                logger.exception("模型对话中断收尾失败 run_id=%s", turn.run_id)
+        db.close()
+
+
+@dataclass(frozen=True)
+class WorkflowTurn:
+    """工作流对话一轮的执行参数（docs/17 §3.4 方案 c）：每轮一次独立运行，会话只做历史展示。"""
+
+    workflow_id: int
+    user_id: int
+    role: str | None  # 知识库检索节点按它判可见性（与 POST /run 同口径）
+    message: str
+    conversation_id: int
+    run_id: int
+    inputs: dict  # 消息已按声明填进对应变量，其余变量取默认值（workflow_chat.build_inputs）
+
+
+async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
+    """执行一轮工作流对话，把节点进度映射成对话事件（docs/17 §3.5）。
+
+    用 graph.astream(stream_mode="updates") 拿"每个节点完成时的增量"，不为进度去改引擎：
+    引擎的节点工厂一个都不用动，工作流本身的执行语义保持原样（这是它比"给引擎加进度钩子"更划算的地方）。
+    每完成一个节点就发一对 tool_call + tool_result —— 复用现有工具卡片 UI，前端不新增事件类型。
+    代价是节点卡片出现时已是完成态、看不到转圈；换来的是引擎零改动、事件契约不扩。
+
+    首版不做对话内审批（docs/17 §3.6）：遇到人工审核节点按"已暂停"收尾，
+    回答里给出去运行详情页审批的指引，resume 仍在运行记录页完成。
+    """
+    from app.services import workflow_chat  # 局部导入：workflow_chat 依赖会话与 io_contract，避免顶层循环
+    from app.workflow.engine import build_workflow
+
+    db = SessionLocal()
+    state = StreamState()
+    events = EventStream(f"run-{turn.run_id}")
+    finished = False
+    started = time.perf_counter()
+    try:
+        citations_event = events.emit("citations", citations=[])  # 工作流可能检索，但引用不出现在对话里
+        apply_event(state, citations_event)
+        yield citations_event
+        try:
+            workflow = await run_in_threadpool(workflow_chat.load_workflow, db, turn.workflow_id)
+            initial = await run_in_threadpool(workflow_chat.initial_state, workflow.graph, turn.inputs)
+            graph = build_workflow(workflow.graph, run_id=turn.run_id, role=turn.role)
+            # thread_id 固定用 run_id：图编译时绑了 checkpointer，不传会直接抛错
+            config: RunnableConfig = {"configurable": {"thread_id": str(turn.run_id)}}
+            # 节点输出按完成顺序收集，最后一个非空的转成回答；__interrupt__ 说明停在人工审核节点
+            outputs: list = []
+            interrupted = False
+            # 事件 id 用独立计数器，不能拿 outputs 的长度：循环节点会跑多次、且不是每个节点都写 output，
+            # 用长度会让两个节点撞同一个 id，前端把两次执行合并成一张卡片（apply_event 按 id 去重）
+            seq_no = 0
+            async for update in graph.astream(initial, config=config, stream_mode="updates"):
+                for node_id, node_output in (update or {}).items():
+                    if node_id == "__interrupt__":
+                        interrupted = True
+                        continue
+                    step = workflow_chat.node_step(workflow.graph, node_id, node_output)
+                    call_id = f"{node_id}-{seq_no}"
+                    seq_no += 1
+                    call_event = events.emit("tool_call", name=step["label"], arguments={"节点": node_id}, id=call_id, state="running")
+                    apply_event(state, call_event)
+                    yield call_event
+                    result_event = events.emit("tool_result", content=step["preview"], tool_call_id=call_id, state=step["status"])
+                    apply_event(state, result_event, stored_result=step["preview"])
+                    yield result_event
+                    if isinstance(node_output, dict) and "output" in node_output:
+                        outputs.append(node_output["output"])
+            answer = workflow_chat.answer_of(outputs, interrupted)
+            if answer:
+                delta = events.emit("delta", content=answer)
+                apply_event(state, delta)
+                yield delta
+            usage = state.usage()
+            assistant_msg = await run_in_threadpool(chat_service.save_assistant_message, db, turn.conversation_id, state.content, [],
+                                                    usage, state.tool_calls, turn.run_id)
+            if interrupted:
+                # 等待人工审核不是终态（与 POST /run 同一口径）：不写 finished_at，运行记录留在 awaiting_review，
+                # 审批走运行记录页的 resume，审批完由那条路径收尾。这里写 success 会让它再也 resume 不了。
+                await run_in_threadpool(workflow_chat.mark_awaiting_review, db, turn.run_id, state.content, outputs)
+                finished = True
+                done = events.emit("done", message_id=assistant_msg.id, run_id=turn.run_id, conversation_id=turn.conversation_id,
+                                   usage=usage, finished_reason="interrupted")
+                apply_event(state, done)
+                yield done
+                return
+            await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
+            finished = True
+            done = events.emit("done", message_id=assistant_msg.id, run_id=turn.run_id, conversation_id=turn.conversation_id,
+                               usage=usage, finished_reason="completed")
+            apply_event(state, done)
+            yield done
+        except Exception as e:
+            _log_failure(e, turn.run_id, f"workflow={turn.workflow_id}")
+            chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
+            finished = True
+            error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
+            apply_event(state, error)
+            yield error
+    finally:
+        if not finished:
+            try:
+                chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, [], state.usage(), state.tool_calls)
+            except Exception:
+                logger.exception("工作流对话中断收尾失败 run_id=%s", turn.run_id)
         db.close()
 
 
@@ -297,11 +474,13 @@ async def replay_chat(replay: chat_service.ReplayChat) -> AsyncGenerator[dict, N
            "usage": replay.usage, "replayed": True, "finished_reason": "completed"}
 
 
-def _log_failure(e: Exception, run_id: int, agent_id: int) -> None:
+def _log_failure(e: Exception, run_id: int, owner: str) -> None:
+    """失败日志。owner 是"这轮属于谁"的可读描述（agent=3 / model=2 / workflow=5），
+    三种对话共用，避免为每条路径各写一份日志格式。"""
     if isinstance(e, (BizError, ToolRoundsExceeded)):
-        logger.warning("对话以业务错误结束 run_id=%s agent_id=%s：%s", run_id, agent_id, e)
+        logger.warning("对话以业务错误结束 run_id=%s %s：%s", run_id, owner, e)
     else:
-        logger.exception("对话生成失败 run_id=%s agent_id=%s", run_id, agent_id)
+        logger.exception("对话生成失败 run_id=%s %s", run_id, owner)
 
 
 async def stream_debug(turn: chat_service.DebugTurn) -> AsyncIterator[dict]:
@@ -325,7 +504,7 @@ async def stream_debug(turn: chat_service.DebugTurn) -> AsyncIterator[dict]:
                                              tool_result_chars=DEBUG_TOOL_RESULT_CHARS, trace=True):
                 yield event
         except Exception as e:
-            _log_failure(e, turn.run_id, turn.agent_id)
+            _log_failure(e, turn.run_id, f"agent={turn.agent_id}")
             chat_service.finalize_run(db, turn.run_id, "failed", content=state.content or None, usage=state.usage() or None,
                                       error=e.detail if isinstance(e, BizError) else str(e))
             finished = True
