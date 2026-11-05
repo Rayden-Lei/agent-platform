@@ -41,7 +41,8 @@ export default function EnableSwitch({ checked, onToggle, disabled, size = 'smal
       aria-label={value ? '已启用，点击停用' : '已停用，点击启用'}
       disabled={disabled || pending}
       onClick={change}
-      className="relative rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+      // 视觉尺寸不变，伪元素把命中区扩到 44×44（WCAG 2.5.8 触屏目标）
+      className="relative rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0 after:absolute after:-inset-[13px] after:content-['']"
       style={{ width: w, height: h, background: value ? 'var(--accent)' : 'var(--border-strong)' }}
     >
       <span
