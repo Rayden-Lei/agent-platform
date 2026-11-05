@@ -4,15 +4,23 @@ import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
-import { createSkill, updateSkill, type SkillInput, type SkillRow } from '../../api'
+import { createSkill, updateSkill, type ParsedSkill, type SkillInput, type SkillRow } from '../../api'
 import { errorText } from '../../utils/errors'
+import SkillResources from './SkillResources'
 
 // 技能新增 / 编辑：正文是 Markdown 操作手册，动辄几百行 → 用抽屉（整高、正文滚动、按钮常驻），不用弹窗。
 // 三处必须在界面上说清（docs/17 §4）：
 //   1. name 是模型 load_skill(name) 唯一能传的标识，格式被后端正则锁死，前端只做提前提示；
 //   2. description 决定模型会不会用这个技能（它只先看到 name + description 这一层目录）；
 //   3. 正文按 UTF-8 字节限 64KB（中文一个字 3 字节，按字数算会超出一倍）。
-interface Props { open: boolean; editing: SkillRow | null; onClose: () => void; onSaved: () => void }
+interface Props {
+  open: boolean
+  editing: SkillRow | null
+  /** 导入 SKILL.md 解析出的字段：只用于新建态预填，确认后照常走 createSkill */
+  prefill?: ParsedSkill | null
+  onClose: () => void
+  onSaved: () => void
+}
 interface FormValues {
   name: string
   display_name: string
@@ -34,7 +42,7 @@ const EMPTY: FormValues = { name: '', display_name: '', description: '', content
 const utf8Bytes = (s: string) => new TextEncoder().encode(s).length
 const kbText = (bytes: number) => `${(bytes / 1024).toFixed(1)}KB`
 
-export default function SkillForm({ open, editing, onClose, onSaved }: Props) {
+export default function SkillForm({ open, editing, prefill, onClose, onSaved }: Props) {
   const [values, setValues] = useState<FormValues>(EMPTY)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,13 +53,21 @@ export default function SkillForm({ open, editing, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!open) return
     setError(null)
-    setValues(editing
-      ? {
+    if (editing) {
+      setValues({
         name: editing.name, display_name: editing.display_name, description: editing.description || '',
         content: editing.content || '', always_on: editing.always_on, is_enabled: editing.is_enabled,
-      }
-      : EMPTY)
-  }, [open, editing])
+      })
+    } else if (prefill) {
+      // 导入的技能 always_on 由解析结果给（默认关）：长手册常驻会把上下文占满
+      setValues({
+        name: prefill.name, display_name: prefill.display_name, description: prefill.description,
+        content: prefill.content, always_on: prefill.always_on, is_enabled: prefill.is_enabled,
+      })
+    } else {
+      setValues(EMPTY)
+    }
+  }, [open, editing, prefill])
 
   const set = <K extends keyof FormValues>(key: K, v: FormValues[K]) => setValues((s) => ({ ...s, [key]: v }))
 
@@ -71,13 +87,13 @@ export default function SkillForm({ open, editing, onClose, onSaved }: Props) {
   const onSubmit = async () => {
     const invalid = validate(values)
     if (invalid) { setError(invalid); return }
-    // PUT 是整体覆盖：字段一个不少地发上去，漏了会被服务端拒或清空
+    // PUT 是整体覆盖：字段一个不少地发上去，漏了会被服务端拒或清空。
+    // resources 不在这个请求体里（服务端 extra=forbid）：资源走子接口单独增删，保存技能不会动脚本
     const payload: SkillInput = {
       name: values.name.trim(),
       display_name: values.display_name.trim(),
       description: values.description.trim(),
       content: values.content,
-      resources: editing?.resources ?? [],
       always_on: values.always_on,
       is_enabled: values.is_enabled,
     }
@@ -189,6 +205,13 @@ export default function SkillForm({ open, editing, onClose, onSaved }: Props) {
             onChange={(v) => set('is_enabled', v)}
           />
         </div>
+
+        {/* 资源区只在编辑态：资源挂在 /skills/{id}/resources 下，新建时还没有 id */}
+        {editing ? (
+          <SkillResources skillId={editing.id} onChanged={onSaved} />
+        ) : (
+          <p className="m-0 text-[12px] text-muted-foreground">保存后可以给这个技能上传脚本资源。</p>
+        )}
 
         {editing && (
           <p className="m-0 text-[12px] text-muted-foreground">

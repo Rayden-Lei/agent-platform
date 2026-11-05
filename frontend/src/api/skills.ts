@@ -1,15 +1,25 @@
-import { batchAction, del, get, post, put, type Page, type PageQuery } from './core'
+import client from './client'
+import { batchAction, del, get, post, put, type OkResponse, type Page, type PageQuery } from './core'
 
 // ===== 技能（docs/17 §4）=====
 // 技能是「操作手册」型知识：模板是人设（保存时渲染进 system_prompt），技能只在模型需要时
 // 由内置工具 load_skill(name) 取正文，所以列表不下发正文、详情才有。
 // 与提示词模板同一口径：name / description / content 变化才升版本，改完立刻对线上生效（技能不进发布快照）。
 
-// 技能附带资源（首版只存文本；type 字段留给 P2.6 接沙箱后的文件型资源）
+// 技能附带资源（docs/17 §4.5）：两类，界面都按「文件」展示
+//   {type:'text', content}                              内联文本，直接进库
+//   {type:'file', object:'skills/3/add.py', size}       文件型，正文在对象存储
+// 资源只能走 /skills/{id}/resources 子接口增删，保存技能不会动它们（SkillInput 里没有 resources）。
 export interface SkillResource {
   name: string
-  type: string
-  content: string
+  type: 'text' | 'file' | string
+  content?: string
+  /** 对象存储键，文件型才有 */
+  object?: string
+  /** 文件型为对象实际字节数；内联文本为 content 的 UTF-8 字节数 */
+  size?: number | null
+  /** 文件型的对象在桶里找不到了（被外部删掉），列表要标出来 */
+  missing?: boolean
 }
 
 export interface SkillRow {
@@ -34,13 +44,14 @@ export interface SkillRow {
   content?: string
 }
 
-/** 创建 / 更新请求体（PUT 是整体覆盖，字段缺一个就会被服务端拒或清空） */
+/** 创建 / 更新请求体（PUT 是整体覆盖，字段缺一个就会被服务端拒或清空）。
+ *  不含 resources：资源由 listSkillResources / uploadSkillResource / deleteSkillResource 单独管理，
+ *  多传 resources 服务端会 422（extra=forbid）。 */
 export interface SkillInput {
   name: string
   display_name: string
   description: string
   content: string
-  resources: SkillResource[]
   always_on: boolean
   is_enabled: boolean
 }
@@ -60,3 +71,41 @@ export const updateSkill = (id: number, data: SkillInput) => put<SkillRow>(`/ski
 export const deleteSkill = (id: number) => del(`/skills/${id}`)
 export const batchSkills = (ids: number[]) => batchAction('/skills', ids, 'delete')
 export const getSkillStats = () => get<SkillStats>('/skills/stats')
+
+/** 解析 SKILL.md 的返回：技能字段 + 原样保留的可选元信息（不落库） */
+export interface ParsedSkill {
+  name: string
+  display_name: string
+  description: string
+  content: string
+  always_on: boolean
+  is_enabled: boolean
+  resources: SkillResource[]
+  /** license / compatibility / allowed-tools / metadata，原样来自 frontmatter */
+  meta: Record<string, unknown>
+}
+
+// 解析 GitHub 上下载的 SKILL.md（Agent Skills 开放标准）：只解析不落库，字段回给编辑弹窗，
+// 使用者确认后走正常的 createSkill —— 导入与手填共用同一条校验路径
+export const parseSkillMd = (text: string) => post<ParsedSkill>('/skills/parse', { text })
+
+// ===== 技能资源（docs/04 §4.20）=====
+// 首版只收 .py：沙箱按 python 起进程，别的语言需要另一套加固。单个上限 512KB（服务端 413）。
+// 上传走 FormData，与知识库文档上传同一写法（axios 自动带 multipart 头，不设超时）
+export const SKILL_RESOURCE_SUFFIXES = ['.py']
+export const SKILL_RESOURCE_MAX_BYTES = 512 * 1024
+
+/** 资源清单：文件型带 size 与实际对象状态（missing 表示对象已不在桶里） */
+export const listSkillResources = (id: number) => get<SkillResource[]>('/skills/' + id + '/resources')
+// 同名上传是覆盖（改脚本就是这个动作）；名字允许单层目录，如 scripts/add.py
+export const uploadSkillResource = (id: number, file: File, onProgress?: (percent: number) => void) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return client.post('/skills/' + id + '/resources', fd, {
+    timeout: 0,
+    onUploadProgress: (e) => { if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100)) },
+  }) as unknown as Promise<SkillResource>
+}
+// 资源名带目录时路径里含 /，服务端用 {name:path} 接；这里按段编码，不整体 encodeURIComponent（那样 / 会变成 %2F 匹配不上）
+export const deleteSkillResource = (id: number, name: string) =>
+  del<OkResponse>('/skills/' + id + '/resources/' + name.split('/').map(encodeURIComponent).join('/'))

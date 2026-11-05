@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { BookOpen, Plus } from 'lucide-react'
+import { BookOpen, Plus, Upload } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
-import { batchSkills, deleteSkill, getSkill, getSkillStats, listSkills, updateSkill, type SkillInput, type SkillRow } from '../api'
+import { batchSkills, deleteSkill, getSkill, getSkillStats, listSkills, updateSkill, type ParsedSkill, type SkillInput, type SkillRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
@@ -17,6 +17,7 @@ import BatchActionBar from '../components/common/BatchActionBar'
 import BatchResultModal from '../components/common/BatchResultModal'
 import SkillForm from '../components/skills/SkillForm'
 import SkillDrawer from '../components/skills/SkillDrawer'
+import SkillImportModal from '../components/skills/SkillImportModal'
 import { buildSkillColumns } from '../components/skills/skillColumns'
 import DataTable from '../components/table/DataTable'
 import Button from '../components/ui/Button'
@@ -34,11 +35,14 @@ export default function Skills() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<SkillRow | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  // 导入解析出的字段：只用于新建态预填，使用者确认后走正常保存（不落库、不另开写入路径）
+  const [prefill, setPrefill] = useState<ParsedSkill | null>(null)
   const [current, setCurrent] = useState<SkillRow | null>(null)
   const list = usePagedList<SkillRow>(listSkills, {
     filters,
     selectable: true,
-    emptyText: <EmptyState description="还没有技能。把某类任务的固定做法写成 Markdown 操作手册，绑定到智能体后模型会在需要时自己加载。" action={{ label: '新增技能', onClick: () => { setEditing(null); setFormOpen(true) } }} />,
+    emptyText: <EmptyState description="还没有技能。把某类任务的固定做法写成 Markdown 操作手册，绑定到智能体后模型会在需要时自己加载。" action={{ label: '新增技能', onClick: () => { setEditing(null); setPrefill(null); setFormOpen(true) } }} />,
   })
   const stats = useAsyncData(() => getSkillStats(), [], { errorText: '加载技能统计失败' })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload(); stats.reload(true) })
@@ -50,7 +54,8 @@ export default function Skills() {
     try { setCurrent(r.content !== undefined ? r : await getSkill(r.id)) } catch (e) { toast.error(errorText(e, '加载技能失败')) }
   }
   const openEdit = async (r: SkillRow) => {
-    try { setEditing(r.content !== undefined ? r : await getSkill(r.id)); setFormOpen(true) } catch (e) { toast.error(errorText(e, '加载技能失败')) }
+    // 编辑已有技能时清掉导入预填：否则上一次导入的字段会盖住这次编辑
+    try { setPrefill(null); setEditing(r.content !== undefined ? r : await getSkill(r.id)); setFormOpen(true) } catch (e) { toast.error(errorText(e, '加载技能失败')) }
   }
   const onDelete = async (r: SkillRow) => {
     try { await deleteSkill(r.id); reloadAll() } catch (e) { toast.error(errorText(e, '删除失败')) }
@@ -63,7 +68,6 @@ export default function Skills() {
       display_name: detail.display_name,
       description: detail.description,
       content: detail.content || '',
-      resources: detail.resources ?? [],
       always_on: detail.always_on,
       is_enabled: !detail.is_enabled,
     }
@@ -79,7 +83,14 @@ export default function Skills() {
 
   const columns = useMemo(() => buildSkillColumns({ onOpen: openDetail, onToggle, onEdit: openEdit, onDelete }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openCreate = () => { setEditing(null); setFormOpen(true) }
+  const openCreate = () => { setEditing(null); setPrefill(null); setFormOpen(true) }
+  // 导入：解析成功后接着打开新建弹窗，字段已填好，使用者确认后才写库
+  const onImported = (parsed: ParsedSkill) => {
+    setImportOpen(false)
+    setEditing(null)
+    setPrefill(parsed)
+    setFormOpen(true)
+  }
   const empty = <EmptyState description="还没有技能。把某类任务的固定做法写成 Markdown 操作手册，绑定到智能体后模型会在需要时自己加载。" action={{ label: '新增技能', onClick: openCreate }} />
 
   return (
@@ -90,7 +101,12 @@ export default function Skills() {
           title="技能"
           description="技能的正文是「操作手册」，只在模型判断需要时才加载；提示词模板是「人设」，两者分开。这里的修改立刻对线上智能体生效，不需要重新发布。"
           tags={stats.data ? <span className="text-[12.5px]" style={{ color: 'var(--fg-muted)' }}>共 {stats.data.total} 个，启用 {stats.data.enabled} 个</span> : undefined}
-          extra={<Button variant="primary" size="md" icon={<Plus />} onClick={openCreate}>新增技能</Button>}
+          extra={
+            <>
+              <Button variant="secondary" size="md" icon={<Upload />} onClick={() => setImportOpen(true)}>导入 SKILL.md</Button>
+              <Button variant="primary" size="md" icon={<Plus />} onClick={openCreate}>新增技能</Button>
+            </>
+          }
         />
       }
       filters={
@@ -138,7 +154,8 @@ export default function Skills() {
         selectedKeys={list.selectedKeys}
         onSelectionChange={list.setSelectedKeys}
       />
-      <SkillForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} onSaved={reloadAll} />
+      <SkillForm open={formOpen} editing={editing} prefill={prefill} onClose={() => { setFormOpen(false); setPrefill(null) }} onSaved={reloadAll} />
+      <SkillImportModal open={importOpen} onClose={() => setImportOpen(false)} onParsed={onImported} />
       <SkillDrawer skill={current} onClose={() => setCurrent(null)} onEdit={(s) => { setCurrent(null); openEdit(s) }} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((s) => s.id === id)?.display_name} />
     </ListPage>
