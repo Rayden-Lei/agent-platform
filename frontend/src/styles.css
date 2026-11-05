@@ -108,18 +108,26 @@ html, body, #root {
   display: flex;
   flex-direction: column;
 }
-/* ===== Markdown 渲染 ===== */
-.markdown-body { line-height: 1.65; word-break: break-word; }
-.markdown-body p { margin: 0 0 8px; }
-.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 12px 0 8px; font-weight: 600; }
-.markdown-body h1 { font-size: 20px; } .markdown-body h2 { font-size: 17px; } .markdown-body h3 { font-size: 15px; }
-.markdown-body ul, .markdown-body ol { margin: 0 0 8px; padding-left: 20px; }
-.markdown-body code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12.5px; color: #0f172a; }
-.markdown-body pre { background: #0f172a; color: #e2e8f0; padding: 12px 14px; border-radius: 8px; overflow: auto; margin: 0 0 10px; }
+/* ===== Markdown 渲染 =====
+   字号必须显式写：不写就继承 body 的 16px，比用户消息（13.5px）大一号，
+   整块回答看着又大又散（2026-11-05 使用者反馈"AI 回复字体太大"）。
+   正文 13.5px / 行高 1.65 与用户消息一致；标题按 1.5 / 1.25 / 1.1 倍递减，不跳回 20px。 */
+.markdown-body { font-size: 13.5px; line-height: 1.65; word-break: break-word; }
+.markdown-body p { margin: 0 0 7px; }
+.markdown-body p:last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 11px 0 6px; font-weight: 600; line-height: 1.4; }
+.markdown-body h1 { font-size: 17px; } .markdown-body h2 { font-size: 15px; } .markdown-body h3 { font-size: 14px; }
+.markdown-body h1:first-child, .markdown-body h2:first-child, .markdown-body h3:first-child { margin-top: 0; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 7px; padding-left: 18px; }
+.markdown-body li + li { margin-top: 2px; }
+/* 最后一块内容不留外边距：否则正文与脚注之间会多出 7–8px，看着像"注脚离内容很远" */
+.markdown-body > *:last-child, .markdown-body > *:last-child > *:last-child { margin-bottom: 0; }
+.markdown-body code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; color: #0f172a; }
+.markdown-body pre { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: 8px; overflow: auto; margin: 0 0 8px; }
 .markdown-body pre code { background: transparent; color: inherit; padding: 0; }
-.markdown-body blockquote { border-left: 3px solid #cbd5e1; padding-left: 12px; color: #64748b; margin: 0 0 8px; }
+.markdown-body blockquote { border-left: 3px solid #cbd5e1; padding-left: 11px; color: #64748b; margin: 0 0 7px; }
 .markdown-body table { border-collapse: collapse; margin: 0 0 8px; }
-.markdown-body th, .markdown-body td { border: 1px solid #e2e8f0; padding: 6px 10px; font-size: 13px; }
+.markdown-body th, .markdown-body td { border: 1px solid #e2e8f0; padding: 5px 9px; font-size: 12.5px; }
 .markdown-body th { background: #f8fafc; }
 .markdown-body a { color: var(--accent); }
 

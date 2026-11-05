@@ -63,7 +63,7 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
     : ''
 
   return (
-    <div className="flex flex-col gap-2.5 max-w-full">
+    <div className="flex flex-col gap-2 max-w-full">
       {/* 头像与名称：头像取智能体名首字，颜色由主题 accent 决定 */}
       <div className="flex items-center gap-2">
         <span
@@ -89,9 +89,10 @@ export default function AssistantMessage({ msg, streaming, capabilities, onShowD
 
       {/* 脚注：一行紧凑排列，元信息在前、操作紧跟其后。
           原来用 justify-between 把操作推到容器最右边（回答宽 88%，按钮离正文很远），
-          现在不留空白，鼠标从正文滑到按钮的距离更短。 */}
+          现在不留空白，鼠标从正文滑到按钮的距离更短。
+          再往下贴一点（-mt-1.5 抵消外层 gap）：正文与脚注之间只留 2px，不再是 10px 的空白。 */}
       {!streaming && (hasContent || msg.usage) && (
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-0.5 text-[12px] leading-none" style={{ color: 'var(--fg-subtle)' }}>
+        <div className="-mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11.5px] leading-none" style={{ color: 'var(--fg-subtle)' }}>
           {debugText && <span className="tabular-nums">{debugText}</span>}
           {debugText && usageText && <Dot />}
           {usageText && <span className="tabular-nums" title={usageTitle}>{usageText}</span>}
