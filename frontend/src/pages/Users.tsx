@@ -53,14 +53,14 @@ export default function Users() {
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索用户名" />
           <Select value={filters.role ?? 'all'} onValueChange={(v) => setFilters({ role: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="角色"><SelectValue placeholder="角色" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="角色"><SelectValue placeholder="角色" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部角色</SelectItem>
               {statusOptions('role').map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filters.is_active ?? 'all'} onValueChange={(v) => setFilters({ is_active: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态"><SelectValue placeholder="状态" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部状态</SelectItem>
               {ACTIVE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}

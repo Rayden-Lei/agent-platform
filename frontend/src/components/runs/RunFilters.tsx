@@ -6,8 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { listAgents, listWorkflows, OPTIONS_PAGE } from '../../api'
 import { statusOptions } from '../../constants/status'
 import DateRangeFilter from '../common/DateRangeFilter'
+import FilterTrigger from '../common/FilterTrigger'
 import FilterBar from '../../components/layout/FilterBar'
-import Button from '../ui/Button'
 
 // 运行记录筛选条：类型 / 状态 / 来源 / 智能体 / 工作流 / 发起时间区间；值由页面用 useQueryState 放进 URL。
 // model_id 只从模型页链接带入，显示为可关闭标签。用 type 而不是 interface：useQueryState 要求隐式索引签名（interface 没有）
@@ -51,14 +51,15 @@ function SearchSelect({ value, onChange, placeholder, options, width }: {
   return (
     <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQ('') }}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="secondary" style={{ width }} className={"h-8 justify-between text-[13px]" + (current ? "" : " text-muted-foreground")} aria-label={placeholder}>
-          <span className="truncate">{current?.label ?? placeholder}</span>
-          <ChevronDown className="size-3.5 opacity-60" />
-        </Button>
+        <FilterTrigger style={{ width }} muted={!current} aria-label={placeholder} suffix={<ChevronDown className="size-3.5 opacity-60" />}>
+          {current?.label ?? placeholder}
+        </FilterTrigger>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[240px] p-2">
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索名称" className="h-8 text-[13px]" />
-        <div className="mt-1.5 flex max-h-[260px] flex-col overflow-y-auto">
+        {/* 限高 + flex-col 时子项默认 flex-shrink:1，会被压扁（15 项从 32px 压到 16px、文字被裁掉）；
+            列表要么滚要么整项显示，所以子项一律 shrink-0 */}
+        <div className="mt-1.5 flex max-h-[260px] flex-col gap-0.5 overflow-y-auto [&>*]:shrink-0">
           <button
             type="button"
             onClick={() => pick(undefined)}

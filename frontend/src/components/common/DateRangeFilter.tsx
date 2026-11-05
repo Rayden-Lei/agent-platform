@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { CalendarIcon } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { Calendar } from '@/components/shadcn/calendar'
-import Button from '../ui/Button'
+import FilterTrigger from './FilterTrigger'
 import { dayjs } from '../../utils/time'
 
 // 时间区间筛选：带"今天 / 近 7 天 …"快捷项，输出 ISO 串对（左闭右开，由 rangeToParams 转成后端参数）。
@@ -37,9 +37,9 @@ export default function DateRangeFilter({ value, onChange, style }: Props) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="secondary" icon={<CalendarIcon />} style={style} className={`h-8 ${value ? '' : 'text-muted-foreground'}`}>
+        <FilterTrigger icon={<CalendarIcon className="size-3.5" />} muted={!value} style={style} aria-label="时间范围">
           {label}
-        </Button>
+        </FilterTrigger>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-0">
         <div className="flex">

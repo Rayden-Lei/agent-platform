@@ -78,7 +78,7 @@ export default function ApiKeys() {
         <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称" />
           <Select value={filters.is_enabled ?? 'all'} onValueChange={(v) => setFilters({ is_enabled: v === 'all' ? undefined : v })}>
-            <SelectTrigger className="h-8 w-[100px] text-[13px]" aria-label="状态">
+            <SelectTrigger size="sm" className="h-8 w-[100px] text-[13px]" aria-label="状态">
               <SelectValue placeholder="状态" />
             </SelectTrigger>
             <SelectContent>
@@ -88,7 +88,7 @@ export default function ApiKeys() {
           </Select>
           {isAdmin && (
             <Select value={filters.user_id ?? 'all'} onValueChange={(v) => setFilters({ user_id: v === 'all' ? undefined : v })}>
-              <SelectTrigger className="h-8 w-[150px] text-[13px]" aria-label="归属">
+              <SelectTrigger size="sm" className="h-8 w-[150px] text-[13px]" aria-label="归属">
                 <SelectValue placeholder="归属" />
               </SelectTrigger>
               <SelectContent>

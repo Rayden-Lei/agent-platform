@@ -207,7 +207,7 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
       >
         <SearchInput value={q} onChange={setQ} placeholder="搜索文件名" width={200} />
         <Select value={status ?? 'all'} onValueChange={(v) => setStatus(v === 'all' ? undefined : v)}>
-          <SelectTrigger className="h-8 w-[110px] text-[13px]" aria-label="状态">
+          <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="状态">
             <SelectValue placeholder="状态" />
           </SelectTrigger>
           <SelectContent>
