@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
@@ -200,14 +200,27 @@ class WorkflowNode(Base):
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"
     # 两个通道各自的会话列表（docs/15 3.7.1，M2a）：界面按 (本人, ui)，API Key 按 (Key, 终端用户)
+    # kind 决定这个会话属于哪类对话，三种类型的归属列互斥（docs/17 §3.3）：唯一性交给 DB 约束，
+    # 应用层漏判时会在写入处直接失败，而不是留下一行"既绑智能体又绑模型"的脏数据。
     __table_args__ = (
         Index("ix_conversations_user_channel_updated", "user_id", "channel", "updated_at"),
         Index("ix_conversations_api_key_end_user_updated", "api_key_id", "end_user", "updated_at"),
         Index("ix_conversations_share_end_user_updated", "share_id", "end_user", "updated_at"),
+        Index("ix_conversations_user_kind_updated", "user_id", "kind", "updated_at"),
+        CheckConstraint(
+            "(kind = 'agent' AND agent_id IS NOT NULL AND workflow_id IS NULL AND model_id IS NULL)"
+            " OR (kind = 'workflow' AND workflow_id IS NOT NULL AND agent_id IS NULL AND model_id IS NULL)"
+            " OR (kind = 'model' AND model_id IS NOT NULL AND agent_id IS NULL AND workflow_id IS NULL)",
+            name="ck_conversations_kind",
+        ),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # 对话类型（docs/17 §3.1）：model 模型对话、agent 智能体对话、workflow 工作流对话。存量会话都是 agent
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="agent", server_default="agent")
     agent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
     workflow_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True)
+    # 模型对话直接指向模型行（不经过智能体）；与 agent_id / workflow_id 一样 CASCADE：删模型连带删会话，语义一致
+    model_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("models.id", ondelete="CASCADE"), nullable=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     # 会话通道：ui = 登录界面里的会话；api = API Key 发起的会话，只对该 Key（与同一个 end_user）可见，界面里看不到；
     # share = 分享链接的访客会话（docs/15 3.6）。归属判定见 conversation_service.owns
