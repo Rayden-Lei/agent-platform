@@ -7,6 +7,7 @@ import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight'
 import ChatPanel from '../components/chat/ChatPanel'
 import ConversationList from '../components/chat/ConversationList'
 import { CHAT_MESSAGE_MAX_CHARS } from '../components/chat/types'
+import ErrorBoundary from '../components/common/ErrorBoundary'
 import ShareHeader from '../components/share/ShareHeader'
 import SharePasswordForm from '../components/share/SharePasswordForm'
 import ShareStatus from '../components/share/ShareStatus'
@@ -26,6 +27,25 @@ function useIsMobile() {
 // 分享访客页 /s/:code（docs/15 3.6，PB-01）：不进 AppLayout、不需要平台登录（"仅登录"模式除外）。
 // 进入流程（资料、访问密码、领访客令牌、状态页）在 useShareAccess，会话与发送在 useShareChat；本页只做编排。
 // 对话复用 ChatPanel，按"最少暴露"给能力：不显示运行记录、Token、工具入参与结果，引用按链接设置。消息区是唯一滚动区。
+// 对话区块整体崩掉时的降级界面：访客页没有菜单与侧栏，必须给一个能自己恢复的出口
+function ShareCrash() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="m-0 text-[13.5px]" style={{ color: 'var(--fg-muted)' }}>
+        页面出了点问题，这条会话没能渲染出来
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="rounded-lg px-3 py-1.5 text-[13px]"
+        style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
+      >
+        刷新重试
+      </button>
+    </div>
+  )
+}
+
 export default function SharePage() {
   const { code = '' } = useParams()
   const isMobile = useIsMobile()
@@ -48,13 +68,17 @@ export default function SharePage() {
       style={{ height: viewportHeight ? `${viewportHeight}px` : '100%', paddingTop: 'env(safe-area-inset-top)' }}
     >
       <div className="mx-auto flex w-full flex-1 flex-col" style={{ minHeight: 0, maxWidth: 960, padding: isMobile ? 0 : 16 }}>
-        <ChatPanel
-          header={<ShareHeader name={info.agent_name} description={info.description} onOpenList={() => setListOpen(true)} onNew={newConversation} />}
-          messages={chat.messages} sending={chat.stream.sending} loading={chat.loadingMessages} isMobile={isMobile}
-          emptyHint={`向「${info.agent_name}」提问，开始对话`} maxLength={CHAT_MESSAGE_MAX_CHARS}
-          capabilities={{ showCitations: info.show_citations }}
-          onSend={chat.stream.send} onStop={chat.stream.stop} onRegenerate={chat.stream.regenerate}
-        />
+        {/* 整块对话兜底：访客页没有侧栏与菜单，一旦整树被卸载就只剩白屏，连重进入口都没有。
+            降级时给一句可操作的话与刷新按钮，而不是空白 */}
+        <ErrorBoundary fallback={<ShareCrash />}>
+          <ChatPanel
+            header={<ShareHeader name={info.agent_name} description={info.description} onOpenList={() => setListOpen(true)} onNew={newConversation} />}
+            messages={chat.messages} sending={chat.stream.sending} loading={chat.loadingMessages} isMobile={isMobile}
+            emptyHint={`向「${info.agent_name}」提问，开始对话`} maxLength={CHAT_MESSAGE_MAX_CHARS}
+            capabilities={{ showCitations: info.show_citations }}
+            onSend={chat.stream.send} onStop={chat.stream.stop} onRegenerate={chat.stream.regenerate}
+          />
+        </ErrorBoundary>
       </div>
 
       {/* 会话列表：窄屏占 85% 宽，宽屏固定 300px；访客只会看到自己的会话 */}
