@@ -52,3 +52,40 @@ def download_file(object_name: str, local_path: str) -> None:
     """下载对象到本地文件（文档处理流水线先下载到临时目录再解析）。"""
     client = get_minio()
     client.fget_object(settings.MINIO_BUCKET, object_name, local_path)
+
+
+def read_bytes(object_name: str, limit: int | None = None) -> bytes:
+    """把对象整个读进内存。limit 给了就在超过时抛 ValueError —— 技能脚本与资源要按大小上限取用，
+    调用方不能先整块读进内存再判断（一个 200MB 的对象足以把后端拖死）。"""
+    client = get_minio()
+    response = None
+    try:
+        response = client.get_object(settings.MINIO_BUCKET, object_name)
+        buf = bytearray()
+        for chunk in response.stream(64 * 1024):
+            buf.extend(chunk)
+            if limit is not None and len(buf) > limit:
+                raise ValueError(f"对象 {object_name} 超过上限 {limit} 字节")
+        return bytes(buf)
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
+def remove_object(object_name: str) -> None:
+    """删对象。对象不存在时 MinIO 不报错（幂等），删技能时不必先查存在性。"""
+    get_minio().remove_object(settings.MINIO_BUCKET, object_name)
+
+
+def stat_object(object_name: str) -> dict | None:
+    """对象元信息；不存在返回 None。列表页显示资源大小用，不必把内容读出来。"""
+    from minio.error import S3Error
+
+    try:
+        st = get_minio().stat_object(settings.MINIO_BUCKET, object_name)
+    except S3Error as e:
+        if e.code in ("NoSuchKey", "NoSuchObject"):
+            return None
+        raise
+    return {"size": st.size, "content_type": st.content_type}

@@ -6,17 +6,19 @@
 """
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
-from app.services import skill_import, skill_service
+from app.services import skill_import, skill_resource, skill_service
 from app.services.skill_service import CONTENT_MAX_BYTES, DESCRIPTION_MAX, SKILL_NAME_MAX, SKILL_NAME_PATTERN
 
 router = APIRouter(prefix="/skills", tags=["skills"])
@@ -70,6 +72,16 @@ class SkillBatchIn(BatchIn[Literal["delete"]]):
     """action 只接受 "delete"，其余值 422。"""
 
 
+async def _read_limited(file: UploadFile, limit: int) -> bytes:
+    """分块读并计数，超限 413。file.size 拿不到时（分块传输）也拦得住，不会先整块读进内存。"""
+    buf = bytearray()
+    while chunk := await file.read(256 * 1024):
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise BizError(413, f"单个资源最多 {limit // 1024}KB")
+    return bytes(buf)
+
+
 @router.get("")
 def list_skills(
     params: PageParams = Depends(page_params),
@@ -118,6 +130,56 @@ def parse_skill_md(data: SkillImportIn, user: User = Depends(require_roles("admi
     if size > CONTENT_MAX_BYTES:
         raise BizError(400, f"技能正文最多 {CONTENT_MAX_BYTES // 1024}KB，这个文件解析出 {size / 1024:.1f}KB，先拆成多个技能")
     return parsed
+
+
+@router.get("/{skill_id}/resources")
+def list_resources(skill_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """技能的资源清单：文件型的补实际大小，对象被外部删掉时标 missing。"""
+    return skill_resource.list_resources(db, skill_id)
+
+
+@router.post("/{skill_id}/resources")
+async def upload_resource(
+    skill_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "developer")),
+):
+    """上传一个资源文件（脚本等）进对象存储，并登记到该技能的 resources。
+
+    首版只收 .py（沙箱按 python 起进程，别的语言需要另一套加固）。单个上限 512KB。
+    MinIO 写入是阻塞 IO，放线程池执行，不占事件循环（与知识库上传同一处理）。
+    """
+    name = (file.filename or "").strip()
+    if not name:
+        raise BizError(400, "文件名不能为空")
+    if not name.endswith(skill_resource.SCRIPT_SUFFIXES):
+        raise BizError(400, f"首版只支持 {' / '.join(skill_resource.SCRIPT_SUFFIXES)} 资源")
+    content = await _read_limited(file, skill_resource.RESOURCE_MAX_BYTES)
+    skill = skill_service.get_skill(db, skill_id)
+    entry = await run_in_threadpool(skill_resource.store_file, skill_id, name, content, file.content_type or "text/plain")
+    # 同名资源覆盖：先摘掉旧的，再追加新的（skills.resources 是整体 JSON，顺序即展示顺序）
+    resources = [r for r in (skill.resources or []) if r.get("name") != entry["name"]]
+    resources.append(entry)
+    skill.resources = resources
+    db.commit()
+    record_audit(db, user, "update", "skill", skill.id, detail={"name": skill.name, "resource": entry["name"], "size": entry["size"]})
+    return entry
+
+
+@router.delete("/{skill_id}/resources/{name}")
+def delete_resource(skill_id: int, name: str, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """删一个资源：从 resources 摘掉并删除对象存储里的文件。"""
+    skill = skill_service.get_skill(db, skill_id)
+    target = next((r for r in (skill.resources or []) if r.get("name") == name), None)
+    if target is None:
+        raise BizError(404, "资源不存在")
+    if target.get("object"):
+        skill_resource.drop_file(target["object"])
+    skill.resources = [r for r in (skill.resources or []) if r.get("name") != name]
+    db.commit()
+    record_audit(db, user, "update", "skill", skill.id, detail={"name": skill.name, "removed_resource": name})
+    return {"code": 0, "message": "ok"}
 
 
 @router.get("/{skill_id}")
