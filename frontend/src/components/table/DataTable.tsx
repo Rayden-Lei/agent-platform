@@ -78,6 +78,7 @@ function SortIcon({ state }: { state: 'asc' | 'desc' | false }) {
   )
 }
 
+// 视觉 16×16，用伪元素把可点区域扩到 32×32：表格密集，直接放大按钮会撑开行高。
 function Checkbox({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: () => void; label: string }) {
   return (
     <button
@@ -86,7 +87,7 @@ function Checkbox({ checked, indeterminate, onChange, label }: { checked: boolea
       aria-checked={indeterminate ? 'mixed' : checked}
       aria-label={label}
       onClick={(e) => { e.stopPropagation(); onChange() }}
-      className="w-4 h-4 rounded-[4px] flex items-center justify-center shrink-0 transition-colors"
+      className="relative w-4 h-4 rounded-[4px] flex items-center justify-center shrink-0 transition-colors after:absolute after:-inset-2 after:content-['']"
       style={{
         background: checked || indeterminate ? 'var(--accent)' : 'var(--bg-elev)',
         border: `1px solid ${checked || indeterminate ? 'var(--accent)' : 'var(--border-strong)'}`,
@@ -260,7 +261,7 @@ export default function DataTable<T>({
                               aria-label={expanded ? '收起详情' : '展开详情'}
                               aria-expanded={expanded}
                               onClick={(e) => { e.stopPropagation(); toggleExpand(rid) }}
-                              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent"
+                              className="relative flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent after:absolute after:-inset-1.5 after:content-['']"
                             >
                               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"
                                 style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>

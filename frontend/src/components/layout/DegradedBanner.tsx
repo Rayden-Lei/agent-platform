@@ -36,7 +36,7 @@ export default function DegradedBanner() {
           </span>
         ))}
       </div>
-      <button type="button" aria-label="关闭提示" onClick={close} className="rounded p-0.5 text-muted-foreground hover:bg-black/5">
+      <button type="button" aria-label="关闭提示" onClick={close} className="relative rounded p-1 text-muted-foreground hover:bg-black/5 after:absolute after:-inset-2 after:content-['']">
         <X className="size-3.5" />
       </button>
     </div>

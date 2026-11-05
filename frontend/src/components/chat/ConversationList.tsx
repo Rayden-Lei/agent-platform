@@ -73,7 +73,7 @@ export default function ConversationList({ conversations, total, currentId, q, o
                 onClick={(e) => { e.stopPropagation(); onDelete(c.id) }}
                 title="删除会话"
                 aria-label="删除会话"
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded shrink-0"
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded shrink-0 relative after:absolute after:-inset-2 after:content-['']"
                 style={{ color: '#DC2626' }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
