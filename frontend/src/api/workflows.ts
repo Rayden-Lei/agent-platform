@@ -25,6 +25,10 @@ export interface WorkflowDetail extends WorkflowRow {
   schedules: { id: number; name: string; cron: string; is_enabled: boolean; last_run_at: string | null }[]
 }
 export interface WorkflowInput { name: string; description?: string; graph: WorkflowGraph }
+// 开始 / 结束节点的输入输出声明（docs/15 WF-04）：运行弹窗、定时任务表单按它生成表单项，
+// 变量没有默认值即必填；引用写法 {{start.变量名}} 在变量列表里统一提示
+export interface WorkflowVariableDecl { name: string; type: 'text' | 'number' | 'integer' | 'boolean'; description: string; default: unknown; required: boolean }
+export interface WorkflowParameters { workflow_id: number; variables: WorkflowVariableDecl[]; outputs: { name: string; ref: string }[] }
 // 运行 / 试运行 / 续跑的响应：status 为 success / awaiting_review / failed
 export interface WorkflowRunResult {
   run_id?: number
@@ -42,7 +46,8 @@ export const updateWorkflow = (id: number, data: WorkflowInput) => put<{ id: num
 export const deleteWorkflow = (id: number) => del(`/workflows/${id}`)
 export const duplicateWorkflow = (id: number) => post<WorkflowRow>(`/workflows/${id}/duplicate`)
 export const batchWorkflows = (ids: number[]) => batchAction('/workflows', ids, 'delete')
-export const runWorkflow = (id: number, data: { input: string }) => post<WorkflowRunResult>(`/workflows/${id}/run`, data)
-export const testRunWorkflow = (data: { graph: WorkflowGraph; input: string }) => post<WorkflowRunResult>('/workflows/test-run', data)
+export const runWorkflow = (id: number, data: { inputs: Record<string, unknown> }) => post<WorkflowRunResult>(`/workflows/${id}/run`, data)
+export const testRunWorkflow = (data: { graph: WorkflowGraph; inputs: Record<string, unknown> }) => post<WorkflowRunResult>('/workflows/test-run', data)
+export const getWorkflowParameters = (id: number) => get<WorkflowParameters>(`/workflows/${id}/parameters`)
 export const listWorkflowRuns = (id: number, params?: PageQuery) => get<Page<RunRow>>(`/workflows/${id}/runs`, params)
 export const resumeWorkflow = (workflowId: number, runId: number, decision: Record<string, unknown>) => post<WorkflowRunResult>(`/workflows/${workflowId}/runs/${runId}/resume`, { decision })

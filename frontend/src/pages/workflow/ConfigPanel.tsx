@@ -2,6 +2,8 @@ import { CircleCheck, CircleX, Play, Trash2, TriangleAlert } from 'lucide-react'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import NodeConfigForm, { type NodeFormValues } from './NodeConfigForm'
+import VariableFormFields from '../../components/workflows/VariableFormFields'
+import type { WorkflowVariableDecl } from '../../api'
 import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 
@@ -18,11 +20,14 @@ interface Props {
   agents: any[]
   tools: any[]
   kbs: any[]
+  // 当前选中工具的参数声明：有声明时按字段渲染输入项（docs/17），没有才退回 JSON 文本框
+  toolParams?: any
   edgeLabel: string
   onEdgeLabelChange: (value: string) => void // 随输入直接写回连线，与节点配置一致
   onDelete: () => void // 走 React Flow 的 deleteElements，和 Backspace 一样先过删除确认
-  testInput: string
-  onTestInputChange: (value: string) => void
+  testVariables: WorkflowVariableDecl[]
+  testInputs: Record<string, unknown>
+  onTestInputsChange: (values: Record<string, unknown>) => void
   testing: boolean
   testResult: any
   onTest: () => void
@@ -63,6 +68,7 @@ export default function ConfigPanel(p: Props) {
               agents={p.agents}
               tools={p.tools}
               kbs={p.kbs}
+              toolParams={p.toolParams}
             />
             {p.nodeError && (
               <div className="mt-2">
@@ -103,13 +109,8 @@ export default function ConfigPanel(p: Props) {
       {/* 测试运行区：输入工作流入参后试跑，不保存到工作流定义 */}
       <div className="shrink-0">
         <div className={TITLE}><Play className="size-3.5" /> 测试运行</div>
-        <textarea
-          rows={2}
-          value={p.testInput}
-          onChange={(e) => p.onTestInputChange(e.target.value)}
-          placeholder='{"expression": "2+3*4"}'
-          className="w-full resize-y rounded-md border border-border-strong bg-transparent px-2.5 py-1.5 font-mono text-[12px] leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        />
+        {/* 入参表单由开始节点的变量声明生成（docs/15 WF-04）：不再让用户手写 JSON 字典 */}
+        <VariableFormFields variables={p.testVariables} values={p.testInputs} onChange={p.onTestInputsChange} idPrefix="test-wf" />
         <Button variant="primary" size="sm" block className="mt-2" icon={<Play />} disabled={p.testing} onClick={p.onTest}>
           {p.testing ? '运行中…' : '运行'}
         </Button>

@@ -2,27 +2,47 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { CircleCheck, CircleX, Play, TriangleAlert } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { runWorkflow, type WorkflowRow, type WorkflowRunResult } from '../../api'
+import { getWorkflowParameters, runWorkflow, type WorkflowParameters, type WorkflowRow, type WorkflowRunResult } from '../../api'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 import Badge from '../ui/Badge'
 import JsonView from '../common/JsonView'
+import VariableFormFields from './VariableFormFields'
 import { errorText } from '../../utils/errors'
 
-// 手动运行工作流：输入 JSON 或文本，结果按成功 / 待审核 / 失败展示，并可跳到本次运行记录看节点日志与审核。
+// 手动运行工作流：输入项按开始节点的变量声明生成（docs/15 WF-04），结果按成功 / 待审核 / 失败展示，
+// 并可跳到本次运行记录看节点日志与审核。没有声明变量的工作流直接运行，不再让用户手写 JSON 字典。
 interface Props { workflow: WorkflowRow | null; onClose: () => void; onDone?: () => void }
 
 export default function RunWorkflowModal({ workflow, onClose, onDone }: Props) {
-  const [input, setInput] = useState('')
+  const [params, setParams] = useState<WorkflowParameters | null>(null)
+  const [paramsError, setParamsError] = useState<string | null>(null)
+  const [values, setValues] = useState<Record<string, unknown>>({})
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<WorkflowRunResult | null>(null)
-  useEffect(() => { if (workflow) { setInput(''); setResult(null) } }, [workflow])
+
+  useEffect(() => {
+    if (!workflow) return
+    setValues({}); setResult(null); setParams(null); setParamsError(null)
+    // 声明按工作流读一次：弹窗打开时就该知道要填什么，而不是等提交后才报错
+    getWorkflowParameters(workflow.id)
+      .then((p) => {
+        setParams(p)
+        const defaults: Record<string, unknown> = {}
+        p.variables.forEach((v) => { if (v.default != null) defaults[v.name] = v.default })
+        setValues(defaults)
+      })
+      .catch((e) => setParamsError(errorText(e, '读取输入声明失败')))
+  }, [workflow])
 
   const run = async () => {
     if (!workflow) return
     setRunning(true)
     try {
-      setResult(await runWorkflow(workflow.id, { input }))
+      // 空串按未填处理：后端对必填缺值返回 400，文案足够清楚，前端不再重复一套校验
+      const inputs: Record<string, unknown> = {}
+      Object.entries(values).forEach(([k, v]) => { if (v !== undefined && v !== '') inputs[k] = v })
+      setResult(await runWorkflow(workflow.id, { inputs }))
       onDone?.()
     } catch (e) {
       toast.error(errorText(e, '运行失败'))
@@ -40,21 +60,27 @@ export default function RunWorkflowModal({ workflow, onClose, onDone }: Props) {
       footer={
         <>
           <Button variant="ghost" size="md" onClick={onClose}>关闭</Button>
-          <Button variant="primary" size="md" icon={<Play />} disabled={running} onClick={run}>{running ? '运行中…' : '运行'}</Button>
+          <Button variant="primary" size="md" icon={<Play />} disabled={running || !!paramsError} onClick={run}>{running ? '运行中…' : '运行'}</Button>
         </>
       }
     >
       <div className="flex flex-col gap-3">
-        <p className="m-0 text-[12.5px] leading-relaxed text-muted-foreground">
-          输入会作为起始节点的 input；JSON 字符串会被解析为对象，其他内容按文本传入。运行同步等待结束，长流程请到运行记录页跟踪。
-        </p>
-        <textarea
-          rows={3}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder='{"expression": "2+3*4"}'
-          className="w-full resize-y rounded-lg border border-border-strong bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        />
+        {paramsError ? (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+            <CircleX className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+            <div className="min-w-0 text-[13px]">
+              <div className="text-destructive">读不到输入声明</div>
+              <div className="break-words text-muted-foreground">{paramsError}</div>
+            </div>
+          </div>
+        ) : !params ? (
+          <p className="m-0 text-[12.5px] text-muted-foreground">正在读取输入声明…</p>
+        ) : (
+          <>
+            <VariableFormFields variables={params.variables} values={values} onChange={setValues} disabled={running} idPrefix="run-wf" />
+            <p className="m-0 text-[12.5px] leading-relaxed text-muted-foreground">运行同步等待结束，长流程请到运行记录页跟踪。</p>
+          </>
+        )}
 
         {result && (
           <div className="flex flex-col gap-2.5">
