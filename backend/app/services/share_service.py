@@ -27,7 +27,7 @@ from app.db.session import rows_to_dict
 from app.db.models import Agent, AgentShare, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool, User
 from app.rag.retriever import kb_allows
 from app.runtime.agent_config import load_version_config
-from app.services import conversation_service
+from app.services import chat_turn, conversation_service
 
 GUEST_TOKEN_DAYS = 30            # 公开模式访客令牌有效期
 GUEST_RENEW_WITHIN = timedelta(days=7)  # 剩余不足 7 天时换发（响应头 X-Share-Token）
@@ -290,7 +290,8 @@ def check_chat_quota(db: Session, guest: Guest) -> None:
     since = _today_start()
     if db.query(func.count(Run.id)).filter(Run.share_id == share.id, Run.started_at >= since).scalar() >= share.daily_message_limit:
         raise BizError(429, "今日额度已用完，请明天再试")
-    mine = conversation_service.owned_conversations(db, guest.caller()).with_entities(Conversation.id).order_by(None).subquery()
+    # 访客会话只可能是智能体对话（分享链接挂在智能体上），按 kind 收窄让过滤走同一套口径
+    mine = conversation_service.owned_conversations(db, guest.caller(), kind=chat_turn.KIND_AGENT).with_entities(Conversation.id).order_by(None).subquery()
     sent = db.query(func.count(Message.id)).filter(Message.conversation_id.in_(db.query(mine.c.id)), Message.role == "user",
                                                    Message.created_at >= since).scalar()
     if sent >= share.visitor_daily_limit:
@@ -327,7 +328,7 @@ async def guest_events(events: AsyncGenerator[dict, None], show_citations: bool)
 
 def list_guest_conversations(db: Session, guest: Guest, params: PageParams, q: str | None = None) -> dict:
     """本访客自己的会话，可按标题模糊搜索（访客专用结构：{id, title, message_count, created_at, updated_at}，不含 summary 等）。"""
-    page = paginate(conversation_service.owned_conversations(db, guest.caller(), q=q), params)
+    page = paginate(conversation_service.owned_conversations(db, guest.caller(), kind=chat_turn.KIND_AGENT, q=q), params)
     ids = [c.id for c in page["items"]]
     counts = rows_to_dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
     page["items"] = [{"id": c.id, "title": c.title, "message_count": int(counts.get(c.id, 0)),

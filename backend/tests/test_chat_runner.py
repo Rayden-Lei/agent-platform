@@ -149,7 +149,9 @@ def test_get_conversation_returns_list_item_shape_and_hides_others(client, auth_
     conv_id = _events(_chat(client, auth_headers, agent["id"], "建个会话"))[-1]["conversation_id"]
     r = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers)
     assert r.status_code == 200, r.text
-    assert r.json()["agent_id"] == agent["id"] and r.json()["message_count"] == 2
+    body = r.json()
+    # 会话的归属口径改成 kind + target_id + target_name（docs/17 §3.3），agent_id / agent_name 已退休
+    assert body["kind"] == "agent" and body["target_id"] == agent["id"] and body["message_count"] == 2
     assert client.get("/api/v1/conversations/999999999", headers=auth_headers).status_code == 404
     username = "pytest-runner-caller-" + uuid.uuid4().hex[:6]
     caller = client.post("/api/v1/users", headers=auth_headers, json={"username": username, "password": "caller123", "role": "caller"}).json()
@@ -161,13 +163,14 @@ def test_get_conversation_returns_list_item_shape_and_hides_others(client, auth_
 
 
 def test_conversation_row_belongs_to_the_agent_it_was_created_with(client, auth_headers, make_agent, monkeypatch):
-    """回归：新会话的 agent_id 就是发起对话的智能体（会话归属校验依赖它）。"""
+    """回归：新会话的 kind=agent 且 target 就是发起对话的智能体（会话归属校验依赖它）。"""
     agent = make_agent()
     _use_llm(monkeypatch, _AnswerModel(messages=iter(["嗯"])))
     conv_id = _events(_chat(client, auth_headers, agent["id"], "你好"))[-1]["conversation_id"]
     db = SessionLocal()
     try:
-        assert db.get(Conversation, conv_id).agent_id == agent["id"]
+        conv = db.get(Conversation, conv_id)
+        assert (conv.kind, conv.agent_id, conv.workflow_id, conv.model_id) == ("agent", agent["id"], None, None)
     finally:
         db.close()
 
