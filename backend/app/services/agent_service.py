@@ -8,7 +8,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
 from app.db.session import rows_to_dict
-from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Tool, User, Workflow
+from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Skill, Tool, User, Workflow
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
 from app.services import api_key_service, kb_service, run_service
@@ -44,7 +44,7 @@ class _Related:
         runs_7d, last_run = self.runs.get(a.id, (0, None))
         return {
             "id": a.id, "name": a.name, "description": a.description, "system_prompt": a.system_prompt, "model_id": a.model_id,
-            "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "workflow_id": a.workflow_id,
+            "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "skill_ids": a.skill_ids, "workflow_id": a.workflow_id,
             "status": a.status, "version": a.version,
             "prompt_template_id": a.prompt_template_id, "prompt_template_version": a.prompt_template_version,
             "prompt_variables": a.prompt_variables or {}, "prompt_template_outdated": outdated,
@@ -88,9 +88,9 @@ def _apply_prompt(db: Session, a: Agent, data: AgentIn) -> None:
 def inline_snapshot(db: Session, data: AgentIn) -> dict:
     """装配页调试的内联配置（编辑器当前内容，含未保存修改）→ 与 snapshot_of 同形的快照。
     校验与保存同一口径（引用 404 / 400、模板渲染），不写 agents 行（docs/15 3.4）。"""
-    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids, data.skill_ids)
     return {"name": data.name, "description": data.description, "model_id": data.model_id, "params": data.params.to_dict(),
-            "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "workflow_id": data.workflow_id, **_prompt_fields(db, data)}
+            "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "skill_ids": data.skill_ids, "workflow_id": data.workflow_id, **_prompt_fields(db, data)}
 
 
 def list_agents(db: Session, params: PageParams, q: str | None = None, status: str | None = None, model_id: int | None = None,
@@ -175,10 +175,13 @@ def _check_ids(db: Session, model_cls, ids: list, label: str) -> None:
         raise BizError(400, f"{label}不存在：{', '.join(str(i) for i in missing)}")
 
 
-def validate_agent_config(db: Session, model_id: int, tool_ids: list, kb_ids: list) -> None:
+def validate_agent_config(db: Session, model_id: int, tool_ids: list, kb_ids: list, skill_ids: list | None = None) -> None:
     """保存、发布、回滚上线共用的引用校验（docs/15 3.3）：模型须存在（404「模型不存在」）且启用（400「模型已停用」）；
-    工具、知识库须存在（400 并列出缺失 ID）。结构与长度由 AgentIn 管（422）。
-    2026-09-25 前不校验：不存在的 model_id 撞外键走通用 500，不存在的工具与知识库 ID 悄悄存进去。"""
+    工具、知识库、技能须存在（400 并列出缺失 ID）。结构与长度由 AgentIn 管（422）。
+    2026-09-25 前不校验：不存在的 model_id 撞外键走通用 500，不存在的工具与知识库 ID 悄悄存进去。
+
+    skill_ids 默认 None 表示"调用方不管技能"（工作流智能体节点等老路径），显式传列表才校验；
+    技能停用不拦保存 —— 停用是运行时不再装配，不该让人没法保存草稿。"""
     model = db.get(ModelConfig, model_id)
     if model is None:
         raise BizError(404, "模型不存在")
@@ -186,6 +189,8 @@ def validate_agent_config(db: Session, model_id: int, tool_ids: list, kb_ids: li
         raise BizError(400, "模型已停用")
     _check_ids(db, Tool, tool_ids, "工具")
     _check_ids(db, KnowledgeBase, kb_ids, "知识库")
+    if skill_ids is not None:
+        _check_ids(db, Skill, skill_ids, "技能")
 
 
 def _check_new_kbs_visible(db: Session, kb_ids: list, existing: list, role: str) -> None:
@@ -203,7 +208,7 @@ def _check_new_kbs_visible(db: Session, kb_ids: list, existing: list, role: str)
 
 def create_agent(db: Session, data: AgentIn, user: User) -> dict:
     """新建智能体：初始为草稿态（draft），created_by 记录创建人。引用校验或模板渲染失败时不落库。"""
-    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids, data.skill_ids)
     _check_new_kbs_visible(db, data.kb_ids, [], user.role)
     a = Agent(
         name=data.name,
@@ -212,6 +217,7 @@ def create_agent(db: Session, data: AgentIn, user: User) -> dict:
         params=data.params.to_dict(),
         kb_ids=data.kb_ids,
         tool_ids=data.tool_ids,
+        skill_ids=data.skill_ids,
         workflow_id=data.workflow_id,
         created_by=user.id,
     )
@@ -238,9 +244,10 @@ def get_agent_detail(db: Session, agent_id: int) -> dict:
     model = db.get(ModelConfig, a.model_id) if a.model_id else None
     tools = db.query(Tool).filter(Tool.id.in_(a.tool_ids)).order_by(Tool.id).all() if a.tool_ids else []
     kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(a.kb_ids)).order_by(KnowledgeBase.id).all() if a.kb_ids else []
+    skills = db.query(Skill).filter(Skill.id.in_(a.skill_ids)).order_by(Skill.id).all() if a.skill_ids else []
     workflow = db.get(Workflow, a.workflow_id) if a.workflow_id else None
     template = db.get(PromptTemplate, a.prompt_template_id) if a.prompt_template_id else None
-    found_tools, found_kbs = {t.id for t in tools}, {k.id for k in kbs}
+    found_tools, found_kbs, found_skills = {t.id for t in tools}, {k.id for k in kbs}, {s.id for s in skills}
     return {
         **_single_out(db, a),
         "model": {"id": model.id, "name": model.name, "provider": model.provider, "model_name": model.model_name, "is_enabled": model.is_enabled} if model else None,
@@ -248,6 +255,8 @@ def get_agent_detail(db: Session, agent_id: int) -> dict:
         "missing_tool_ids": [i for i in (a.tool_ids or []) if i not in found_tools],
         "knowledge_bases": [{"id": k.id, "name": k.name, "is_public": k.is_public} for k in kbs],
         "missing_kb_ids": [i for i in (a.kb_ids or []) if i not in found_kbs],
+        "skills": [{"id": s.id, "name": s.name, "display_name": s.display_name, "always_on": s.always_on, "is_enabled": s.is_enabled} for s in skills],
+        "missing_skill_ids": [i for i in (a.skill_ids or []) if i not in found_skills],
         "workflow": {"id": workflow.id, "name": workflow.name, "status": workflow.status} if workflow else None,
         "prompt_template": {"id": template.id, "name": template.name, "version": template.version, "variables": template.variables} if template else None,
         "draft_snapshot": snapshot_of(a),
@@ -264,7 +273,7 @@ def update_agent(db: Session, agent_id: int, data: AgentUpdateIn, user: User) ->
     a = get_agent(db, agent_id)
     if a.updated_at != data.expected_updated_at:
         raise BizError(409, "已被他人修改，请刷新后再改")
-    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids)
+    validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids, data.skill_ids)
     _check_new_kbs_visible(db, data.kb_ids, a.kb_ids, user.role)
     before = snapshot_of(a)
     a.name = data.name
@@ -273,6 +282,7 @@ def update_agent(db: Session, agent_id: int, data: AgentUpdateIn, user: User) ->
     a.params = data.params.to_dict()
     a.kb_ids = data.kb_ids
     a.tool_ids = data.tool_ids
+    a.skill_ids = data.skill_ids
     a.workflow_id = data.workflow_id
     _apply_prompt(db, a, data)
     db.commit()
@@ -330,7 +340,7 @@ def publish_agent(db: Session, agent_id: int, user: User, note: str | None = Non
     """发布草稿：草稿成为新的线上版本（docs/15 3.2，FR-039）。发布前校验引用（模型停用 400 等），不通过不生成版本。
     草稿与线上一致时返回 unchanged 不生成版本；已下线的原样发布即重新上线。"""
     a = _lock_agent(db, agent_id)
-    validate_agent_config(db, a.model_id, a.tool_ids or [], a.kb_ids or [])
+    validate_agent_config(db, a.model_id, a.tool_ids or [], a.kb_ids or [], a.skill_ids or [])
     result = _go_live(db, a, snapshot_of(a), user, note)
     db.commit()
     db.refresh(a)
@@ -369,7 +379,7 @@ def rollback_agent(db: Session, agent_id: int, version_id: int, user: User) -> d
     a = _lock_agent(db, agent_id)
     av = _get_version(db, agent_id, version_id)
     snap = normalize_snapshot(av.snapshot)
-    validate_agent_config(db, snap["model_id"], snap["tool_ids"], snap["kb_ids"])
+    validate_agent_config(db, snap["model_id"], snap["tool_ids"], snap["kb_ids"], snap["skill_ids"])
     result = _go_live(db, a, snap, user, f"回滚到 v{av.version}")
     db.commit()
     db.refresh(a)
