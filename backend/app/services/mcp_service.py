@@ -249,23 +249,25 @@ def delete_server(db: Session, server_id: int, user: User) -> None:
                  detail={"name": name, "disabled_tools": len(tools)})
 
 
-def _to_tool_parameters(schema: dict) -> tuple[dict, list[str]]:
+def _to_tool_parameters(schema: dict) -> tuple[dict, list[str], list[str]]:
     """把远端 inputSchema 转成本项目的 JSON Schema 子集（tools/schema.ToolParameters）。
 
     本项目的声明只支持标量、无嵌套（docs/15 FR-030 的既有约束），而 MCP 的 inputSchema
     是完整的 JSON Schema。转换规则：
     - 顶层 object 的 properties 逐个看：string / number / integer / boolean 直接映射
     - enum 只保留字符串枚举（本项目的 enum 只对 string 有意义）
-    - 数组、对象、oneOf 等 → 降级为 string 类型并保留原描述（模型按文本传，服务端原样转发）
+    - 数组、对象、oneOf 等 → 降级为 string 类型并保留原描述，调用前再按 JSON 解析回去
       降级是必要的：不支持就丢参数，模型会漏传必填项，调用必然失败
     - required 里只保留真正转出来的那些
 
-    返回 (声明, 降级说明)。降级说明会写进 tools.config.schema_notes，工具页标黄提示。
+    返回 (声明, 降级说明, 被降级的参数名)。后两者写进 tools.config.schema_notes / degraded_params：
+    说明供工具页标黄提示，参数名列表供 build_call_args 在转发前把文本解析回对象 / 数组。
     """
     notes: list[str] = []
+    degraded: list[str] = []
     props_in = schema.get("properties") if isinstance(schema, dict) else None
     if not isinstance(props_in, dict):
-        return {"type": "object", "properties": {}, "required": []}, notes
+        return {"type": "object", "properties": {}, "required": []}, notes, degraded
 
     properties: dict[str, dict] = {}
     for name, raw in props_in.items():
@@ -286,17 +288,19 @@ def _to_tool_parameters(schema: dict) -> tuple[dict, list[str]]:
                 prop["enum"] = enum
             properties[str(name)] = prop
         else:
-            # 嵌套对象 / 数组 / oneOf：降级为自由文本，保留原描述让模型知道该传什么
+            # 嵌套对象 / 数组 / oneOf：降级为自由文本，保留原描述让模型知道该传什么。
+            # 记进 degraded：调用前要按 JSON 解析回去，否则远端收到的是字符串而不是数组/对象。
             properties[str(name)] = {
                 "type": "string",
                 "description": (description + "（复杂结构，请传 JSON 字符串）").strip(),
             }
-            notes.append(f"参数 {name} 的类型 {kind or '未声明'} 超出支持范围，已降级为文本")
+            degraded.append(str(name))
+            notes.append(f"参数 {name} 的类型 {kind or '未声明'} 超出支持范围，已降级为文本（调用时按 JSON 解析）")
 
     required_in = schema.get("required")
     required = [str(r) for r in required_in if isinstance(required_in, list) and str(r) in properties] \
         if isinstance(required_in, list) else []
-    return {"type": "object", "properties": properties, "required": required}, notes
+    return {"type": "object", "properties": properties, "required": required}, notes, degraded
 
 
 def _tool_name(server_name: str, remote_name: str) -> str:
@@ -340,10 +344,12 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
 
     for rt in remote_tools:
         seen.add(rt.name)
-        parameters, notes = _to_tool_parameters(rt.input_schema)
+        parameters, notes, degraded = _to_tool_parameters(rt.input_schema)
         config = {
             "parameters": parameters,
             "schema_notes": notes,
+            # 被降级的参数名：build_call_args 转发前按 JSON 解析回对象 / 数组
+            "degraded_params": degraded,
             # 出站白名单跟着服务器走：工具的判定读的是它自己 config 里的这一份
             "allowed_hosts": list(s.allowed_hosts or []),
             "url": s.url,
@@ -405,10 +411,15 @@ async def test_connection(db: Session, data) -> dict:
 
 
 def build_call_args(tool: Tool, arguments: dict) -> dict:
-    """调用前按声明校验参数（与 HTTP 工具同一条路径）。声明不合法时原样放行。
+    """调用前按声明校验参数，并把被降级的参数解析回对象 / 数组。
 
     MCP 工具的 config.parameters 是同步时从远端 inputSchema 转来的，走的是同一套
     ToolParameters 子集，因此可以直接复用 validate_args。
+
+    降级还原这一步不能省：嵌套对象与数组在本项目的声明里只能写成 string（标量限制），
+    但远端的 inputSchema 要的是真数组 / 真对象。只校验不还原的话，模型传
+    `["a","b"]` 会被校验拒掉；传 `'["a","b"]'` 通过了校验，远端收到的却是个字符串，
+    调用必然失败 —— 而且失败信息来自远端，看不出是这边的转换问题。
     """
     raw = (tool.config or {}).get("parameters")
     if raw is None:
@@ -423,4 +434,24 @@ def build_call_args(tool: Tool, arguments: dict) -> dict:
     normalized, error = validate_args(parameters, arguments)
     if error:
         raise ValueError(f"参数校验失败：{error}")
-    return normalized
+    return _restore_degraded(tool, normalized)
+
+
+def _restore_degraded(tool: Tool, args: dict) -> dict:
+    """把降级成字符串的参数按 JSON 解析回原结构。解析失败保留原样并记日志（让远端去判错）。"""
+    import json
+
+    degraded = [n for n in ((tool.config or {}).get("degraded_params") or []) if n in args]
+    if not degraded:
+        return args
+    out = dict(args)
+    for name in degraded:
+        value = out[name]
+        if not isinstance(value, str):
+            continue
+        try:
+            out[name] = json.loads(value)
+        except json.JSONDecodeError:
+            # 不是 JSON 就原样发：远端可能本来就要一个普通字符串
+            logger.info("MCP 工具 %s 的参数 %s 不是合法 JSON，按原样转发", tool.name, name)
+    return out
