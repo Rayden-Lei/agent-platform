@@ -39,8 +39,9 @@ _DELETE_ORDER: list[tuple[str, str]] = [
     ("knowledge_bases", "name"),     # 级联 documents → document_chunks
     ("prompt_templates", "name"),
     ("scheduled_jobs", "name"),
-    ("tools", "name"),
+    ("tools", "name"),              # mcp_server_id 没有外键，先于 mcp_servers 删即可
     ("skills", "name"),
+    ("mcp_servers", "name"),
     ("api_keys", "name"),
     ("users", "username"),           # 最后：上面这些都 RESTRICT 到它
 ]
