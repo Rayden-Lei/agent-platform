@@ -42,15 +42,28 @@ export default function TrendSection({ daily, days, onDaysChange, loading, error
     </div>
   )
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      <div className="lg:col-span-2">
-        <ChartCard title="运行趋势" subtitle="按状态分序列" extra={picker} loading={loading} error={error} onRetry={onRetry} empty={!hasData} emptyText="区间内没有运行记录">
-          <TrendLine data={points} height={236} statusSeries yFormatter={compactNumber} />
-        </ChartCard>
+    /* 布局重做（2026-11-06）：原来折线占 2/3、环图占 1/3，但 7 天数据只有 7 个点，
+       一条细线飘在大片空白里；环图内容小却占了整列高度。改成：
+       一块卡片里「折线铺满整行 + 右侧内嵌紧凑环图」，高度共用，互不空旷。 */
+    <ChartCard
+      title="运行趋势"
+      subtitle="按状态分序列"
+      extra={picker}
+      loading={loading}
+      error={error}
+      onRetry={onRetry}
+      empty={!hasData}
+      emptyText="区间内没有运行记录"
+      height={300}
+    >
+      <div className="grid h-full gap-2 lg:grid-cols-[1fr_220px]">
+        <div className="min-w-0">
+          <TrendLine data={points} height={264} statusSeries yFormatter={compactNumber} />
+        </div>
+        <div className="hidden min-w-0 lg:block">
+          <Donut data={totals} height={264} statusColors />
+        </div>
       </div>
-      <ChartCard title="状态分布" subtitle="区间内合计" loading={loading} error={error} onRetry={onRetry} empty={!hasData}>
-        <Donut data={totals} height={236} statusColors />
-      </ChartCard>
-    </div>
+    </ChartCard>
   )
 }
