@@ -40,6 +40,8 @@ async def _dispatch(tool: Tool, arguments: dict) -> dict:
     """闸门放行之后才走这里：只按类型分发，不再做任何判定。"""
     if tool.type == "builtin":
         return await _execute_builtin(tool.name, arguments, tool)
+    if tool.type == "mcp":
+        return await _execute_mcp(tool, arguments)
     return await _execute_http(tool, arguments)
 
 
@@ -203,6 +205,53 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
         else:
             logger.exception("HTTP 工具执行异常 tool=%s method=%s url=%s", tool.name, method, url)
         return {"error": message}
+
+
+async def _execute_mcp(tool: Tool, args: dict) -> dict:
+    """按工具行所属的 MCP 服务器调远端 tools/call（docs/17 §5）。**不做闸门判定**——调用方必须是 execute_tool。
+
+    每次调用新建连接（不做长连接池，§5.3 第 2 条）：MCP 会话要 initialize 握手，
+    池化会引入超时与重连状态机。代价是每次多一次握手 RTT。
+
+    远端不可达 / 协议错一律返回 {"error": ...} 而不抛异常：抛出去会让整轮对话失败，
+    而模型看到错误还能换个做法（与 HTTP 工具、技能脚本同一处理）。
+
+    服务器行必须现查：地址、凭据、allowed_hosts 都在 mcp_servers 那一行上，
+    工具行只记 mcp_server_id。用独立 session 查，不复用调用方的（这是执行期，不该改动调用方事务）。
+    """
+    from app.db.session import SessionLocal
+    from app.mcp import client
+    from app.services.mcp_service import build_call_args
+
+    try:
+        args = build_call_args(tool, args)
+    except ValueError as e:
+        # 参数不符合声明：回给模型让它自己纠正，不中断这一轮
+        logger.warning("MCP 工具参数校验失败 tool=%s：%s", tool.name, e)
+        return {"error": str(e)}
+
+    if not tool.mcp_server_id:
+        return {"error": f"MCP 工具 {tool.name} 没有关联服务器"}
+    if not tool.remote_name:
+        return {"error": f"MCP 工具 {tool.name} 缺少远端工具名"}
+
+    db = SessionLocal()
+    try:
+        from app.db.models import McpServer
+
+        server = db.get(McpServer, tool.mcp_server_id)
+        if server is None:
+            return {"error": f"MCP 工具 {tool.name} 的服务器已被删除"}
+        if not server.is_enabled:
+            return {"error": f"MCP 服务器 {server.name} 已停用"}
+        secret = decrypt_secret(server.secret_enc) if server.secret_enc else None
+        url, transport, headers = server.url, server.transport, server.headers or {}
+        server_name = server.name
+    finally:
+        db.close()
+
+    logger.info("MCP 调用 server=%s tool=%s remote=%s", server_name, tool.name, tool.remote_name)
+    return await client.call(url, transport, headers, secret, float(tool.timeout or 30), tool.remote_name, args)
 
 
 def _auth_parts(tool: Tool) -> tuple[dict, dict, str | None]:

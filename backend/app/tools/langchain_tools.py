@@ -203,6 +203,8 @@ def build_tools(tool_dbs: list, *, source: str = "chat", agent_id: int | None = 
             if wrapped is not None:
                 tools.append(wrapped)
             continue
+        # HTTP 与 MCP 共用同一个包装：两者的差别只在 execute_tool 的分发分支里，
+        # 参数声明、闸门、留痕都一样（docs/17 §5.2 选了"并入 tools 表"正是为了这个）
         tools.append(_build_http_tool(t, ToolCallContext(tool=t, source=source, agent_id=agent_id, run_id=run_id)))
     if skills:
         tools.append(_build_load_skill(skills))

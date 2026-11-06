@@ -90,7 +90,7 @@ def list_tools(
     params: PageParams = Depends(page_params),
     sort: SortParams = Depends(sort_params),
     q: str | None = Query(None, max_length=64, description="名称模糊匹配"),
-    type: Literal["builtin", "http"] | None = Query(None),
+    type: Literal["builtin", "http", "mcp"] | None = Query(None),
     is_enabled: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
