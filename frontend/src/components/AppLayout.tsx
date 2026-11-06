@@ -105,6 +105,7 @@ export default function AppLayout() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
+            <DegradedBanner />
             <AppearanceMenu />
             {/* 用户信息：头像取用户名首字母，点开是个人中心与退出登录（docs/15 OP-03） */}
             <DropdownMenu>
@@ -137,8 +138,6 @@ export default function AppLayout() {
           </div>
           </div>
         </header>
-
-        <DegradedBanner />
 
         {/* 内容区：外层负责占位与内边距（min-height: 0 保证 flex 子项可收缩），页面自身滚动由各页面内部处理 */}
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ padding: isMobile ? 12 : 20 }}>
