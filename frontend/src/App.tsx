@@ -20,6 +20,7 @@ const WorkflowDetail = lazy(() => import('./pages/WorkflowDetail'))
 const WorkflowEditor = lazy(() => import('./pages/WorkflowEditor'))
 const Tools = lazy(() => import('./pages/Tools'))
 const Skills = lazy(() => import('./pages/Skills'))
+const McpServers = lazy(() => import('./pages/McpServers'))
 const Runs = lazy(() => import('./pages/Runs'))
 const RunDetail = lazy(() => import('./pages/RunDetail'))
 const Users = lazy(() => import('./pages/Users'))
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="models" element={<Models />} />
         <Route path="tools" element={<Tools />} />
         <Route path="skills" element={<Skills />} />
+        <Route path="mcp-servers" element={<McpServers />} />
         <Route path="knowledge-bases" element={<KnowledgeBases />} />
         <Route path="knowledge-bases/:id" element={<KbDetail />} />
         <Route path="workflows" element={<Workflows />} />
