@@ -58,10 +58,16 @@ export default function DegradedBanner() {
           className="relative flex h-9 items-center rounded-lg px-1.5 transition-colors hover:bg-accent"
         >
           <TriangleAlert className="size-4 text-[#B45309]" />
-          {/* 数量角标：多项时是数字，单项就是一个点 */}
+          {/* 数量角标：单项时只一个小圆点（不显示数字，避免看着像"1 条未读"）；
+              多项才显示数字。2026-11-07 缩小：原来 h-4/min-w-4 视觉上比图标还抢眼。 */}
           <span
-            className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none text-white"
-            style={{ background: '#B45309' }}
+            className="absolute right-0 top-0.5 flex items-center justify-center rounded-full text-[9px] font-semibold leading-none text-white"
+            style={{
+              background: '#B45309',
+              height: items.length > 1 ? 12 : 5,
+              minWidth: items.length > 1 ? 12 : 5,
+              paddingInline: items.length > 1 ? 3 : 0,
+            }}
           >
             {items.length > 1 ? items.length : ''}
           </span>
