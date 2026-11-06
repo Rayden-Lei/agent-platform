@@ -314,7 +314,7 @@ export default function DataTable<T>({
       <div className="lg:hidden flex-1 min-h-0 overflow-auto flex flex-col gap-2.5">
         {loading
           ? skeletonRows.slice(0, 4).map((_, i) => (
-              <div key={`skc-${i}`} className="rounded-xl p-3.5" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}>
+              <div key={`skc-${i}`} className="shrink-0 rounded-xl p-3.5" style={{ background: 'var(--bg-elev)', border: '1px solid var(--border-strong)' }}>
                 <span className="block h-3.5 rounded mb-2.5" style={{ background: 'var(--bg-soft)', width: '45%' }} />
                 <span className="block h-3 rounded mb-2" style={{ background: 'var(--bg-soft)', width: '70%' }} />
                 <span className="block h-3 rounded" style={{ background: 'var(--bg-soft)', width: '55%' }} />
@@ -330,7 +330,11 @@ export default function DataTable<T>({
               return (
                 <div
                   key={String(rowKey(row))}
-                  className="rounded-xl overflow-hidden"
+                  // shrink-0 必须写：容器是 flex-col + overflow-auto，卡片默认 flex-shrink:1，
+                  // 条目一多（运行记录 179 条、审计日志上万条）总高度超出容器时，
+                  // 所有卡片会被等比压扁成一条线，再被 overflow-hidden 裁得只剩边框。
+                  // 这个 bug 只在数据量大时出现，少量数据看不出来（2026-11-06 手机实测暴露）。
+                  className="shrink-0 rounded-xl overflow-hidden"
                   style={{ background: 'var(--bg-elev)', border: '1px solid var(--border-strong)', boxShadow: 'var(--shadow-card)' }}
                   onClick={() => onRowClick?.(row)}
                 >

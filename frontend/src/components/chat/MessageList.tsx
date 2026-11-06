@@ -95,7 +95,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
         // 消息只会在尾部追加 / 替换最后一条 / 整体清空重载，索引始终稳定。
         if (m.role === 'user') {
           return (
-            <div key={i} className="flex flex-col items-end gap-1">
+            <div key={i} className="flex shrink-0 flex-col items-end gap-1">
               <div
                 className="whitespace-pre-wrap text-[13.5px] leading-[1.7]"
                 style={{
@@ -113,7 +113,7 @@ export default function MessageList({ messages, sending, isMobile, loading, empt
           )
         }
         return (
-          <div key={i} style={{ maxWidth: isMobile ? '100%' : '88%' }}>
+          <div key={i} className="shrink-0" style={{ maxWidth: isMobile ? '100%' : '88%' }}>
             {/* 单条消息兜底：模型产出的结构不可预知（Markdown、公式、引用标记），
                 某一条渲染崩掉时只丢这一条，页面与输入框都还在 */}
             <ErrorBoundary>
