@@ -44,11 +44,11 @@ export default function TrendSection({ daily, days, onDaysChange, loading, error
   return (
     <div className="grid gap-3 lg:grid-cols-3">
       <div className="lg:col-span-2">
-        <ChartCard title="运行趋势（按状态）" extra={picker} loading={loading} error={error} onRetry={onRetry} empty={!hasData} emptyText="区间内没有运行记录">
+        <ChartCard title="运行趋势" subtitle="按状态分序列" extra={picker} loading={loading} error={error} onRetry={onRetry} empty={!hasData} emptyText="区间内没有运行记录">
           <TrendLine data={points} height={236} statusSeries yFormatter={compactNumber} />
         </ChartCard>
       </div>
-      <ChartCard title="状态分布" loading={loading} error={error} onRetry={onRetry} empty={!hasData}>
+      <ChartCard title="状态分布" subtitle="区间内合计" loading={loading} error={error} onRetry={onRetry} empty={!hasData}>
         <Donut data={totals} height={236} statusColors />
       </ChartCard>
     </div>

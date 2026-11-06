@@ -61,16 +61,21 @@ body {
   border-color: #cbd5e1;
 }
 
-/* ===== 工作台 banner ===== */
+/* ===== 工作台 banner =====
+   2026-11-06 精致化：原来是一整块实色大横幅，与下方浅色卡片对比太重，像贴了一张海报。
+   改成与卡片同族的浅底面板：accent 的 8% 透明度打底 + 顶部一条 2px 主色饰线，
+   文字改回常规前景色，内边距收紧 —— 高度降一半左右，气质从「海报」回到「面板」。 */
 .dash-banner {
-  background: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  /* 主色的前景色跟着主题走：深色主题的主色偏亮（#7C93FF / #A78BFA），
-     写死 #fff 会掉到 2.8:1；--accent-fg 在深色主题里是深色字 */
-  color: var(--accent-fg);
-  padding: 24px;
-  margin-bottom: 20px;
+  border-top: 2px solid var(--accent);
+  color: var(--fg);
+  padding: 16px 20px;
+  margin-bottom: 4px;
 }
+.dash-banner h1 { color: var(--fg); }
+.dash-banner p { color: var(--fg-muted); }
 
 /* ===== 统计图标 ===== */
 .stat-icon {
