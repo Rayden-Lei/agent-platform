@@ -20,7 +20,7 @@ def test_nested_schema_degrades_to_text_instead_of_dropping():
 
     丢了的话模型会漏传必填项，远端调用必然失败；降级成文本至少还能让模型传 JSON 字符串。
     """
-    params, notes = mcp_service._to_tool_parameters({
+    params, notes, degraded = mcp_service._to_tool_parameters({
         "type": "object",
         "properties": {
             "q": {"type": "string", "description": "查询"},
@@ -36,11 +36,13 @@ def test_nested_schema_degrades_to_text_instead_of_dropping():
     # 降级后的参数仍然是可声明的，required 要保留
     assert set(params["required"]) == {"q", "filter"}
     assert len(notes) == 2
+    # 降级参数名要单独记下来：调用前要按 JSON 解析回数组 / 对象，否则远端收到的是字符串
+    assert set(degraded) == {"filter", "tags"}
 
 
 def test_enum_only_kept_for_string_and_required_pruned():
     """enum 只对 string 有意义；required 里指向不存在参数的项要摘掉（否则声明本身不合法）。"""
-    params, _ = mcp_service._to_tool_parameters({
+    params, _, _ = mcp_service._to_tool_parameters({
         "type": "object",
         "properties": {"mode": {"type": "string", "enum": ["a", "b"]}, "n": {"type": "integer", "enum": [1, 2]}},
         "required": ["mode", "ghost"],
@@ -52,13 +54,51 @@ def test_enum_only_kept_for_string_and_required_pruned():
 
 def test_illegal_property_name_is_skipped_with_note():
     """参数名不合法时忽略并说明：本项目声明要求 ^[A-Za-z_][A-Za-z0-9_]*$。"""
-    params, notes = mcp_service._to_tool_parameters({
+    params, notes, _ = mcp_service._to_tool_parameters({
         "type": "object",
         "properties": {"bad-name": {"type": "string"}, "good": {"type": "string"}},
     })
     assert "bad-name" not in params["properties"]
     assert "good" in params["properties"]
     assert any("bad-name" in n for n in notes)
+
+
+def test_degraded_params_restored_before_forwarding():
+    """降级成文本的数组 / 对象参数，转发前要按 JSON 解析回去。
+
+    只校验不还原的话：模型传 ["a","b"] 会被校验拒掉；传 '["a","b"]' 通过校验，
+    但远端收到的是字符串而不是数组，调用必然失败 —— 而且报错来自远端，看不出是这边的转换问题。
+    """
+    tool = Tool(name="pytest_mcp_restore", description="d", type="mcp", is_enabled=True,
+                config={
+                    "allowed_hosts": ["mcp.example.com"], "url": "https://mcp.example.com/mcp",
+                    "parameters": {"type": "object", "properties": {
+                        "tags": {"type": "string"}, "user": {"type": "string"}, "plain": {"type": "string"},
+                    }, "required": []},
+                    "degraded_params": ["tags", "user"],
+                },
+                mcp_server_id=1, remote_name="x")
+    args = mcp_service.build_call_args(tool, {
+        "tags": '["a", "b"]',
+        "user": '{"id": 7}',
+        "plain": "普通文本",
+    })
+    assert args["tags"] == ["a", "b"]      # 解析回真数组
+    assert args["user"] == {"id": 7}        # 解析回真对象
+    assert args["plain"] == "普通文本"       # 没降级的保持原样
+
+
+def test_degraded_param_kept_when_not_json():
+    """不是合法 JSON 时原样转发：远端可能本来就要一个普通字符串，不该在本地拒掉。"""
+    tool = Tool(name="pytest_mcp_restore2", description="d", type="mcp", is_enabled=True,
+                config={
+                    "allowed_hosts": ["mcp.example.com"], "url": "https://mcp.example.com/mcp",
+                    "parameters": {"type": "object", "properties": {"tags": {"type": "string"}}, "required": []},
+                    "degraded_params": ["tags"],
+                },
+                mcp_server_id=1, remote_name="x")
+    args = mcp_service.build_call_args(tool, {"tags": "not json"})
+    assert args["tags"] == "not json"
 
 
 def test_tool_name_is_sanitised_and_bounded():
