@@ -140,6 +140,35 @@ class Skill(Base, TimestampMixin):
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
 
 
+class McpServer(Base, TimestampMixin):
+    """外部 MCP 服务器（docs/17 §5，P5）。
+
+    首版只接 HTTP / SSE 传输：stdio 等于在服务器上执行配置里写的任意命令
+    （同类问题见 MaxKB CVE-2026-39417），且要在镜像里装运行时。
+
+    凭据走 secret_enc，与 tools 同一套加密（core/security.encrypt_secret），
+    任何接口都不回传明文，只回 has_secret。
+    """
+
+    __tablename__ = "mcp_servers"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    # http = Streamable HTTP（POST 一个端点，可返回 JSON 或 SSE 流）；sse = 旧版 HTTP+SSE（先 GET 拿端点）
+    transport: Mapped[str] = mapped_column(String(16), nullable=False, default="http", server_default="http")
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # 非敏感请求头；含凭据的键在接口层 422 拒绝（与 tools.config.headers 同一判定）
+    headers: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    secret_enc: Mapped[str | None] = mapped_column(Text)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    # 出站白名单：只写主机名，执行时按域名后缀匹配（与 tools 的 allowed_hosts 同一套判定）。
+    # 这里为空是拒绝 —— MCP 的地址由管理员配，没配白名单就无从判断目标是否可信。
+    allowed_hosts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
+
+
 class Tool(Base):
     __tablename__ = "tools"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -152,6 +181,11 @@ class Tool(Base):
     # 鉴权（M0，docs/15 RS-06）：auth 只放方式与位置 {type, location, name}，凭据加密后放 secret_enc，任何接口不回传
     auth: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     secret_enc: Mapped[str | None] = mapped_column(Text)
+    # MCP 来源（docs/17 §5.2）：type='mcp' 时指向 mcp_servers，remote_name 是远端工具原名。
+    # 不设外键到 mcp_servers：同步出来的行与服务器生命周期解耦，服务器删了这些行要留着
+    # （否则会破坏已有智能体的 tool_ids 引用），由服务层在删除时统一停用。
+    mcp_server_id: Mapped[int | None] = mapped_column(BigInteger)
+    remote_name: Mapped[str | None] = mapped_column(String(128))
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
