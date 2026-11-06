@@ -59,6 +59,10 @@ def check(ctx: ToolCallContext) -> tuple[str, str | None]:
     if ctx.source == "share":
         return "deny", f"分享链接不开放外部工具：{tool.name}"
 
+    # MCP 工具（docs/17 §5）与 HTTP 工具走同一套白名单：同步时把服务器的 allowed_hosts 与 url
+    # 复制进工具行的 config，因此下面这段不需要为 mcp 另写分支。
+    # MCP 的地址由管理员配置、模型改不了（它只能改调用参数），所以这里不做 DNS 解析拦内网段 ——
+    # 那会误伤内网自建的 MCP 服务器；控制的办法是 allowed_hosts 必填且由人显式写下目标域名。
     cfg = tool.config or {}
     # 过滤空串：前端清空白名单提交的是 []，而有人手工写库可能留下 [""]
     allowed = [h for h in (cfg.get("allowed_hosts") or []) if h]

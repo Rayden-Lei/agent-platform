@@ -295,7 +295,8 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
     """按一份智能体配置装配 LLM、工具与检索（含 RAG 引用，带权限过滤 + 证据绑定），历史消息由调用方补。
     线上对话与装配页调试共用；trace=True 时查知识库名称并记下改写步骤，给调用链用（线上省掉这次查询）。
     kb_scope：API Key 对话时传 Key 的 kb_ids，检索只放行公开库与范围内且归属人可见的库（docs/15 3.7.1）。
-    allow_http_tools=False 时不装配绑定的 HTTP 工具（分享访客默认如此，docs/15 3.6），内置工具照常可用。
+    allow_http_tools=False 时不装配绑定的外部工具（HTTP 与 MCP 都在其中；分享访客默认如此，
+    docs/15 3.6 与 docs/17 §5.3 第 6 条），内置工具照常可用。
     run_id / source 传给工具的执行闸门（docs/16 P3a），决定被拒时能追到哪一轮、哪个来源。"""
     model = usable_model(db, cfg.model_id)
     llm = build_llm(model, cfg.params)  # 智能体参数覆盖模型默认（FR-042）

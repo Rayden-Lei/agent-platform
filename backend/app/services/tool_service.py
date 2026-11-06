@@ -52,13 +52,29 @@ def _config_out(t: Tool) -> dict:
     return t.config
 
 
-def _to_dict(t: Tool, agents_count: int = 0, creator: str | None = None) -> dict:
+def _to_dict(t: Tool, agents_count: int = 0, creator: str | None = None, server_name: str | None = None) -> dict:
+    """工具对外形态。
+
+    MCP 工具（docs/17 §5.2）额外带 mcp_server_id / remote_name / mcp_server_name，
+    工具页据此打「MCP · 某某服务器」标签；这三项对其它类型恒为 None。
+    """
     return {
         "id": t.id, "name": t.name, "description": t.description, "type": t.type,
         "config": _config_out(t), "timeout": t.timeout, "is_enabled": t.is_enabled, "agents_count": agents_count,
         "auth": _auth_out(t), "created_by": t.created_by, "created_by_username": creator,
+        "mcp_server_id": t.mcp_server_id, "remote_name": t.remote_name, "mcp_server_name": server_name,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
+
+
+def _server_names(db: Session, tools: list) -> dict[int, str]:
+    """MCP 工具所属服务器的名字。一次查完，不逐行查库。"""
+    from app.db.models import McpServer
+
+    ids = {t.mcp_server_id for t in tools if t.mcp_server_id}
+    if not ids:
+        return {}
+    return rows_to_dict(db.query(McpServer.id, McpServer.name).filter(McpServer.id.in_(ids)).all())
 
 
 def _creators(db: Session, tools: list) -> dict:
@@ -82,6 +98,12 @@ def _check_auth(data, has_secret_after: bool) -> None:
         if kind != "none":
             raise BizError(400, "内置工具不需要鉴权方式；它的密钥请在工具配置里填")
         return
+    if data.type == "mcp":
+        # MCP 工具的地址、凭据、白名单全在 mcp_servers 那一行上（docs/17 §5.2），
+        # 工具行只是同步产物：在这里填鉴权方式不会有任何效果，拒绝掉免得以为生效了
+        if kind != "none":
+            raise BizError(400, "MCP 工具的地址与凭据在「MCP 连接器」里配置，工具本身不需要鉴权方式")
+        return
     if kind != "none" and not has_secret_after:
         raise BizError(400, f"鉴权方式为 {kind}，请填写凭据")
     if kind == "none" and data.secret:
@@ -97,8 +119,8 @@ def _check_allowed_hosts(config: dict | None, tool_type: str) -> None:
     hosts = (config or {}).get("allowed_hosts")
     if hosts in (None, []):
         return
-    if tool_type != "http":
-        raise BizError(400, "allowed_hosts 只对 HTTP 工具生效")
+    if tool_type not in ("http", "mcp"):
+        raise BizError(400, "allowed_hosts 只对 HTTP / MCP 工具生效")
     if not isinstance(hosts, list):
         raise BizError(400, "allowed_hosts 必须是数组")
     if len(hosts) > MAX_ALLOWED_HOSTS:
@@ -135,7 +157,12 @@ def list_tools(db: Session, params: PageParams, q: str | None = None, tool_type:
     page = paginate(apply_sort(query, sort, SORTABLE, [Tool.id.asc()]), params)
     counts = _agents_count_by_tool(db, {t.id for t in page["items"]})
     creators = _creators(db, page["items"])
-    page["items"] = [_to_dict(t, counts.get(t.id, 0), creators.get(t.created_by)) for t in page["items"]]
+    servers = _server_names(db, page["items"])
+    page["items"] = [
+        _to_dict(t, counts.get(t.id, 0), creators.get(t.created_by),
+                 servers.get(t.mcp_server_id) if t.mcp_server_id else None)
+        for t in page["items"]
+    ]
     return page
 
 
@@ -164,13 +191,21 @@ def get_tool_detail(db: Session, tool_id: int) -> dict:
     """工具详情：附引用它的智能体清单（id / name / status）。"""
     t = get_tool(db, tool_id)
     agents = [{"id": a.id, "name": a.name, "status": a.status} for a in db.query(Agent).filter(Agent.tool_ids.contains([tool_id])).order_by(Agent.id).all()]
-    return {**_to_dict(t, len(agents), _creators(db, [t]).get(t.created_by)), "agents": agents}
+    server_name = _server_names(db, [t]).get(t.mcp_server_id) if t.mcp_server_id else None
+    return {**_to_dict(t, len(agents), _creators(db, [t]).get(t.created_by), server_name), "agents": agents}
 
 
 def update_tool(db: Session, tool_id: int, data, user: User) -> dict:
     """覆盖式更新工具配置。凭据：secret 不传沿用、传了更换、clear_secret 清除；鉴权方式改成 none 时一并清除。
-    写审计 update，detail 只记改了哪些字段，凭据只记"已更换 / 已清除"，不含明文。"""
+    写审计 update，detail 只记改了哪些字段，凭据只记"已更换 / 已清除"，不含明文。
+
+    MCP 工具不允许经这里改：它的 config（参数声明、白名单、地址）是同步产物，
+    整体覆盖会冲掉远端 inputSchema 转出来的声明，下次调用模型就按错的声明传参。
+    要改地址与凭据去「MCP 连接器」改服务器，要更新参数重新同步。启停仍走 toggle。
+    """
     t = get_tool(db, tool_id)
+    if t.type == "mcp":
+        raise BizError(400, "MCP 工具由「MCP 连接器」同步生成，不能在这里编辑；改地址与凭据请改服务器，更新参数请重新同步")
     had_secret = bool(t.secret_enc)
     _check_auth(data, bool(data.secret) or (had_secret and not data.clear_secret))
     _check_allowed_hosts(data.config, data.type)

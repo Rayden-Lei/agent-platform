@@ -98,8 +98,12 @@ def validate_args(parameters: ToolParameters, args: dict | None) -> tuple[dict, 
 
 
 def check_tool_args(tool: Tool, args: dict | None) -> dict:
-    """调用 HTTP 工具前按其声明校验参数，不合法抛 ValueError("参数校验失败：...")；内置工具原样放行（它们有原生签名）。"""
-    if tool.type != "http":
+    """调用外部工具前按其声明校验参数，不合法抛 ValueError("参数校验失败：...")；内置工具原样放行（它们有原生签名）。
+
+    mcp 与 http 同样按声明校验：MCP 工具的 parameters 是同步时从远端 inputSchema 转来的，
+    结构就是本模块的 ToolParameters 子集（docs/17 §5.3 第 1 条）。
+    """
+    if tool.type not in ("http", "mcp"):
         return args or {}
     normalized, error = validate_args(parse_parameters(tool.config), args)
     if error:
