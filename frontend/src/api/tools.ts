@@ -33,7 +33,12 @@ export interface ToolRow {
   id: number
   name: string
   description: string
-  type: 'builtin' | 'http'
+  // mcp（docs/17 §5）：从外部 MCP server 同步来的工具，地址与凭据在 mcp_servers 那一行上
+  type: 'builtin' | 'http' | 'mcp'
+  /** 仅 type='mcp'：所属服务器、远端工具原名、服务器显示名（服务器已删时为 null） */
+  mcp_server_id: number | null
+  remote_name: string | null
+  mcp_server_name: string | null
   config: ToolConfig
   timeout: number
   is_enabled: boolean

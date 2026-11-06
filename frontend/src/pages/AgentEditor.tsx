@@ -221,7 +221,11 @@ export default function AgentEditor() {
             models={models?.items ?? []}
             templates={templates?.items ?? []}
             kbOptions={mergeOptions(kbs?.items ?? [], agent?.knowledge_bases ?? [])}
-            toolOptions={(tools?.items ?? []).map((t) => ({ value: t.id, label: t.is_enabled ? t.name : `${t.name}（已停用）` }))}
+            toolOptions={(tools?.items ?? []).map((t) => ({
+              value: t.id,
+              // MCP 工具要标出来源服务器：名字是 {server}_{remote} 拼的，光看名字认不出来
+              label: (t.is_enabled ? t.name : `${t.name}（已停用）`) + (t.type === 'mcp' && t.mcp_server_name ? ` · MCP ${t.mcp_server_name}` : ''),
+            }))}
             skillOptions={mergeSkillOptions(skills, agent?.skills ?? [])}
             onRenderTemplate={renderPromptTemplate}
           />

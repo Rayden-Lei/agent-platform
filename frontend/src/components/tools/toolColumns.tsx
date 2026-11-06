@@ -32,25 +32,46 @@ export function buildToolColumns({ canManage, onOpen, onToggle, onTest, onEdit, 
       ),
     },
     {
-      key: 'type', header: '类型', width: 168, sortable: true,
+      key: 'type', header: '类型', width: 200, sortable: true,
       cell: (r) => (
         <span className="inline-flex items-center gap-1 flex-wrap">
           <StatusTag domain="toolType" value={r.type} />
+          {/* MCP 工具要能看出它属于哪个服务器：同一平台可以登记多个，光看名字分不清 */}
+          {r.type === 'mcp' && (
+            r.mcp_server_name
+              ? <Link to={`/mcp-servers?open=${r.mcp_server_id}`} onClick={(e) => e.stopPropagation()}><Badge tone="neutral">{r.mcp_server_name}</Badge></Link>
+              : <Badge tone="danger" title="来源服务器已被删除，这个工具不会再被调用">服务器已删除</Badge>
+          )}
           {r.type === 'http' && (paramCount(r) ? <Badge tone="neutral">{paramCount(r)} 个参数</Badge> : <Badge tone="warning">未声明参数</Badge>)}
+          {r.type === 'mcp' && paramCount(r) > 0 && <Badge tone="neutral">{paramCount(r)} 个参数</Badge>}
         </span>
       ),
     },
     { key: 'description', header: '描述', width: 260, hideOnMobile: true, cell: (r) => <span className="block truncate" style={{ color: 'var(--fg-muted)' }}>{r.description}</span> },
     {
       key: 'request', header: '请求', width: 250, hideOnMobile: true,
-      cell: (r) => (r.type === 'http'
-        ? (
-          <span className="inline-flex items-center gap-1.5 min-w-0">
-            <Badge tone="info">{(r.config?.method || 'POST').toUpperCase()}</Badge>
-            <span className="truncate" style={{ color: 'var(--fg-muted)', fontFamily: '"SF Mono",Consolas,monospace', fontSize: 11.5 }} title={r.config?.url}>{r.config?.url || '-'}</span>
-          </span>
-        )
-        : <span style={{ color: 'var(--fg-subtle)' }}>服务内置实现</span>),
+      cell: (r) => {
+        if (r.type === 'http') {
+          return (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <Badge tone="info">{(r.config?.method || 'POST').toUpperCase()}</Badge>
+              <span className="truncate" style={{ color: 'var(--fg-muted)', fontFamily: '"SF Mono",Consolas,monospace', fontSize: 11.5 }} title={r.config?.url}>{r.config?.url || '-'}</span>
+            </span>
+          )
+        }
+        // MCP 工具的地址在服务器那一行上，这里显示远端工具原名（tools/call 时用它）
+        if (r.type === 'mcp') {
+          return (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <Badge tone="info">MCP</Badge>
+              <span className="truncate" style={{ color: 'var(--fg-muted)', fontFamily: '"SF Mono",Consolas,monospace', fontSize: 11.5 }} title={r.config?.url}>
+                {r.remote_name || '-'}
+              </span>
+            </span>
+          )
+        }
+        return <span style={{ color: 'var(--fg-subtle)' }}>服务内置实现</span>
+      },
     },
     { key: 'timeout', header: '超时', width: 68, align: 'right', hideOnMobile: true, cell: (r) => `${r.timeout}s` },
     {
@@ -68,7 +89,13 @@ export function buildToolColumns({ canManage, onOpen, onToggle, onTest, onEdit, 
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="secondary" icon={<FlaskConical />} onClick={() => onTest(r)}>测试</Button>
-          <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onEdit(r)}>编辑</Button>
+          {/* MCP 工具的地址、凭据、白名单都在服务器那一行上，这里的表单会整体覆盖 config，
+              把同步来的参数声明冲掉 —— 所以不给编辑，只给跳到连接器的入口 */}
+          {r.type === 'mcp'
+            ? (r.mcp_server_id
+              ? <Link to={`/mcp-servers?open=${r.mcp_server_id}`} onClick={(e) => e.stopPropagation()}><Button size="sm" variant="secondary">去连接器</Button></Link>
+              : null)
+            : <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onEdit(r)}>编辑</Button>}
           <InlineConfirm message="确定删除？绑定了该工具的智能体会失去这项能力" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger" disabled={!canManage}>删除</Button>
           </InlineConfirm>
