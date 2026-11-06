@@ -23,6 +23,11 @@ langgraph==1.2.11
 langgraph-prebuilt==1.1.0
 langgraph-checkpoint==4.2.0
 
+# MCP 客户端（docs/17 §5 RS-08）：接外部 MCP server 的 tools，只用 HTTP / SSE 传输，不接 stdio。
+# 锁 2.3.0：1.20.0 与 pydantic 2.14 不兼容（import 时找不到 _typing_extra.eval_type_backport），
+# 2.x 的传输入口改名为 streamable_http_client，client.py 按 2.x 的接口写。
+mcp==2.3.0
+
 # RAG 文档解析（按文件类型分片）
 pypdf==6.16.2
 python-docx==1.2.0
