@@ -1,7 +1,8 @@
 import { LazyLine } from './lazy'
-import { PALETTE, statusSeriesColor } from './theme'
+import { AREA_FILL_OPACITY, AXIS_STYLE, LINE_STYLE, PALETTE, statusSeriesColor } from './theme'
 
 // 折线趋势：单序列或多序列（series 字段分色）；状态序列用固定语义色。
+// 样式走 theme.ts 的统一配置（细线、浅网格、无边框轴）。
 export interface TrendPoint { date: string; value: number; series?: string }
 interface Props {
   data: TrendPoint[]
@@ -23,10 +24,10 @@ export default function TrendLine({ data, height, yFormatter, area = false, stat
       colorField={multi ? 'series' : undefined}
       height={height}
       autoFit
-      style={{ lineWidth: 2 }}
-      area={area ? { style: { fillOpacity: 0.12 } } : undefined}
+      style={LINE_STYLE}
+      area={area ? { style: { fillOpacity: AREA_FILL_OPACITY } } : undefined}
       scale={{ color: { range } }}
-      axis={{ y: { labelFormatter: yFormatter ? (v: number) => yFormatter(v) : undefined }, x: { labelAutoHide: true } }}
+      axis={{ x: AXIS_STYLE.x, y: { ...AXIS_STYLE.y, labelFormatter: yFormatter ? (v: number) => yFormatter(v) : undefined } }}
       legend={multi ? { color: { position: 'top' } } : false}
       animate={false}
     />
