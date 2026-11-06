@@ -57,7 +57,10 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
       configValues[f.key] = raw === undefined || raw === null || raw === '' ? (f.default as string | number) : (raw as string | number)
     }
     setValues({
-      name: editing.name, description: editing.description, type: editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(),
+      // MCP 工具不会进这个表单（列表里只给「去连接器」入口，后端 update_tool 也拒），
+      // 这里收窄成 'http' 只是为了让类型成立，不会真的写回 mcp
+      name: editing.name, description: editing.description,
+      type: editing.type === 'mcp' ? 'http' : editing.type, timeout: editing.timeout, method: (method || 'POST').toUpperCase(),
       url: url ?? '', headersStr: headers && Object.keys(headers).length ? JSON.stringify(headers, null, 2) : '',
       params: rowsFromSchema(parameters), allowedHosts: (allowed_hosts || []).join('\n'),
       // 内置工具的凭据单独管理（存 secret_enc），不占"鉴权"区，否则会被当成 HTTP 工具的鉴权配置

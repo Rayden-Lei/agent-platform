@@ -34,7 +34,8 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
   },
   enabled: { true: { label: '启用', color: 'success' }, false: { label: '停用', color: 'default' } },
   role: { admin: { label: '管理员', color: 'red' }, developer: { label: '开发者', color: 'blue' }, caller: { label: '调用者', color: 'default' } },
-  toolType: { builtin: { label: '内置', color: 'blue' }, http: { label: 'HTTP', color: 'green' } },
+  // MCP 工具（docs/17 §5）是从外部服务器同步来的，与内置、HTTP 并列成第三种来源
+  toolType: { builtin: { label: '内置', color: 'blue' }, http: { label: 'HTTP', color: 'green' }, mcp: { label: 'MCP', color: 'purple' } },
   auditAction: {
     login: { label: '登录', color: 'green' },
     login_failed: { label: '登录失败', color: 'red' },
