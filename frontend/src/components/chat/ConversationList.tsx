@@ -58,7 +58,7 @@ export default function ConversationList({ conversations, total, currentId, q, o
               tabIndex={0}
               onClick={() => onSelect(c.id)}
               onKeyDown={(e) => { if (e.key === 'Enter') onSelect(c.id) }}
-              className="group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[12.5px]"
+              className="group flex shrink-0 items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[12.5px]"
               style={{
                 background: active ? 'var(--accent-soft)' : 'transparent',
                 color: active ? 'var(--fg)' : 'var(--fg-muted)',
