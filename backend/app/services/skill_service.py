@@ -227,3 +227,77 @@ def stats(db: Session) -> dict:
     """技能总数与启用数，供列表页头部展示（一次查询）。"""
     total, enabled = db.query(func.count(Skill.id), func.count(Skill.id).filter(Skill.is_enabled.is_(True))).one()
     return {"total": int(total), "enabled": int(enabled)}
+
+
+def estimate_tokens(text: str) -> int:
+    """粗估 token 数，用于让使用者看到"这个技能会占多少上下文"。
+
+    为什么不调真实分词器：技能正文可达 64KB，装一个 tiktoken 级别的分词器只为估数不值得，
+    而且不同厂商的分词不一致，估到同一量级就够用。经验：英文约 4 字符/token，
+    中文约 1.5 字符/token（一个汉字常占 1~2 token），按内容里中文字符占比加权。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    other = len(text) - cjk
+    return int(cjk / 1.5 + other / 4)
+
+
+def preview_for_model(db: Session, skill_id: int) -> dict:
+    """预览这个技能**实际对模型长什么样**，不花 token（纯本地拼装，与装配逻辑同一套函数）。
+
+    为什么需要：技能最容易写错的两个地方是 description（决定模型会不会想到用它）和
+    always_on（正文每轮都进上下文，写长了会挤掉真正的对话）。这两点在编辑框里看不出来 ——
+    使用者看不到"模型眼里的样子"，只能绑到智能体上跑一轮才知道，反馈回路太长。
+
+    返回三段，对应技能进模型上下文的三种途径：
+    - catalog：非 always_on 技能在「可用技能」目录里的那一行（模型据此决定要不要加载）
+    - always_on_body：常驻技能每轮都被拼进系统提示的正文（仅 always_on 为真时）
+    - load_skill_result：模型真的调 load_skill 时拿到的完整返回
+    以及各段的 token 估算，让"这个技能有多重"变成可比较的数字。
+    """
+    s = get_skill(db, skill_id)
+    in_catalog = not s.always_on
+    catalog = f"- {s.name}：{s.description}" if in_catalog else ""
+    body = f"【技能 {s.name}】\n{s.content}" if s.always_on else ""
+    # load_skill 的返回值（见 tools/langchain_tools._build_load_skill）：正文加一句来源说明
+    loaded = f"【技能 {s.name}】\n{s.content}"
+    content_bytes = len((s.content or "").encode("utf-8"))
+    return {
+        "id": s.id,
+        "name": s.name,
+        "is_enabled": s.is_enabled,
+        "always_on": s.always_on,
+        "in_catalog": in_catalog,
+        "catalog_line": catalog,
+        "always_on_body": body,
+        "load_skill_result": loaded,
+        "tokens": {
+            "catalog": estimate_tokens(catalog),
+            "always_on_body": estimate_tokens(body),
+            "load_skill_result": estimate_tokens(loaded),
+        },
+        # 常驻技能每轮都要付这份开销；按需技能只在模型真加载时付
+        "per_turn_overhead": estimate_tokens(body) if s.always_on else estimate_tokens(catalog),
+        "content_bytes": content_bytes,
+        # 组装后一段给使用者看的人话结论
+        "advice": _preview_advice(s, content_bytes),
+    }
+
+
+def _preview_advice(s: Skill, content_bytes: int) -> list[str]:
+    """按常见的写错法给出提示。只提示，不阻断保存 —— 这些都不是硬错误。"""
+    tips: list[str] = []
+    if not s.is_enabled:
+        tips.append("技能已停用：装配时不会出现，模型看不到它（绑定关系仍保留）")
+    if s.always_on:
+        tips.append(f"常驻：正文（约 {estimate_tokens(s.content)} token）每轮都会进系统提示，内容长会挤压真正的对话")
+    else:
+        tips.append("按需加载：只有 name + description 进提示词，模型决定要用时才调 load_skill 取正文")
+    if len(s.description) < 20:
+        tips.append("描述偏短：它是模型判断「要不要用这个技能」的唯一依据，建议写清「做什么 + 什么时候用」")
+    if content_bytes > 20 * 1024:
+        tips.append(f"正文较大（{content_bytes / 1024:.1f}KB）：模型加载后要一次吃掉这么多上下文，考虑拆成多个技能")
+    if not any(k in s.description for k in ("当", "如果", "遇到", "用于", "需要")):
+        tips.append("描述里没有触发场景：纯名词堆叠的描述容易让模型想不到调用")
+    return tips
