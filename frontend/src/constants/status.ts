@@ -73,6 +73,8 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     document: { label: '文档', color: 'default' },
     workflow: { label: '工作流', color: 'default' },
     tool: { label: '工具', color: 'default' },
+    skill: { label: '技能', color: 'default' },
+    mcp_server: { label: 'MCP 连接器', color: 'default' },
     system_setting: { label: '系统参数', color: 'default' },
     agent_share: { label: '分享链接', color: 'default' },
   },

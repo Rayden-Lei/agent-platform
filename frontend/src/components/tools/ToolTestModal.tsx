@@ -22,7 +22,8 @@ export default function ToolTestModal({ tool, onClose }: Props) {
   const run = async () => {
     if (!tool) return
     let args: Record<string, unknown> = {}
-    if (tool.type === 'http') args = collectTestArgs(values)
+    // MCP 工具的参数声明也是同步来的 inputSchema 转出来的，与 HTTP 工具同一条表单路径
+    if (tool.type === 'http' || tool.type === 'mcp') args = collectTestArgs(values)
     else {
       try { args = JSON.parse(jsonText || '{}') } catch { toast.error('参数 JSON 格式错误'); return }
     }

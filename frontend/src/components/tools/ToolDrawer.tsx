@@ -67,6 +67,30 @@ export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }:
             <Cell label="类型"><StatusTag domain="toolType" value={tool.type} /></Cell>
             <Cell label="状态"><StatusTag domain="enabled" value={tool.is_enabled} /></Cell>
             <Cell label="描述" wide>{tool.description}</Cell>
+            {tool.type === 'mcp' && (
+              <>
+                <Cell label="来源服务器" wide>
+                  {tool.mcp_server_id && tool.mcp_server_name ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <ResourceLink type="mcp_server" id={tool.mcp_server_id} name={tool.mcp_server_name} showIcon />
+                      <span className="text-[12px] text-muted-foreground">地址、凭据与白名单都在连接器那一行上</span>
+                    </span>
+                  ) : (
+                    <Badge tone="danger">来源服务器已删除：该工具不会再被调用</Badge>
+                  )}
+                </Cell>
+                <Cell label="远端工具名" wide>
+                  <code className="break-all text-[12.5px]">{tool.remote_name || '-'}</code>
+                </Cell>
+                {(tool.config?.schema_notes as string[] | undefined)?.length ? (
+                  <Cell label="参数降级说明" wide>
+                    <span className="flex flex-col gap-1">
+                      {(tool.config.schema_notes as string[]).map((n) => <Badge key={n} tone="warning">{n}</Badge>)}
+                    </span>
+                  </Cell>
+                ) : null}
+              </>
+            )}
             {tool.type === 'http' && (
               <>
                 <Cell label="请求" wide>
@@ -96,9 +120,12 @@ export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }:
             <Cell label="更新时间"><TimeCell value={tool.updated_at} /></Cell>
           </dl>
 
-          {tool.type === 'http' && (
+          {(tool.type === 'http' || tool.type === 'mcp') && (
             <div className="flex flex-col gap-2">
-              <span className="text-[13px] font-medium">参数声明（{rows.length}）</span>
+              <span className="text-[13px] font-medium">
+                参数声明（{rows.length}）
+                {tool.type === 'mcp' && <span className="ml-1 font-normal text-muted-foreground">由远端 inputSchema 同步生成，改不了</span>}
+              </span>
               {rows.length ? (
                 <div className="overflow-hidden rounded-lg border border-border">
                   <table className="w-full border-collapse text-[13px]">
