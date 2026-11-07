@@ -12,9 +12,15 @@
 
 stdio 一律不做：那等于在服务器上执行配置里写的任意命令（同类问题见 MaxKB CVE-2026-39417），
 还要在镜像里装运行时。
+
+**为什么要独立 task 跑**（2026-11-08 修）：SDK 内部用 anyio 的 cancel scope，连不上时它给当前
+task 发 CancelledError —— 那是 BaseException，不是 Exception。在原 task 里跑就穿透所有
+`except Exception`，一路冒到 FastAPI，最终变成 **500 空响应体**：页面只看到"同步失败"，
+看不到"地址不通"。现在每次 SDK 调用放进独立 task，取消只影响内部，我们据此翻译成人话。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -89,14 +95,18 @@ class _Session:
             )
             await self._session.initialize()
             return self._session
-        except Exception:
-            await self._stack.aclose()
+        except BaseException:
+            # BaseException 也要收干净：连接失败的取消信号是 CancelledError，漏了会留下半开连接
+            try:
+                await self._stack.aclose()
+            except BaseException:  # noqa: BLE001 清理失败不能盖掉原始错误
+                logger.debug("MCP 会话清理失败 url=%s", self.url, exc_info=True)
             raise
 
     async def __aexit__(self, *exc) -> None:
         try:
             await self._stack.aclose()
-        except Exception:
+        except BaseException:  # noqa: BLE001
             # 清理失败不该盖掉调用本身的结果：只记日志
             logger.warning("关闭 MCP 会话失败 url=%s", self.url, exc_info=True)
 
@@ -105,13 +115,87 @@ def _open(url: str, transport: str, headers: dict, secret: str | None, timeout: 
     return _Session(url, transport, _auth_headers(headers, secret), timeout)
 
 
-def _wrap_error(e: Exception) -> McpError:
+async def _in_own_task(factory, url: str, timeout: float):
+    """在独立 task 里跑一次 SDK 调用，把"SDK 自己取消"与"调用方被取消"区分开。
+
+    - SDK 因连不上而取消：内部 task 被 cancel，我们把它翻成 McpError（人话见 _wrap_error）
+    - 调用方被取消（请求断开、上层超时）：照常把 CancelledError 往上抛，绝不吞
+    两条路靠"谁被 cancel 了"区分，不靠异常文本猜。
+    """
+    box: dict[str, Any] = {}
+
+    async def body() -> None:
+        try:
+            box["value"] = await factory()
+        except BaseException as e:  # noqa: BLE001 含 CancelledError，见上
+            box["error"] = e
+
+    task = asyncio.create_task(body())
+    try:
+        await task
+    except asyncio.CancelledError:
+        # 走到这里是调用方自己被取消（body 自己接住了内部取消，不会抛到这里）
+        raise
+    if "error" in box:
+        err = box["error"]
+        if isinstance(err, asyncio.CancelledError):
+            # SDK 内部取消：绝大多数是连接阶段失败（TCP 连不上、DNS 不解析、被立即拒绝）
+            raise McpError(
+                f"连不上 MCP 服务器 {_host_of(url)}：地址或端口不对、服务没启动，或网络不通"
+                f"（{timeout:.0f} 秒内没建立连接）"
+            )
+        raise err
+    return box["value"]
+
+
+def _host_of(url: str) -> str:
+    """从地址里取 host:port，报错时告诉用户是哪个地址连不上（比只回类名有用）。"""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    host = parsed.hostname or url
+    return f"{host}:{parsed.port}" if parsed.port else host
+
+
+def _status_hint(status: int) -> str:
+    """把 HTTP 状态翻成"该去改哪里"，只说这个状态最可能的那个原因。"""
+    if status == 401:
+        return "凭据无效或已过期（401）：检查「凭据」填的是不是对方要的 token"
+    if status == 403:
+        return "对方拒绝访问（403）：这个凭据可能没有调用该 MCP 服务的权限"
+    if status == 404:
+        return "地址路径不对（404）：MCP 端点通常以 /mcp 或 /sse 结尾，确认一下完整地址"
+    if status == 405:
+        return "请求方法不被接受（405）：传输类型可能选错了，HTTP 端点选 HTTP、旧版端点选 SSE"
+    if status == 429:
+        return "被对方限流了（429）：稍后再试，或联系对方提高配额"
+    if 500 <= status < 600:
+        return f"对方服务端出错（{status}）：这不是本平台的问题，联系对方排查"
+    return f"对方返回 HTTP {status}"
+
+
+def _wrap_error(e: Exception, url: str = "") -> McpError:
     """把 SDK 与 httpx 的异常转成一句人话。SDK 的异常有时是 ExceptionGroup，取里面的根因。"""
     if isinstance(e, McpError):
         return e
     if isinstance(e, BaseExceptionGroup):
-        inner = next((x for x in e.exceptions if not isinstance(x, BaseExceptionGroup)), e.exceptions[0] if e.exceptions else e)
-        return _wrap_error(inner if isinstance(inner, Exception) else e)
+        # anyio 的 TaskGroup 会把真正的错包在 ExceptionGroup 里，取第一个非嵌套的叶子
+        leaves = [x for x in e.exceptions if not isinstance(x, BaseExceptionGroup)]
+        inner = leaves[0] if leaves else (e.exceptions[0] if e.exceptions else e)
+        if isinstance(inner, Exception):
+            return _wrap_error(inner, url)
+        return McpError(f"MCP 调用失败：{type(inner).__name__}")
+    if isinstance(e, httpx2.HTTPStatusError):
+        status = e.response.status_code
+        return McpError(_status_hint(status))
+    if isinstance(e, (httpx2.ConnectError, httpx2.ConnectTimeout)):
+        host = _host_of(url) if url else "MCP 服务器"
+        return McpError(f"连不上 {host}：地址或端口不对、服务没启动，或网络不通")
+    if isinstance(e, httpx2.ReadTimeout):
+        return McpError("服务器连上了但一直没响应：确认它真的是 MCP 服务，且传输类型选对了")
     if isinstance(e, (httpx2.HTTPError, httpx2.StreamError)):
         return McpError(f"连接 MCP 服务器失败：{type(e).__name__}")
     return McpError(f"MCP 调用失败：{type(e).__name__}: {e}")
@@ -119,13 +203,16 @@ def _wrap_error(e: Exception) -> McpError:
 
 async def probe(url: str, transport: str, headers: dict, secret: str | None, timeout: float) -> list[McpTool]:
     """连一次并取工具清单。同步工具与"测试连接"共用这一条路径。"""
-    try:
+    async def body() -> Any:
         async with _open(url, transport, headers, secret, timeout) as session:
-            result = await session.list_tools()
+            return await session.list_tools()
+
+    try:
+        result = await _in_own_task(body, url, timeout)
     except McpError:
         raise
     except Exception as e:
-        raise _wrap_error(e) from e
+        raise _wrap_error(e, url) from e
 
     tools: list[McpTool] = []
     for item in (result.tools or [])[:MAX_REMOTE_TOOLS]:
@@ -169,13 +256,16 @@ def _content_to_text(content: Any) -> str:
 async def call(url: str, transport: str, headers: dict, secret: str | None, timeout: float,
                name: str, arguments: dict) -> dict:
     """调一个远端工具。返回统一契约 {"result": ...} 或 {"error": ...}，与 HTTP 工具一致。"""
-    try:
+    async def body() -> Any:
         async with _open(url, transport, headers, secret, timeout) as session:
-            result = await session.call_tool(name, arguments or {})
+            return await session.call_tool(name, arguments or {})
+
+    try:
+        result = await _in_own_task(body, url, timeout)
     except McpError as e:
         return {"error": str(e)}
     except Exception as e:
-        return {"error": str(_wrap_error(e))}
+        return {"error": str(_wrap_error(e, url))}
 
     text = _content_to_text(getattr(result, "content", None))
     if getattr(result, "is_error", False):
