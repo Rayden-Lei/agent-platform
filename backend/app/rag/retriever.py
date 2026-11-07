@@ -1,3 +1,4 @@
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,6 +10,8 @@ from app.db.session import SessionLocal
 from app.rag.embeddings import embed_query
 from app.rag.rerank import MODE_MODEL, extract_keywords, rerank, rerank_status
 from app.services.settings_service import runtime_value
+
+logger = logging.getLogger(__name__)
 
 RRF_K = 60  # RRF 倒排融合常数
 
@@ -36,6 +39,21 @@ def kb_allows(role: str | None, kb: KnowledgeBase | None, kb_scope: list | None 
     return bool(kb.is_public) or (bool(role) and role in (kb.visible_roles or []))
 
 
+def _kb_spec(db, kb: KnowledgeBase):
+    """知识库绑定的向量模型配置。库的模型被删 / 停用时返回 None，检索退到全局 .env 配置。
+
+    为什么不直接抛错：检索是对话主链路，库的向量已经存在，能用旧模型查就不该整条断掉；
+    真正的硬失败（配置错到无法向量化）会在 hash 兜底时体现为降级提示。
+    """
+    from app.services import embedding_model_service
+
+    try:
+        return embedding_model_service.spec_for_kb(db, kb)
+    except Exception as e:  # noqa: BLE001 配置缺失只降级，不阻断检索
+        logger.warning("知识库 %s 的向量模型不可用，检索退回全局配置：%s", kb.id, e)
+        return None
+
+
 def _authorize(role: str | None, kb: KnowledgeBase, chunk, kb_scope: list | None = None) -> bool:
     """逐条鉴权（第二道闸门，重排之后）：切片必须属于本次鉴权通过的那个库，且该库对角色（与 Key 的范围）可见。
 
@@ -55,15 +73,19 @@ def _rrf_fuse(candidates: dict) -> None:
         c["score"] = round(rrf, 6)
 
 
-def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, timings: dict | None = None) -> list:
+def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, spec,
+                        timings: dict | None = None) -> list:
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
+
+    spec 是知识库绑定的向量模型配置：查询向量必须与切片向量同一个模型产出，
+    否则余弦距离没有意义（不同模型的向量空间不可比）。
 
     mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
     调用前必须已过 kb_allows：无权的库根本不进这里，连查询向量化都不做。
     """
     timings = timings if timings is not None else {}
     started = time.perf_counter()
-    vec = embed_query(query)
+    vec = embed_query(query, spec)
     timings["embed_ms"] = int((time.perf_counter() - started) * 1000)
     candidates: dict = {}
 
@@ -217,7 +239,8 @@ def retrieve(kb_id: int, query: str, top_k: int | None = None, mode: str = "hybr
         kb = db.get(KnowledgeBase, kb_id)
         if not kb_allows(role, kb, kb_scope):
             return []
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode)
+        spec = _kb_spec(db, kb)
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec)
         ranked, _ = _rank_and_authorize(query, candidates, role, kb, kb_scope=kb_scope)
         return _format_items(db, ranked, top_k, enriched=False)
     finally:
@@ -237,7 +260,8 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int | None = None, mode: 
                 "top_score": 0.0, "mean_score": 0.0, "lexical_hit_count": 0, "rerank_mode": None, "timings": {}, "kb_denied": True,
             }}
         timings: dict = {}
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, timings=timings)
+        spec = _kb_spec(db, kb)
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec, timings=timings)
         keywords = extract_keywords(query)
         started = time.perf_counter()
         ranked, rejected = _rank_and_authorize(query, candidates, role, kb, keywords=keywords, kb_scope=kb_scope)

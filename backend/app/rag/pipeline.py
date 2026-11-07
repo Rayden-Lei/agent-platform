@@ -21,7 +21,7 @@ from app.db.session import SessionLocal
 from app.rag.embeddings import embed_texts_detailed
 from app.rag.minio_client import download_file
 from app.rag.parser import parse_document
-from app.services import settings_service
+from app.services import embedding_model_service, settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +251,12 @@ def _write_batch(db, doc: Document, kb: KnowledgeBase, start: int, batch: list, 
     db.commit()
 
 
-def _embed_and_write(db, doc: Document, kb: KnowledgeBase, chunks: list, start_at: int, opts, degraded_models: set) -> int:
+def _embed_and_write(db, doc: Document, kb: KnowledgeBase, chunks: list, start_at: int, opts, degraded_models: set,
+                     spec) -> int:
     """从第 start_at 片起按 opts 流水化入库，返回本次写入的切片数。
+
+    spec 是知识库绑定的向量模型配置（embedding_model_service.spec_for_kb）：入库与检索必须用同一个模型，
+    换模型等于换向量空间，混着用会让余弦距离失去意义。
 
     线程池只做向量化（不碰 db）；主线程按提交顺序取最早的一批写库。窗口满了才等最早的一批，
     所以最多有 embed_concurrency + write_buffer 批在飞（内存有界：每批 batch_size 条向量）。
@@ -275,7 +279,7 @@ def _embed_and_write(db, doc: Document, kb: KnowledgeBase, chunks: list, start_a
         for start in range(start_at, len(chunks), opts.batch_size):
             batch = chunks[start:start + opts.batch_size]
             texts = [c["content"] for c in batch]
-            pending.append((start, batch, pool.submit(embed_texts_detailed, texts, opts.embedding_request_size)))
+            pending.append((start, batch, pool.submit(embed_texts_detailed, texts, opts.embedding_request_size, spec)))
             if len(pending) >= max_inflight:
                 _flush_oldest()
         while pending:
@@ -338,9 +342,11 @@ def _process_document(doc_id: int, resume: bool = False) -> None:
             # 必须按顺序提交 —— 续处理靠"已入库的切片数"当起点，乱序提交会让这个数对不上实际缺口。
             # 同时在飞的批数 = 并发数 + 写库缓冲：写库慢时模型不停，模型慢时写库等；两者都为最小值即退化成原来的串行。
             opts = settings_service.ingest_options(db)
+            # 知识库绑定的向量模型：入库与检索必须同一个模型，否则切片向量与查询向量不在同一空间
+            spec = embedding_model_service.spec_for_kb(db, kb)
             degraded_models: set = set()
             started = time.perf_counter()
-            written = _embed_and_write(db, doc, kb, chunks, start_at, opts, degraded_models)
+            written = _embed_and_write(db, doc, kb, chunks, start_at, opts, degraded_models, spec)
             if degraded_models:
                 # 降级入库的切片检索质量不如真实向量，meta 里记下来，排查"检索不准"时能立刻定位
                 logger.warning("文档 %s 有切片使用 %s 向量入库（降级）", doc_id, "/".join(sorted(degraded_models)))

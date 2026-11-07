@@ -4,6 +4,7 @@
 export * from './core'
 export * from './auth'
 export * from './models'
+export * from './embeddingModels'
 export * from './agents'
 export * from './prompts'
 export * from './chat'

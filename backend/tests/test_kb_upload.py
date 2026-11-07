@@ -21,8 +21,11 @@ def _uid() -> str:
 
 
 @pytest.fixture
-def kb(client, auth_headers):
-    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-upload-" + _uid(), "chunk_size": 200, "chunk_overlap": 20})
+def kb(client, auth_headers, embedding_model):
+    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={
+        "name": "pytest-upload-" + _uid(), "embedding_model_id": embedding_model["id"],
+        "chunk_size": 200, "chunk_overlap": 20,
+    })
     assert r.status_code == 200, r.text
     yield r.json()
     client.delete(f"/api/v1/knowledge-bases/{r.json()['id']}", headers=auth_headers)
@@ -160,8 +163,9 @@ def test_upload_policy_matches_the_server_rules(client, auth_headers):
     {"name": ""},
     {"name": "字" * 129},
 ])
-def test_kb_fields_out_of_range_are_422(client, auth_headers, body):
-    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-kb-422-" + _uid(), **body})
+def test_kb_fields_out_of_range_are_422(client, auth_headers, embedding_model, body):
+    r = client.post("/api/v1/knowledge-bases", headers=auth_headers,
+                    json={"name": "pytest-kb-422-" + _uid(), "embedding_model_id": embedding_model["id"], **body})
     if r.status_code == 200:  # 修复前会落库：先删掉再让断言失败，不在共享库留数据
         client.delete(f"/api/v1/knowledge-bases/{r.json()['id']}", headers=auth_headers)
     assert r.status_code == 422

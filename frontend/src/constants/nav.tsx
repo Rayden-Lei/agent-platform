@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench, BookOpen, Blocks } from 'lucide-react'
+import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench, BookOpen, Blocks, Binary } from 'lucide-react'
 
 // 导航表：菜单项、分组、角色可见性与页面标题的唯一来源（docs/01 第 3 节权限矩阵、docs/17 §2 分组）。
 // 详情页（/agents/3）按路径前缀匹配到父菜单，标题显示父菜单名。
@@ -32,6 +32,8 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/knowledge-bases', label: '知识库', icon: <Database />, group: 'build', roles: ['admin', 'developer'] },
   { key: '/workflows', label: '工作流', icon: <Network />, group: 'build', roles: ['admin', 'developer'] },
   { key: '/models', label: '模型', icon: <Zap />, group: 'capability', roles: ['admin', 'developer'] },
+  // 向量模型与对话模型分开：协议（embeddings vs chat/completions）与字段都不同，混在一页会让人选错
+  { key: '/embedding-models', label: '向量模型', icon: <Binary />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/tools', label: '工具', icon: <Wrench />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/skills', label: '技能', icon: <BookOpen />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/mcp-servers', label: 'MCP 连接器', icon: <Blocks />, group: 'capability', roles: ['admin', 'developer'] },

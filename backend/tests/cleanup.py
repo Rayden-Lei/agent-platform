@@ -38,6 +38,10 @@ _DELETE_ORDER: list[tuple[str, str]] = [
     ("workflows", "name"),
     ("models", "name"),
     ("knowledge_bases", "name"),     # 级联 documents → document_chunks
+    # 必须在 knowledge_bases 之后：knowledge_bases.embedding_model_id 是 RESTRICT 到它，
+    # 库还在就删不掉模型（逐行删会跳过并计入 _skipped）。2026-11-08 加这张表时漏了这里，
+    # 一轮测试漏出 34 个 pytest-embed-* 模型，全都出现在建库下拉里。
+    ("embedding_models", "name"),
     ("prompt_templates", "name"),
     ("scheduled_jobs", "name"),
     ("tools", "name"),              # mcp_server_id 没有外键，先于 mcp_servers 删即可

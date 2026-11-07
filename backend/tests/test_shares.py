@@ -59,7 +59,7 @@ def made(client, auth_headers):
 def stub(monkeypatch):
     """模型换成桩、查询向量打桩、重排走词法；记下每次构建对话上下文的入参（检索角色、HTTP 工具开关）。"""
     monkeypatch.setattr(chat_service, "build_llm", lambda model, params=None: AnswerModel(messages=iter(["访客你好"])))
-    monkeypatch.setattr(retriever, "embed_query", lambda t: [0.1] * settings.EMBEDDING_DIM)
+    monkeypatch.setattr(retriever, "embed_query", lambda t, spec=None: [0.1] * settings.EMBEDDING_DIM)
     monkeypatch.setattr(settings, "RERANK_PROVIDER", "")
     calls = []
     real = chat_service.build_chat_context
@@ -124,7 +124,15 @@ def _done(client, code: str, guest: dict, message: str = "你好", **body) -> di
 
 def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles: list) -> tuple[int, str]:
     name = "pytest-share-kb-" + _uid()
-    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": name, "chunk_size": 200, "chunk_overlap": 0,
+    # 建库必须绑向量模型（2026-11-08 起）：现建一个一次性的，测试结束由 cleanup 回收
+    model = client.post("/api/v1/embedding-models", headers=auth_headers, json={
+        "name": "pytest-embed-share-" + _uid(), "provider": "openai",
+        "api_base": "https://pytest.invalid/v1", "api_key": "pytest-key",
+        "model_name": "pytest-embed-model", "dim": settings.EMBEDDING_DIM,
+    })
+    assert model.status_code == 200, model.text
+    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": name, "embedding_model_id": model.json()["id"],
+                                                                            "chunk_size": 200, "chunk_overlap": 0,
                                                                             "is_public": is_public, "visible_roles": visible_roles})
     assert r.status_code == 200, r.text
     kb_id = r.json()["id"]

@@ -109,6 +109,31 @@ def key_scope(client, auth_headers) -> dict:
 
 
 @pytest.fixture
+def embedding_model(client, auth_headers) -> dict:
+    """给知识库测试用的向量模型：建库必须绑一个真实存在且启用的模型（2026-11-08 起的契约）。
+
+    **function 级**，理由同 key_scope：tests/test_cleanup.py 会按 pytest- 前缀整表回收，
+    session 级的行会被它删掉，后续用例再引用就 404，且失败按执行顺序漂移、极难排查。
+
+    dim 必须与切片表列宽一致（服务端会校验，不一致直接 422）。地址指向不可达域名：
+    这些用例的入库全被打桩，不走真实向量服务。
+    """
+    from app.config import settings
+
+    r = client.post("/api/v1/embedding-models", headers=auth_headers, json={
+        "name": "pytest-embedding-model", "provider": "openai", "api_base": "https://pytest.invalid/v1",
+        "api_key": "pytest-key", "model_name": "pytest-embed-model",
+        "dim": settings.EMBEDDING_DIM, "request_size": 20, "is_enabled": True,
+    })
+    assert r.status_code == 200, r.text
+    row = r.json()
+    try:
+        yield row
+    finally:
+        client.delete(f"/api/v1/embedding-models/{row['id']}", headers=auth_headers)
+
+
+@pytest.fixture
 def client_from(client):
     """以指定对端地址建 TestClient，模拟不同来源 IP。依赖 client 是为了保证 lifespan 已经跑过（建表、管理员）。"""
 

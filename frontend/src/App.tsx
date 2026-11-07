@@ -8,6 +8,7 @@ import Login from './pages/Login'
 // 页面按路由懒加载：首屏只带布局与登录；AppLayout 的 <Outlet> 外套了 Suspense 骨架
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Models = lazy(() => import('./pages/Models'))
+const EmbeddingModels = lazy(() => import('./pages/EmbeddingModels'))
 const Agents = lazy(() => import('./pages/Agents'))
 const AgentDetail = lazy(() => import('./pages/AgentDetail'))
 const AgentCreate = lazy(() => import('./pages/AgentCreate'))
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="prompt-templates" element={<PromptTemplates />} />
         <Route path="chat" element={<Chat />} />
         <Route path="models" element={<Models />} />
+        <Route path="embedding-models" element={<EmbeddingModels />} />
         <Route path="tools" element={<Tools />} />
         <Route path="skills" element={<Skills />} />
         <Route path="mcp-servers" element={<McpServers />} />

@@ -191,12 +191,43 @@ class Tool(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class EmbeddingModel(Base, TimestampMixin):
+    """向量模型配置：知识库建库时绑一个，入库与检索都按它走（一个库一个模型，与 LLM 的 models 表并列）。
+
+    为什么单独一张表而不是复用 models：models 是对话（chat/completions）配置，字段语义（价格、思考模式、
+    默认参数）对 embedding 端点全都不适用；混在一起会让"模型"页面同时出现两种调用协议，选错就报 400。
+
+    dim 必须与 document_chunks.embedding 的列宽一致：pgvector 是定长列，维度和列宽不一致时插入直接报错，
+    所以在保存时就校验，不留到入库时才炸（见 embedding_model_service.create/update）。
+
+    api_key_enc 与 models.api_key_enc 同一口径：AES 加密落库，任何接口只回 has_key，明文不出服务端。
+    """
+
+    __tablename__ = "embedding_models"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    api_base: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 该模型实际产出的向量维度：保存时与 document_chunks.embedding 的列宽比对，不一致拒绝
+    dim: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 单次请求最多带几条文本（阿里云百炼 20，本地 oMLX 可更大）；入库流水线按它分批
+    request_size: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 class KnowledgeBase(Base, TimestampMixin):
     __tablename__ = "knowledge_bases"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 绑定的向量模型：建库时定，之后不可改（改了已有切片的向量就和库对不上）。
+    # 2026-11-08 前是一个自由字符串 embedding_model，只记录不生效，默认值还写成了本平台不存在的
+    # text-embedding-3-small；现在改成外键，入库与检索真的按它取模型。
+    embedding_model_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("embedding_models.id", ondelete="RESTRICT"), nullable=False, index=True)
     chunk_size: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     chunk_overlap: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     # 权限：is_public=True 所有角色可见；False 仅 visible_roles 内角色可见

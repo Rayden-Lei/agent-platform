@@ -6,7 +6,9 @@ export interface KnowledgeBaseRow {
   id: number
   name: string
   description: string | null
-  embedding_model: string
+  // 绑定的向量模型（2026-11-08 起是外键，建库时定、之后不可改）；模型被删时快照为 null
+  embedding_model_id: number
+  embedding_model: { id: number; name: string; model_name: string; dim: number } | null
   chunk_size: number
   chunk_overlap: number
   is_public: boolean
@@ -31,8 +33,9 @@ export interface KnowledgeBaseUpdateInput {
   chunk_overlap?: number
 }
 export interface KbAccessInput { is_public: boolean; visible_roles: string[] }
-// 新建：另带向量模型与初始访问权限
-export interface KnowledgeBaseInput extends KnowledgeBaseUpdateInput, Partial<KbAccessInput> { embedding_model?: string }
+// 新建：另带绑定的向量模型与初始访问权限。
+// embedding_model_id 必填：入库与检索都按这个模型走，不存在/已停用服务端会拒（404 / 400）
+export interface KnowledgeBaseInput extends KnowledgeBaseUpdateInput, Partial<KbAccessInput> { embedding_model_id: number }
 // 绑定本库的智能体：草稿绑定（in_draft）或在线智能体的线上版本绑定（in_live）
 export interface KbBoundAgent { id: number; name: string; status: string; in_draft: boolean; in_live: boolean }
 // 各身份能否检索本库：服务端用检索闸门同一函数算出，前端不另写规则；anonymous 是分享链接的匿名访客

@@ -192,10 +192,13 @@ def test_api_keys_list_has_username_and_filters(client, auth_headers, key_scope)
 
 # ---------- 知识库：统计字段与文档筛选 ----------
 
-def test_kb_list_has_stats_and_document_list_validates_sort(client, auth_headers):
-    kb = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-depth-kb-" + uuid.uuid4().hex[:4], "description": ""}).json()
+def test_kb_list_has_stats_and_document_list_validates_sort(client, auth_headers, embedding_model):
+    kb = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={
+        "name": "pytest-depth-kb-" + uuid.uuid4().hex[:4], "description": "", "embedding_model_id": embedding_model["id"],
+    }).json()
     try:
-        assert kb["document_count"] == 0 and kb["embedding_model"] and kb["created_by_username"] == "admin"
+        # embedding_model 现在是绑定的模型快照（dict），2026-11-08 前是个自由字符串
+        assert kb["document_count"] == 0 and kb["embedding_model"]["id"] == embedding_model["id"] and kb["created_by_username"] == "admin"
         listed = client.get("/api/v1/knowledge-bases", headers=auth_headers, params={"q": kb["name"], "is_public": "true"}).json()["items"][0]
         assert listed["chunk_count"] == 0 and listed["policy_version"] == 1
         detail = client.get(f"/api/v1/knowledge-bases/{kb['id']}", headers=auth_headers).json()

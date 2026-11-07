@@ -59,7 +59,8 @@ def test_embedding_failure_degrades_and_is_recorded(monkeypatch):
             raise RuntimeError("模拟向量服务不可用")
 
     monkeypatch.setattr(embeddings.settings, "EMBEDDING_API_KEY", "test-key")
-    monkeypatch.setattr(embeddings, "get_embeddings", lambda: _Broken())
+    # get_embeddings 2026-11-08 起接受 spec（按知识库的向量模型取客户端），桩要能吃下这个参数
+    monkeypatch.setattr(embeddings, "get_embeddings", lambda spec=None: _Broken())
     monkeypatch.setattr(embeddings, "_last_failure", None)
 
     result = embeddings.embed_texts_detailed(["向量服务挂了也要能入库"])
@@ -82,17 +83,19 @@ def test_embedding_status_without_key_is_configuration_degradation(monkeypatch):
     assert status["last_error"] is None
 
 
-def _make_kb(client, auth_headers, name: str) -> dict:
+def _make_kb(client, auth_headers, name: str, model_id: int) -> dict:
+    """建一个知识库并绑到给定的向量模型（2026-11-08 起建库必须绑模型）。"""
     r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={
-        "name": name, "description": "pytest", "embedding_model": "pytest", "chunk_size": 200, "chunk_overlap": 20,
+        "name": name, "description": "pytest", "embedding_model_id": model_id,
+        "chunk_size": 200, "chunk_overlap": 20,
     })
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def test_chunk_meta_records_embedding_backend(client, auth_headers, monkeypatch):
+def test_chunk_meta_records_embedding_backend(client, auth_headers, monkeypatch, embedding_model):
     """切片 meta 要记下实际使用的向量后端，换模型或降级后才知道哪些切片需要重建。"""
-    kb = _make_kb(client, auth_headers, "pytest-kb-embedding-meta")
+    kb = _make_kb(client, auth_headers, "pytest-kb-embedding-meta", embedding_model["id"])
     db = SessionLocal()
     try:
         doc = Document(kb_id=kb["id"], name="pytest-meta.txt", file_path="pytest/unused.txt", file_type="txt", status="uploading")
@@ -119,9 +122,9 @@ def test_chunk_meta_records_embedding_backend(client, auth_headers, monkeypatch)
         client.delete(f"/api/v1/knowledge-bases/{kb['id']}", headers=auth_headers)
 
 
-def test_document_processing_failure_is_recorded(client, auth_headers, monkeypatch):
+def test_document_processing_failure_is_recorded(client, auth_headers, monkeypatch, embedding_model):
     """解析失败要落到 doc.error，而不是让后台任务静默炸掉、文档永远停在 parsing。"""
-    kb = _make_kb(client, auth_headers, "pytest-kb-parse-failure")
+    kb = _make_kb(client, auth_headers, "pytest-kb-parse-failure", embedding_model["id"])
     db = SessionLocal()
     try:
         doc = Document(kb_id=kb["id"], name="pytest-bad.txt", file_path="pytest/unused.txt", file_type="txt", status="uploading")

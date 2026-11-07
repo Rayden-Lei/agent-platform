@@ -11,7 +11,7 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.session import rows_to_dict
-from app.db.models import Agent, AgentVersion, AuditLog, Document, DocumentChunk, KnowledgeBase, User
+from app.db.models import Agent, AgentVersion, AuditLog, Document, DocumentChunk, EmbeddingModel, KnowledgeBase, User
 from app.rag.minio_client import upload_file
 from app.rag.retriever import kb_allows, retrieve, retrieve_with_stats
 
@@ -49,10 +49,15 @@ def _policy(is_public: bool, visible_roles: list | None) -> dict:
     return {"is_public": bool(is_public), "visible_roles": list(visible_roles or [])}
 
 
-def _kb_dict(k: KnowledgeBase, stats: dict | None = None, creator: str | None = None) -> dict:
-    """知识库行 → 对外字典（含权限、向量模型、文档 / 切片统计、创建人）。"""
+def _kb_dict(k: KnowledgeBase, stats: dict | None = None, creator: str | None = None, model: dict | None = None) -> dict:
+    """知识库行 → 对外字典（含权限、向量模型、文档 / 切片统计、创建人）。
+
+    model 是绑定的向量模型快照 {id, name, model_name, dim}：前端不用再查一次就能显示
+    "用的是哪个模型"，也避免列表页 N+1。行缺失（被删）时给 None，前端显示"模型已删除"。
+    """
     return {
-        "id": k.id, "name": k.name, "description": k.description, "embedding_model": k.embedding_model,
+        "id": k.id, "name": k.name, "description": k.description,
+        "embedding_model_id": k.embedding_model_id, "embedding_model": model,
         "chunk_size": k.chunk_size, "chunk_overlap": k.chunk_overlap,
         "is_public": k.is_public, "visible_roles": k.visible_roles, "policy_version": k.policy_version,
         "created_by": k.created_by, "created_by_username": creator,
@@ -87,11 +92,21 @@ def _stats_by_kb(db: Session, kb_ids: set[int]) -> dict[int, dict]:
     return stats
 
 
+def _models_by_id(db: Session, rows: list) -> dict[int, dict]:
+    """一批知识库绑定的向量模型：一次 IN 查询装配，不逐个 db.get（列表页每行都查会成 N+1）。"""
+    ids = {k.embedding_model_id for k in rows if k.embedding_model_id}
+    if not ids:
+        return {}
+    found = db.query(EmbeddingModel).filter(EmbeddingModel.id.in_(ids)).all()
+    return {m.id: {"id": m.id, "name": m.name, "model_name": m.model_name, "dim": m.dim} for m in found}
+
+
 def _serialize(db: Session, rows: list) -> list[dict]:
     stats = _stats_by_kb(db, {k.id for k in rows})
     creator_ids = {k.created_by for k in rows if k.created_by}
     creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
-    return [_kb_dict(k, stats.get(k.id), creators.get(k.created_by)) for k in rows]
+    models = _models_by_id(db, rows)
+    return [_kb_dict(k, stats.get(k.id), creators.get(k.created_by), models.get(k.embedding_model_id)) for k in rows]
 
 
 def list_kbs(db: Session, user: User, params: PageParams, q: str | None = None, is_public: bool | None = None, sort: SortParams | None = None) -> dict:
@@ -107,12 +122,21 @@ def list_kbs(db: Session, user: User, params: PageParams, q: str | None = None, 
 
 
 def create_kb(db: Session, data, user) -> dict:
-    """新建知识库，记录创建人；权限字段是初始权限（之后在访问权限页签改，update_access），非 admin 不能把自己排除在外。写审计 create。"""
+    """新建知识库，记录创建人；权限字段是初始权限（之后在访问权限页签改，update_access），非 admin 不能把自己排除在外。写审计 create。
+
+    绑定的向量模型必须存在且启用 —— 建完之后入库与检索都按它走，绑错了要等上传文档才报错，
+    所以在这里就拦住（404 不存在 / 400 已停用，与项目其他"引用的对象"口径一致）。
+    """
     _check_not_shut_out(user.role, data.is_public, data.visible_roles)
+    model = db.get(EmbeddingModel, data.embedding_model_id)
+    if model is None:
+        raise BizError(404, f"向量模型不存在：{data.embedding_model_id}")
+    if not model.is_enabled:
+        raise BizError(400, f"向量模型「{model.name}」已停用，不能用于新建知识库")
     kb = KnowledgeBase(
         name=data.name,
         description=data.description,
-        embedding_model=data.embedding_model,
+        embedding_model_id=data.embedding_model_id,
         chunk_size=data.chunk_size,
         chunk_overlap=data.chunk_overlap,
         is_public=data.is_public,
