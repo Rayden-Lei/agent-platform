@@ -100,7 +100,9 @@ export default function Skills() {
           icon={<BookOpen />}
           title="技能"
           description="技能的正文是「操作手册」，只在模型判断需要时才加载；提示词模板是「人设」，两者分开。这里的修改立刻对线上智能体生效，不需要重新发布。"
-          tags={stats.data ? <span className="text-[12.5px]" style={{ color: 'var(--fg-muted)' }}>共 {stats.data.total} 个，启用 {stats.data.enabled} 个</span> : undefined}
+          tags={stats.error
+            ? <span className="text-[12.5px] text-destructive" title={stats.error}>统计加载失败</span>
+            : stats.data ? <span className="text-[12.5px]" style={{ color: 'var(--fg-muted)' }}>共 {stats.data.total} 个，启用 {stats.data.enabled} 个</span> : undefined}
           extra={
             <>
               <Button variant="secondary" size="md" icon={<Upload />} onClick={() => setImportOpen(true)}>导入 SKILL.md</Button>
@@ -114,7 +116,8 @@ export default function Skills() {
         activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索名称 / 显示名" />
           <Select value={filters.always_on ?? 'all'} onValueChange={(v) => setFilters({ always_on: v === 'all' ? undefined : v })}>
-            <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="加载方式"><SelectValue placeholder="加载方式" /></SelectTrigger>
+            {/* 「全部加载方式」6 个字按 13px 算约需 128px，窄于此宽度会被裁掉 */}
+            <SelectTrigger size="sm" className="h-8 w-[136px] text-[13px]" aria-label="加载方式"><SelectValue placeholder="加载方式" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部加载方式</SelectItem>
               {ALWAYS_ON_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}

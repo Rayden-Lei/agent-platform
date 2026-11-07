@@ -189,6 +189,7 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
         onReset={() => { setStatus(undefined); setQ(undefined) }}
         onRefresh={list.reload}
         loading={list.loading}
+        activeCount={(status ? 1 : 0) + (q ? 1 : 0)}
         extra={
           <>
             <input

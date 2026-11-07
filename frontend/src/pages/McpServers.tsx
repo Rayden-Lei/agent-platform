@@ -51,7 +51,19 @@ export default function McpServers() {
   const list = usePagedList<McpServerRow>(listMcpServers, { filters, selectable: true, emptyText: empty })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
 
-  const reloadAll = () => { list.reload(); if (current) getMcpServer(current.id).then(setCurrent).catch(() => setCurrent(null)) }
+  // 刷新详情失败时不能静默关掉抽屉：用户会以为"服务器刚被谁删了"。
+  // 只在 404（确实不存在）时关闭，其余错误提示一句并保留现有内容。
+  const reloadAll = () => {
+    list.reload()
+    if (!current) return
+    getMcpServer(current.id)
+      .then(setCurrent)
+      .catch((e) => {
+        const status = (e as { response?: { status?: number } })?.response?.status
+        if (status === 404) setCurrent(null)
+        else toast.error(errorText(e, '刷新服务器详情失败'))
+      })
+  }
 
   const openDetail = async (r: McpServerRow) => {
     try { setCurrent(await getMcpServer(r.id)) } catch (e) { toast.error(errorText(e, '加载服务器失败')) }

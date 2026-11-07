@@ -250,9 +250,15 @@ export default function Chat() {
 
   const newConversation = () => { setQuery({ conversation: undefined }); setMessages([]); setShowList(false) }
   const removeConversation = async (id: number) => {
-    await deleteConversation(id)
-    if (conversationId === id) newConversation()
-    loadConversations(1)
+    // 失败必须有提示：之前 await 裸奔，请求失败是未捕获 rejection，
+    // 界面上没有任何反馈，用户会以为已经删掉了
+    try {
+      await deleteConversation(id)
+      if (conversationId === id) newConversation()
+      loadConversations(1)
+    } catch (e) {
+      toast.error(errorText(e, '删除会话失败'))
+    }
   }
 
   const sidebar = (

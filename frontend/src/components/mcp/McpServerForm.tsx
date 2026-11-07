@@ -197,11 +197,14 @@ export default function McpServerForm({ open, editing, onClose, onSaved }: Props
       onClose={onClose}
       width={760}
       title={editing ? `编辑 MCP 服务器：${editing.name}` : '新增 MCP 服务器'}
+      error={error}
       footer={
         <>
-          <Button variant="ghost" size="md" onClick={onClose}>取消</Button>
-          <Button variant="secondary" size="md" disabled={testing} onClick={onTest}>{testing ? '连接中…' : '测试连接'}</Button>
-          <Button variant="primary" size="md" disabled={submitting} onClick={onSubmit}>{submitting ? '保存中…' : '保存'}</Button>
+          {/* 两个按钮互斥：都在读同一份表单状态，而保存会改 is_enabled / 凭据三态，
+              测试连接时保存、或保存时测试，都会拿半新半旧的配置去发请求 */}
+          <Button variant="ghost" size="md" disabled={submitting || testing} onClick={onClose}>取消</Button>
+          <Button variant="secondary" size="md" disabled={submitting || testing} onClick={onTest}>{testing ? '连接中…' : '测试连接'}</Button>
+          <Button variant="primary" size="md" disabled={submitting || testing} onClick={onSubmit}>{submitting ? '保存中…' : '保存'}</Button>
         </>
       }
     >
@@ -371,7 +374,7 @@ export default function McpServerForm({ open, editing, onClose, onSaved }: Props
           保存后在列表里点「同步」拉取远端工具。新同步出来的工具默认停用 —— 远端工具的描述是外部输入，先看过再启用。
         </p>
 
-        {error && <p className="m-0 text-[12.5px] text-destructive">{error}</p>}
+
       </div>
     </Drawer>
   )

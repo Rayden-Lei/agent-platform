@@ -78,5 +78,7 @@ export function usePagedList<T = any>(
   const clearSelection = useCallback(() => setSelectedKeys([]), [])
 
   // items 当前页数据 / total 总条数 / load 指定页码加载 / reload 原地刷新 / error 失败文案
-  return { items, total, page, pageSize, loading, error, sort, setSort, selectedKeys, setSelectedKeys, clearSelection, load, reload }
+  // emptyText 必须一起返回：传了却没返回，调用方写了带操作按钮的空态也永远不显示
+  // （2026-11-08 前它是死参数，向量模型页因此只剩裸的"暂无数据"，新用户找不到创建入口）。
+  return { items, total, page, pageSize, loading, error, sort, setSort, selectedKeys, setSelectedKeys, clearSelection, load, reload, emptyText }
 }

@@ -130,6 +130,7 @@ export default function EmbeddingModels() {
         rowKey={(r) => r.id}
         loading={list.loading}
         error={list.error}
+        empty={list.emptyText}
         onRetry={list.reload}
         page={list.page}
         pageSize={list.pageSize}

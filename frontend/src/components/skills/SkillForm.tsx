@@ -118,6 +118,7 @@ export default function SkillForm({ open, editing, prefill, onClose, onSaved }: 
       onClose={onClose}
       width={800}
       title={editing ? `编辑技能：${editing.display_name}（当前 v${editing.version}）` : '新增技能'}
+      error={error}
       footer={
         <>
           <Button variant="ghost" size="md" onClick={onClose}>取消</Button>
@@ -221,7 +222,7 @@ export default function SkillForm({ open, editing, prefill, onClose, onSaved }: 
           </p>
         )}
 
-        {error && <p className="m-0 text-[12.5px] text-destructive">{error}</p>}
+
       </div>
     </Drawer>
   )

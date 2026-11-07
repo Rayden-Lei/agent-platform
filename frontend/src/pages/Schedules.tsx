@@ -89,6 +89,7 @@ export default function Schedules() {
           onReset={resetFilters}
           onRefresh={list.reload}
           loading={list.loading}
+          activeCount={Object.values(filters).filter(Boolean).length}
           extra={scheduler && (
             <Badge tone={scheduler.running ? 'success' : 'danger'}>
               {scheduler.running ? `调度器运行中 · 已注册 ${scheduler.registered_jobs} / 启用 ${scheduler.enabled_jobs}` : '调度器未运行'}
@@ -102,6 +103,8 @@ export default function Schedules() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部工作流</SelectItem>
+              {/* 加载失败时给一行提示：否则下拉里只有「全部工作流」，看起来像"系统里一个工作流都没有" */}
+              {workflows.error && <SelectItem value="__error__" disabled>工作流列表加载失败</SelectItem>}
               {(workflows.data?.items ?? []).map((w) => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}
             </SelectContent>
           </Select>

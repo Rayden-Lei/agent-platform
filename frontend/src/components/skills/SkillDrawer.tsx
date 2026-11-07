@@ -73,6 +73,18 @@ export default function SkillDrawer({ skill, onClose, onEdit }: Props) {
             </span>
           </Field>
           <Field label="描述">{skill.description}</Field>
+          {(skill.agents?.length ?? 0) > 0 && (
+            <Field label="被绑定">
+              <span className="flex flex-wrap gap-1">
+                {skill.agents!.map((a) => (
+                  <span key={a.id} className="rounded bg-[var(--bg-soft)] px-1.5 py-0.5 text-[11.5px]">
+                    {a.name}
+                    {a.status !== 'published' && <span className="ml-1 text-muted-foreground">（未发布）</span>}
+                  </span>
+                ))}
+              </span>
+            </Field>
+          )}
           <Field label="创建人">{skill.created_by_username || (skill.created_by ? '#' + skill.created_by : '-')}</Field>
           <Field label="创建时间"><TimeCell value={skill.created_at} /></Field>
           <Field label="更新时间"><TimeCell value={skill.updated_at} /></Field>
