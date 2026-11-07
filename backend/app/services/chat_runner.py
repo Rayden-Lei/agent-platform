@@ -380,7 +380,7 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
     回答里给出去运行详情页审批的指引，resume 仍在运行记录页完成。
     """
     from app.services import workflow_chat  # 局部导入：workflow_chat 依赖会话与 io_contract，避免顶层循环
-    from app.workflow.engine import build_workflow
+    from app.workflow.engine import WorkflowState, build_workflow
 
     db = SessionLocal()
     state = StreamState()
@@ -393,7 +393,8 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
         yield citations_event
         try:
             workflow = await run_in_threadpool(workflow_chat.load_workflow, db, turn.workflow_id)
-            initial = await run_in_threadpool(workflow_chat.initial_state, workflow.graph, turn.inputs)
+            # initial_state 按 io_contract 造出首跑 state，这里收窄成图声明的 WorkflowState 交给 astream
+            initial = WorkflowState(**await run_in_threadpool(workflow_chat.initial_state, workflow.graph, turn.inputs))
             graph = build_workflow(workflow.graph, run_id=turn.run_id, role=turn.role)
             # thread_id 固定用 run_id：图编译时绑了 checkpointer，不传会直接抛错
             config: RunnableConfig = {"configurable": {"thread_id": str(turn.run_id)}}

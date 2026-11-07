@@ -3,7 +3,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from langgraph.types import Command
+from langgraph.types import Command, GraphOutput
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, Run, ScheduledJob, User, Workflow
 from app.services import api_key_service, run_service
-from app.workflow.engine import build_workflow
+from app.workflow.engine import WorkflowState, build_workflow
 from app.workflow.io_contract import build_initial_state, end_outputs, start_variables
 from app.workflow.validation import validate_graph
 
@@ -162,13 +162,13 @@ def delete_workflow(db: Session, workflow_id: int) -> None:
     db.commit()
 
 
-def _interrupt_value(result: dict):
-    """从 langgraph 结果中提取中断值：__interrupt__ 里第一个元素的 value（或元素本身）。"""
-    iv = result.get("__interrupt__")
-    if iv:
-        first = iv[0]
-        return getattr(first, "value", first)
-    return None
+def _interrupt_value(result: GraphOutput[WorkflowState]):
+    """从 langgraph 结果中提取中断值：interrupts 里第一个中断的 value，没有中断返回 None。
+
+    langgraph 1.2 起 invoke/ainvoke 的类型契约是 version="v2" 返回 GraphOutput（state 在 .value、
+    中断在 .interrupts），v1 的 "__interrupt__" 键只是旧口径的兼容。两处运行路径统一按 v2 取值。
+    """
+    return result.interrupts[0].value if result.interrupts else None
 
 
 async def test_run_workflow(graph: dict, inputs: dict | None, role: str | None = None) -> dict:
@@ -177,15 +177,17 @@ async def test_run_workflow(graph: dict, inputs: dict | None, role: str | None =
     入参按开始节点声明校验（io_contract），与正式运行同一套规则——测试通过就意味着正式运行也能跑通。
     """
     check_graph(graph)
-    initial = build_initial_state(graph, inputs)
+    initial = WorkflowState(**build_initial_state(graph, inputs))
     try:
         g = build_workflow(graph, role=role)
         thread_id = "test-" + uuid.uuid4().hex[:12]
-        result = await asyncio.to_thread(g.invoke, initial, {"configurable": {"thread_id": thread_id}})
+        # 显式要 v2：结果按 GraphOutput 取值（state 在 .value、中断在 .interrupts），见 _interrupt_value
+        result = await asyncio.to_thread(g.invoke, initial, {"configurable": {"thread_id": thread_id}}, version="v2")
+        state = result.value
         iv = _interrupt_value(result)
         if iv is not None:
-            return {"status": "awaiting_review", "interrupt": iv, "steps": result.get("steps", [])}
-        return {"status": "success", "output": result.get("output"), "steps": result.get("steps", [])}
+            return {"status": "awaiting_review", "interrupt": iv, "steps": state.get("steps", [])}
+        return {"status": "success", "output": state.get("output"), "steps": state.get("steps", [])}
     except Exception as e:
         # 编辑器内测试不落库，失败只回给前端；日志是排查图配置错误的唯一线索
         logger.exception("工作流测试运行失败")
@@ -201,13 +203,15 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
     """
     try:
         graph = build_workflow(workflow.graph, run_id=run.id, role=role)
-        result = graph.invoke(payload, {"configurable": {"thread_id": str(run.id)}})
+        # 显式要 v2：结果按 GraphOutput 取值（state 在 .value、中断在 .interrupts），见 _interrupt_value
+        result = graph.invoke(payload, {"configurable": {"thread_id": str(run.id)}}, version="v2")
     except Exception as e:
         logger.exception("工作流执行失败 run_id=%s workflow_id=%s", run.id, workflow.id)
         run_service.finalize_run(db, run, "failed", error=str(e))
         return {"run_id": run.id, "status": "failed", "error": str(e)}
 
-    steps = result.get("steps", [])
+    state = result.value
+    steps = state.get("steps", [])
     iv = _interrupt_value(result)
     if iv is not None:
         # 等待人工审核不是终态：不写 finished_at，resume 后再收尾
@@ -215,8 +219,8 @@ def execute_workflow(db: Session, workflow: Workflow, run: Run, payload, role: s
         run.output = {"interrupt": iv, "steps": steps}
         db.commit()
         return {"run_id": run.id, "status": "awaiting_review", "interrupt": iv, "steps": steps}
-    run_service.finalize_run(db, run, "success", output={"output": result.get("output"), "steps": steps})
-    return {"run_id": run.id, "status": "success", "output": result.get("output"), "steps": steps}
+    run_service.finalize_run(db, run, "success", output={"output": state.get("output"), "steps": steps})
+    return {"run_id": run.id, "status": "success", "output": state.get("output"), "steps": steps}
 
 
 async def run_workflow(db: Session, workflow_id: int, inputs: dict | None, user, api_key: ApiKey | None = None) -> dict:
