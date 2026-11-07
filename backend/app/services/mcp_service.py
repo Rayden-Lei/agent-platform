@@ -346,7 +346,7 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
         raise BizError(502, f"同步失败：{e}") from e
 
     existing = {t.remote_name: t for t in db.query(Tool).filter(Tool.mcp_server_id == server_id).all()}
-    created, updated, disabled = 0, 0, 0
+    created, updated, disabled, unchanged = 0, 0, 0, 0
     seen: set[str] = set()
 
     # 名字冲突预检：工具名在库里没有唯一约束，但工作流节点按 name 引用工具（`.first()` 取任意一行），
@@ -389,11 +389,21 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
             ))
             created += 1
         else:
+            # 「更新」要区分「远端真改了」与「只是又同步了一次」：
+            # 后者不算 updated，否则每次点同步都报"更新了 4 个"，使用者无从判断远端到底动没动
+            changed = (
+                row.name != local_name
+                or row.description != description
+                or (row.config or {}).get("parameters") != config["parameters"]
+            )
             row.name = local_name
             row.description = description
             row.config = config
             # is_enabled 不动：那是人做的决定，同步不该替他改
-            updated += 1
+            if changed:
+                updated += 1
+            else:
+                unchanged += 1
 
     for remote_name, row in existing.items():
         if remote_name not in seen:
@@ -411,7 +421,10 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
     record_audit(db, user, "update", "mcp_server", s.id,
                  detail={"name": s.name, "action": "sync", "created": created,
                          "updated": updated, "disabled": disabled})
-    return {"created": created, "updated": updated, "disabled": disabled, "total": len(remote_tools)}
+    # unchanged 与 updated 分开：点一次同步就说"更新了 4 个"会让使用者以为远端变了，
+    # 实际什么都没动。分开之后"全部未变"才是可读的结论。
+    return {"created": created, "updated": updated, "disabled": disabled,
+            "unchanged": unchanged, "total": len(remote_tools)}
 
 
 async def test_connection(db: Session, data) -> dict:

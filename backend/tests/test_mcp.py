@@ -222,7 +222,7 @@ def test_sync_upsert_semantics(client, auth_headers, monkeypatch):
     try:
         first = client.post(f"/api/v1/mcp-servers/{sid}/sync", headers=auth_headers)
         assert first.status_code == 200, first.text
-        assert first.json() == {"created": 2, "updated": 0, "disabled": 0, "total": 2}
+        assert first.json() == {"created": 2, "updated": 0, "disabled": 0, "unchanged": 0, "total": 2}
 
         detail = client.get(f"/api/v1/mcp-servers/{sid}", headers=auth_headers).json()
         by_remote = {t["remote_name"]: t for t in detail["tools"]}
@@ -236,7 +236,7 @@ def test_sync_upsert_semantics(client, auth_headers, monkeypatch):
 
         second = client.post(f"/api/v1/mcp-servers/{sid}/sync", headers=auth_headers)
         assert second.status_code == 200, second.text
-        assert second.json() == {"created": 1, "updated": 1, "disabled": 1, "total": 2}
+        assert second.json() == {"created": 1, "updated": 1, "disabled": 1, "unchanged": 0, "total": 2}
 
         detail2 = client.get(f"/api/v1/mcp-servers/{sid}", headers=auth_headers).json()
         by_remote2 = {t["remote_name"]: t for t in detail2["tools"]}
@@ -430,3 +430,36 @@ def test_delete_server_keeps_tools_disabled(client, auth_headers, monkeypatch):
     row = client.get(f"/api/v1/tools/{tid}", headers=auth_headers).json()
     assert row["is_enabled"] is False
     assert row["config"].get("source_deleted") is True
+
+
+def test_sync_reports_unchanged_instead_of_updated(client, auth_headers, monkeypatch):
+    """同样的远端清单同步两次：第二次必须报 unchanged，而不是又"更新了 N 个"。
+
+    否则使用者点一次同步就看到"更新了 4 个"，会以为远端变了 —— 实际什么都没动，
+    这个数字就完全失去了诊断价值。
+    """
+    server = client.post("/api/v1/mcp-servers", headers=auth_headers, json={
+        "name": "pytest-mcp-unchanged-" + __import__("uuid").uuid4().hex[:6],
+        "url": "https://mcp.example.com/mcp", "allowed_hosts": ["mcp.example.com"],
+    })
+    sid = server.json()["id"]
+
+    async def fake_probe(*a, **kw):
+        return [mcp_client.McpTool(name="same", description="没变",
+                                   input_schema={"type": "object", "properties": {"q": {"type": "string"}}})]
+
+    monkeypatch.setattr(mcp_client, "probe", fake_probe)
+    try:
+        first = client.post(f"/api/v1/mcp-servers/{sid}/sync", headers=auth_headers)
+        assert first.status_code == 200, first.text
+        assert first.json()["created"] == 1
+
+        second = client.post(f"/api/v1/mcp-servers/{sid}/sync", headers=auth_headers)
+        assert second.status_code == 200, second.text
+        body = second.json()
+        assert body["unchanged"] == 1, body
+        assert body["updated"] == 0, body
+        assert body["created"] == 0, body
+    finally:
+        client.delete(f"/api/v1/mcp-servers/{sid}", headers=auth_headers)
+

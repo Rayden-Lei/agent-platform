@@ -290,12 +290,13 @@ def test_toggle_off_disables_synced_tools(client, auth_headers, live, live_serve
     detail = client.get(f"/api/v1/mcp-servers/{live_server_row['id']}", headers=auth_headers).json()
     tool_ids = [t["id"] for t in detail["tools"]]
 
-    # 全部启用，再停用服务器
+    # 全部启用，再停用服务器。
+    # 断言只看本服务器这四个工具的开关状态，不去比"全库 type=mcp 的启用集合" ——
+    # 那个集合受其他用例残留影响（共享开发库），一起跑就会假失败。
     for tid in tool_ids:
         client.post(f"/api/v1/tools/{tid}/toggle", headers=auth_headers)
-    list_res = client.get("/api/v1/tools", headers=auth_headers, params={"page_size": 100, "type": "mcp"})
-    enabled_ids = {t["id"] for t in list_res.json()["items"] if t["is_enabled"]}
-    assert set(tool_ids) <= enabled_ids
+    detail2 = client.get(f"/api/v1/mcp-servers/{live_server_row['id']}", headers=auth_headers).json()
+    assert all(t["is_enabled"] for t in detail2["tools"]), "前置条件：四个工具都应已启用"
 
     client.post(f"/api/v1/mcp-servers/{live_server_row['id']}/toggle", headers=auth_headers)
 
