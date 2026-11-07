@@ -102,9 +102,16 @@ def test_degraded_param_kept_when_not_json():
 
 
 def test_tool_name_is_sanitised_and_bounded():
-    """本地工具名要能出现在模型的 tool_calls 里：只留字母数字下划线，且不超过 128 字符。"""
+    """本地工具名要能出现在模型的 tool_calls 里：只留字母数字、下划线与连字符，且不超过 128 字符。
+
+    **连字符必须保留**：它被模型 API 明确允许（OpenAI 函数名规则 ^[a-zA-Z0-9_-]+$），
+    清洗掉不仅难读，还会把 `pytest-` 前缀打成 `pytest_`，让测试回收的按前缀匹配失效
+    （2026-11-07 因此漏出 33 个孤儿工具）。
+    """
     name = mcp_service._tool_name("my server", "some.tool/name")
     assert name == "my_server_some_tool_name"
+    # 连字符原样保留，空格与点斜杠才换下划线
+    assert mcp_service._tool_name("pytest-mcp-x", "do-it") == "pytest-mcp-x_do-it"
     long_name = mcp_service._tool_name("s" * 80, "t" * 200)
     assert len(long_name) <= 128
 
