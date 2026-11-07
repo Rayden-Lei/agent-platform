@@ -39,6 +39,12 @@ export interface McpToolRow {
   description: string
   is_enabled: boolean
   agents_count: number
+  /** 参数声明（从远端 inputSchema 转来的子集），抽屉里据此生成试用表单 */
+  parameters: { type: 'object'; properties: Record<string, { type: string; description?: string; enum?: string[] }>; required?: string[] }
+  /** 同步时记录的参数降级说明，抽屉里标黄提示 */
+  schema_notes: string[]
+  /** 远端已不再提供这个工具（同步时标上并停用） */
+  source_missing: boolean
 }
 
 export interface McpServerDetail extends McpServerRow {

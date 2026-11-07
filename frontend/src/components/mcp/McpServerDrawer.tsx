@@ -1,10 +1,13 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
 import Badge from '../ui/Badge'
 import TimeCell from '../common/TimeCell'
-import type { McpServerDetail } from '../../api'
+import { testTool, type McpServerDetail, type McpToolRow } from '../../api'
+import { errorText } from '../../utils/errors'
 
 // MCP 服务器详情：看到它同步出来的工具清单，以及每个工具被几个智能体引用。
 //
@@ -123,27 +126,7 @@ export default function McpServerDrawer({
           ) : (
             <ul className="m-0 flex list-none flex-col gap-1 rounded-lg border border-border p-1.5">
               {tools.map((t) => (
-                <li key={t.id} className="flex items-center gap-2 px-1 py-0.5">
-                  <code className="min-w-0 flex-1 truncate text-[12.5px]" style={{ fontFamily: '"SF Mono",Consolas,monospace' }} title={t.name}>
-                    {t.name}
-                  </code>
-                  <span className="shrink-0 text-[11.5px] text-muted-foreground" title="远端原始工具名">{t.remote_name}</span>
-                  <span className="w-[68px] shrink-0 text-right text-[11.5px] text-muted-foreground" title="引用该工具的智能体数">
-                    {t.agents_count ? `${t.agents_count} 个智能体` : '未绑定'}
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={t.is_enabled}
-                    aria-label={`${t.is_enabled ? '停用' : '启用'} ${t.name}`}
-                    onClick={() => onToggleTool(t.id)}
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11.5px] transition-colors ${t.is_enabled
-                      ? 'bg-[var(--success-bg,rgba(16,185,129,0.12))] text-[var(--success)]'
-                      : 'bg-[var(--bg-soft)] text-muted-foreground'}`}
-                  >
-                    {t.is_enabled ? '已启用' : '已停用'}
-                  </button>
-                </li>
+                <McpToolItem key={t.id} tool={t} onToggle={() => onToggleTool(t.id)} />
               ))}
             </ul>
           )}
@@ -165,3 +148,115 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </div>
   )
 }
+
+// 单个同步工具：名字 + 状态开关 + 「试用」展开。
+//
+// 试用放在这里而不是让使用者跳去工具页：工具页混着内置 / HTTP / MCP 十几种来源、还要翻页找，
+// 而此刻的意图就是"我刚同步完，试试这个工具通不通"。用真实参数调一次是唯一能确认
+// "远端真的能用"的办法 —— 同步成功只说明 list_tools 通了，不代表 tools/call 通。
+function McpToolItem({ tool, onToggle }: { tool: McpToolRow; onToggle: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [args, setArgs] = useState<Record<string, string>>({})
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  const props = Object.entries(tool.parameters?.properties || {})
+  const required = new Set(tool.parameters?.required || [])
+
+  const run = async () => {
+    setRunning(true)
+    setResult(null)
+    try {
+      // 空值不传：让后端按"未提供"处理，而不是收到空字符串（布尔/数字会因此校验失败）
+      const payload: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(args)) {
+        if (v === '' || v === undefined) continue
+        // 数字类参数要转成数字，否则后端参数校验会拒（模型那边由 schema 约束，这里是人工输入）
+        const declared = tool.parameters?.properties?.[k]?.type
+        payload[k] = declared === 'integer' || declared === 'number' ? Number(v) : v
+      }
+      const res = await testTool(tool.id, { args: payload })
+      const data = (res as { data?: { result?: unknown } })?.data?.result
+      setResult(typeof data === 'string' ? data : JSON.stringify(data, null, 2))
+    } catch (e) {
+      setResult('❌ ' + errorText(e, '调用失败'))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-1 px-1 py-0.5">
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate text-[12.5px]" style={{ fontFamily: '"SF Mono",Consolas,monospace' }} title={tool.name}>
+          {tool.name}
+        </code>
+        {tool.source_missing && <Badge tone="danger">远端已移除</Badge>}
+        <span className="shrink-0 text-[11.5px] text-muted-foreground" title="远端原始工具名">{tool.remote_name}</span>
+        <span className="w-[68px] shrink-0 text-right text-[11.5px] text-muted-foreground" title="引用该工具的智能体数">
+          {tool.agents_count ? `${tool.agents_count} 个智能体` : '未绑定'}
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-muted-foreground hover:bg-accent"
+        >
+          {open ? '收起' : '试用'}
+        </button>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={tool.is_enabled}
+          aria-label={`${tool.is_enabled ? '停用' : '启用'} ${tool.name}`}
+          onClick={onToggle}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[11.5px] transition-colors ${tool.is_enabled
+            ? 'bg-[var(--success-bg,rgba(16,185,129,0.12))] text-[var(--success)]'
+            : 'bg-[var(--bg-soft)] text-muted-foreground'}`}
+        >
+          {tool.is_enabled ? '已启用' : '已停用'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-[var(--bg-soft)] px-2.5 py-2">
+          {tool.description && <p className="m-0 text-[12px] text-muted-foreground">{tool.description}</p>}
+          {tool.schema_notes.length > 0 && (
+            <ul className="m-0 flex list-disc flex-col gap-0.5 pl-4 text-[11.5px] text-muted-foreground">
+              {tool.schema_notes.map((n) => <li key={n}>{n}</li>)}
+            </ul>
+          )}
+          {props.length === 0 ? (
+            <p className="m-0 text-[12px] text-muted-foreground">该工具没有参数，直接点「调用」。</p>
+          ) : (
+            props.map(([name, prop]) => (
+              <div key={name} className="flex flex-col gap-1">
+                <Label className="text-[11.5px]">
+                  {name}{required.has(name) && <span className="ml-0.5 text-destructive">*</span>}
+                  <span className="ml-1 font-normal text-muted-foreground">{prop.type}{prop.enum ? ' · 可选 ' + prop.enum.join(' / ') : ''}</span>
+                </Label>
+                <Input
+                  value={args[name] ?? ''}
+                  onChange={(e) => setArgs((a) => ({ ...a, [name]: e.target.value }))}
+                  placeholder={prop.description || name}
+                  className="h-7 text-[12px]"
+                />
+              </div>
+            ))
+          )}
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="primary" disabled={running || !tool.is_enabled} onClick={run}>
+              {running ? '调用中…' : '调用'}
+            </Button>
+            {!tool.is_enabled && <span className="text-[11.5px] text-muted-foreground">先启用才能试用</span>}
+          </div>
+          {result !== null && (
+            <pre className="m-0 max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded bg-background px-2 py-1 text-[11.5px] leading-relaxed" style={{ fontFamily: '"SF Mono",Consolas,monospace' }}>
+              {result}
+            </pre>
+          )}
+        </div>
+      )}
+    </li>
+  )
+}
+
