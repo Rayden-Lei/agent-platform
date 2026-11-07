@@ -114,6 +114,14 @@ def purge_test_rows(db: Session, since: datetime) -> dict[str, int]:
     if orphans:
         deleted["tools_mcp_orphans"] = orphans
 
+    # 模型调用日志：这张表没有"名字"列（它是日志，不是业务对象），
+    # _DELETE_ORDER 那套按名前缀匹配对它不适用。改按 model_name 前缀 + 时间窗回收。
+    # 2026-11-08 加这张表时漏了这一步：开发库一轮测试后 319 条调用日志里
+    # 大半是 pytest-share-model-* 这类桩模型的记录，真正的线上调用被淹在里面。
+    calls = purge_llm_calls(db, since)
+    if calls:
+        deleted["llm_calls"] = calls
+
     if skipped:
         deleted["_skipped"] = skipped
     return deleted
@@ -173,3 +181,34 @@ def purge_since(since: datetime) -> dict[str, int]:
 
 def session_start() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def purge_llm_calls(db: Session, since: datetime) -> int:
+    """回收本次会话产生的模型调用日志。
+
+    判据：model_name 以 pytest- 开头，或 run_id 指向的运行记录已不存在
+    （后者覆盖"用真实模型跑测试但运行记录已被删"的情况）。
+    时间窗同样限定在本次会话开始之后，不碰真实调用。
+    """
+    from sqlalchemy import text as _text
+
+    rows = db.execute(_text(
+        "select c.id from llm_calls c left join runs r on r.id = c.run_id "
+        "where c.started_at >= :since "
+        "and (c.model_name like :prefix or (c.run_id is not null and r.id is null))"
+    ), {"since": since, "prefix": TEST_PREFIX + "%"}).all()
+    ids = [r[0] for r in rows]
+    if not ids:
+        return 0
+    removed = 0
+    for call_id in ids:
+        savepoint = db.begin_nested()
+        try:
+            result = db.execute(_text("delete from llm_calls where id = :id"), {"id": call_id})
+            removed += result.rowcount
+        except IntegrityError:
+            savepoint.rollback()
+            continue
+        savepoint.commit()
+    return removed
+
