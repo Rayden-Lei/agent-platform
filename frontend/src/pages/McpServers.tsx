@@ -79,6 +79,9 @@ export default function McpServers() {
       if (res.created) parts.push(`新建 ${res.created} 个（默认停用）`)
       if (res.updated) parts.push(`更新 ${res.updated} 个`)
       if (res.disabled) parts.push(`停用 ${res.disabled} 个（远端已移除）`)
+      // 全部未变要说出来：不说的话「同步完成」看起来像什么都没发生，使用者会反复点
+      if (!res.created && !res.updated && !res.disabled) parts.push('远端内容与上次一致，没有变化')
+      else if (res.unchanged) parts.push(`未变 ${res.unchanged} 个`)
       toast.success('同步完成：' + parts.join('，'))
       await reloadAll()
     } catch (e) {

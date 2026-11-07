@@ -68,6 +68,8 @@ export interface McpSyncResult {
   created: number
   updated: number
   disabled: number
+  /** 远端有、库里也有，但描述与参数声明都没变：不算"更新"，否则每次同步都报"更新了 N 个" */
+  unchanged: number
   total: number
 }
 
