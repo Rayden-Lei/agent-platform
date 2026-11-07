@@ -124,8 +124,7 @@ async def guarded_ainvoke(model: ModelConfig, llm, input_value, *, probe: bool =
         breaker.before_call(model.id, model.name)
     recorder = llm_log.LlmCallRecorder(purpose=purpose, run_id=run_id, model_id=model.id, model_name=model.name) \
         if settings.LLM_LOG_ENABLED else None
-    if recorder is not None:
-        llm_log.bind(recorder)
+    token = llm_log.bind(recorder) if recorder is not None else None
     try:
         resp = await llm.ainvoke(input_value)
     except Exception as e:
@@ -136,7 +135,8 @@ async def guarded_ainvoke(model: ModelConfig, llm, input_value, *, probe: bool =
     finally:
         if recorder is not None:
             recorder.finish()
-            llm_log.unbind()
+            if token is not None:
+                llm_log.unbind(token)
     breaker.record_success(model.id, model.name)
     return resp
 
@@ -151,8 +151,7 @@ async def guarded_astream(model: ModelConfig, stream, *, purpose: str = "chat", 
     breaker.before_call(model.id, model.name)
     recorder = llm_log.LlmCallRecorder(purpose=purpose, run_id=run_id, model_id=model.id, model_name=model.name) \
         if settings.LLM_LOG_ENABLED else None
-    if recorder is not None:
-        llm_log.bind(recorder)
+    token = llm_log.bind(recorder) if recorder is not None else None
     first = True
     try:
         async for item in stream:
@@ -170,4 +169,5 @@ async def guarded_astream(model: ModelConfig, stream, *, purpose: str = "chat", 
         # 无论正常结束、异常还是被取消，都要落一次记录（没读到响应体时记一次空，便于看到"请求发了但没回"）
         if recorder is not None:
             recorder.finish()
-            llm_log.unbind()
+            if token is not None:
+                llm_log.unbind(token)

@@ -340,3 +340,45 @@ def test_persist_extracts_tools_and_masks_secrets():
     finally:
         db.close()
 
+
+
+def test_recorder_is_isolated_between_concurrent_tasks():
+    """采集器必须按上下文隔离，不能按线程。
+
+    对话是异步的：同一个线程里会同时跑多个请求（uvicorn / TestClient 都是）。
+    用 threading.local 时两个并发对话会互相覆盖采集器 —— 一边的请求记到另一边头上，
+    甚至记成别人的 run_id，排查时看到的是"完全对不上的报文"。
+    contextvars 随 asyncio task 复制，天然隔离。
+    """
+    import asyncio
+
+    async def worker(name: str) -> str | None:
+        rec = llm_log.LlmCallRecorder(purpose="chat", model_name=name)
+        token = llm_log.bind(rec)
+        try:
+            await asyncio.sleep(0.01)  # 让出控制权，另一个 task 会在这期间 bind
+            got = llm_log.current()
+            return got.model_name if got else None
+        finally:
+            llm_log.unbind(token)
+
+    async def main() -> list[str | None]:
+        return await asyncio.gather(worker("a"), worker("b"), worker("c"))
+
+    assert asyncio.run(main()) == ["a", "b", "c"]
+
+
+def test_unbind_restores_outer_recorder():
+    """嵌套调用（一轮对话里再发摘要）收尾时要还原外层采集器，而不是置空。"""
+    outer = llm_log.LlmCallRecorder(purpose="chat", model_name="outer")
+    outer_token = llm_log.bind(outer)
+    try:
+        inner = llm_log.LlmCallRecorder(purpose="summary", model_name="inner")
+        inner_token = llm_log.bind(inner)
+        assert llm_log.current() is inner
+        llm_log.unbind(inner_token)
+        # 还原成 outer，不是 None —— 否则外层剩下的请求会记不上
+        assert llm_log.current() is outer
+    finally:
+        llm_log.unbind(outer_token)
+
