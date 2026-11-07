@@ -42,8 +42,29 @@ jobs:
       - name: Type check (pyright)
         continue-on-error: true
         run: cd backend && pyright
+      # 失败时把摘要写进 Job Summary（公开可读）：Job 日志要 admin 权限才能下载，
+      # 没有权限时只能看到一个红叉，完全不知道是哪条用例挂了。
       - name: Run tests
-        run: cd backend && PYTHONPATH=. python3 -m pytest tests/ -q
+        run: |
+          cd backend
+          set +e
+          PYTHONPATH=. python3 -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/pytest.log
+          status=${PIPESTATUS[0]}
+          {
+            echo "## 后端测试结果"
+            echo ''
+            echo '```'
+            tail -60 /tmp/pytest.log
+            echo '```'
+            if [ "$status" -ne 0 ]; then
+              echo ''
+              echo "### 失败用例"
+              echo '```'
+              grep -E '^FAILED|^ERROR' /tmp/pytest.log | head -40
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
         env:
           DATABASE_URL: postgresql+psycopg2://admin:postgres@localhost:5432/agent_platform
           REDIS_URL: redis://localhost:6379/0
