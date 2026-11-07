@@ -51,7 +51,8 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     if match is None:
         raise SkillImportError("没有找到 frontmatter：SKILL.md 必须以三横线 --- 开头，先写 name 与 description，再写三横线结束")
     body = text[match.end():]
-    fields: dict[str, str] = {}
+    # 值只有两种形态：标量（str）与一层嵌套 map（如 metadata: {author: x}），后者原样进 fields
+    fields: dict[str, str | dict[str, str]] = {}
     nested: dict[str, dict[str, str]] = {}
     current: str | None = None
     for raw in match.group(1).splitlines():
@@ -73,7 +74,13 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         # 多行折叠、列表、锚点等结构这里不支持：明确报错，不静默丢掉作者写的内容
         raise SkillImportError(f"frontmatter 里有本平台暂不支持的结构：{raw.strip()[:60]}（只支持 key: value 与一层嵌套）")
     for key, children in nested.items():
-        fields.setdefault(key, children) if not children else fields.update({key: children})
+        # 「key:」后面没有缩进行时落一个空 map（YAML 的空映射语义）；有缩进行时放这一层 map。
+        # 用 setdefault 而不是直接赋值：同一个键先写成标量、后面只写了一行空的「key:」时，
+        # 作者写的标量值才是他想要的内容，不能被空 map 顶掉。
+        if children:
+            fields[key] = children
+        else:
+            fields.setdefault(key, children)
     return fields, body.strip("\n")
 
 
@@ -92,9 +99,17 @@ def to_skill(frontmatter: dict, body: str) -> dict:
     if not body.strip():
         raise SkillImportError("正文为空：frontmatter 之后要写技能的操作步骤")
     meta = {k: frontmatter[k] for k in META_FIELDS if k in frontmatter}
+    # metadata 是唯一的一层嵌套 map；作者把它写成标量（metadata: x）属于不规范用法，按「没写」处理，
+    # 后面取值时才不会在非 dict 上 .get 崩掉
+    nested_meta = meta.get("metadata")
+    if isinstance(nested_meta, dict):
+        nested_meta = {str(k): str(v) for k, v in nested_meta.items()}
+        meta["metadata"] = nested_meta
+    else:
+        nested_meta = {}
     return {
         "name": name,
-        "display_name": str(meta.get("metadata", {}).get("title") or name)[:128],
+        "display_name": str(nested_meta.get("title") or name)[:128],
         "description": description[:1024],
         "content": body,
         # always_on 默认关：导入的技能大多是可查可不查的长手册，常驻会把上下文占满，

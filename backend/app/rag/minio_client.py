@@ -84,7 +84,16 @@ def list_objects(prefix: str) -> dict[str, int]:
     技能资源清单用它一次取全：逐个 stat_object 在循环里发 IO，20 个资源就是 20 次往返（docs/09 禁 N+1）。
     """
     client = get_minio()
-    return {obj.object_name: obj.size for obj in client.list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True)}
+    # Object.object_name / size 在 SDK 里是 Optional（目录条目、没带 Size 的响应会是 None）。
+    # 返回类型承诺 {对象名: 字节数}，就不把 None 塞进去：这类条目对调用方没有意义
+    # （清单里按对象名查大小，None 键查不到、None 值又会和"对象不存在"的 None 混在一起）。
+    objects: dict[str, int] = {}
+    for obj in client.list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True):
+        name, size = obj.object_name, obj.size
+        if name is None or size is None:
+            continue
+        objects[name] = size
+    return objects
 
 
 def stat_object(object_name: str) -> dict | None:
