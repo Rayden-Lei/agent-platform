@@ -13,7 +13,7 @@ from app.config import settings
 from app.core.http import async_client, sync_client
 from app.core.security import decrypt_secret
 from app.db.models import ModelConfig
-from app.model_gateway import breaker
+from app.model_gateway import breaker, llm_log
 from app.model_gateway.reasoning import ReasoningChatOpenAI
 
 
@@ -84,7 +84,10 @@ def _new_llm(model: ModelConfig, params: dict):
         stream_usage=True,
         # 回环地址（本机 oMLX 等）不走代理环境变量；远程厂商保持默认行为
         http_client=sync_client(model.api_base, settings.MODEL_HTTP_TIMEOUT),
-        http_async_client=async_client(model.api_base, settings.MODEL_HTTP_TIMEOUT),
+        # 异步 client 挂上采集传输层：每次请求的地址、请求体、响应原文都会落进 llm_calls
+        # （见 llm_log）。采集器按"当前这次调用"绑定，没绑定时这层直接透传，开销是一次 isinstance。
+        http_async_client=llm_log.wrap_client(async_client(model.api_base, settings.MODEL_HTTP_TIMEOUT),
+                                              llm_log.LlmCallRecorder()),
     )
     if params.get("temperature") is not None:
         kwargs["temperature"] = params["temperature"]
@@ -111,22 +114,45 @@ def guarded_invoke(model: ModelConfig, llm, input_value):
     return resp
 
 
-async def guarded_ainvoke(model: ModelConfig, llm, input_value, *, probe: bool = False):
-    """异步调用 + 熔断。probe=True 跳过打开期判定（连通测试用作人工恢复手段），结果照常记录。"""
+async def guarded_ainvoke(model: ModelConfig, llm, input_value, *, probe: bool = False,
+                         purpose: str = "probe", run_id: int | None = None):
+    """异步调用 + 熔断。probe=True 跳过打开期判定（连通测试用作人工恢复手段），结果照常记录。
+
+    同样绑采集器：非流式调用（摘要、检索改写、连通测试）的请求与响应也要留全貌。
+    """
     if not probe:
         breaker.before_call(model.id, model.name)
+    recorder = llm_log.LlmCallRecorder(purpose=purpose, run_id=run_id, model_id=model.id, model_name=model.name) \
+        if settings.LLM_LOG_ENABLED else None
+    if recorder is not None:
+        llm_log.bind(recorder)
     try:
         resp = await llm.ainvoke(input_value)
     except Exception as e:
         breaker.record_failure(model.id, model.name, e)
+        if recorder is not None:
+            recorder.finish(status="error", error=f"{type(e).__name__}: {e}")
         raise
+    finally:
+        if recorder is not None:
+            recorder.finish()
+            llm_log.unbind()
     breaker.record_success(model.id, model.name)
     return resp
 
 
-async def guarded_astream(model: ModelConfig, stream):
-    """包装异步流 + 熔断：拿到首个 chunk 视为成功；建立流之前的异常计失败；流中途断开不计数。"""
+async def guarded_astream(model: ModelConfig, stream, *, purpose: str = "chat", run_id: int | None = None):
+    """包装异步流 + 熔断：拿到首个 chunk 视为成功；建立流之前的异常计失败；流中途断开不计数。
+
+    同时绑定模型调用采集器（llm_log）：这一轮里发生的每次上游请求都会被记录
+    （地址、请求体、响应原文、工具定义、用量）。采集器在流收尾时落库；
+    中途被客户端取消时也照常落一次（status=cancelled 由异常路径写入）。
+    """
     breaker.before_call(model.id, model.name)
+    recorder = llm_log.LlmCallRecorder(purpose=purpose, run_id=run_id, model_id=model.id, model_name=model.name) \
+        if settings.LLM_LOG_ENABLED else None
+    if recorder is not None:
+        llm_log.bind(recorder)
     first = True
     try:
         async for item in stream:
@@ -137,4 +163,11 @@ async def guarded_astream(model: ModelConfig, stream):
     except Exception as e:
         if first:
             breaker.record_failure(model.id, model.name, e)
+        if recorder is not None:
+            recorder.finish(status="error", error=f"{type(e).__name__}: {e}")
         raise
+    finally:
+        # 无论正常结束、异常还是被取消，都要落一次记录（没读到响应体时记一次空，便于看到"请求发了但没回"）
+        if recorder is not None:
+            recorder.finish()
+            llm_log.unbind()

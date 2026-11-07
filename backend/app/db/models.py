@@ -482,3 +482,62 @@ class SystemSetting(Base):
     value: Mapped[dict] = mapped_column(JSONB, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 操作人用户名快照，审计明细另有完整记录
+
+
+class LlmCall(Base):
+    """一次模型调用的完整记录（2026-11-08）：请求报文、响应报文、地址、工具定义、耗时。
+
+    **为什么要这张表**：原来的调用链（run_nodes 的 trace step）只记 content_chars 与
+    工具名。排查"模型为什么这么回答""为什么没调工具""上游返回了什么"时全都看不到 ——
+    而这些问题恰恰只能靠原始报文回答，猜是猜不出来的。
+
+    **打码口径**：只有凭据打码（api_key 换成 ***），其余全部原样保存 ——
+    地址、请求体、响应体、工具定义、思考过程、错误原文都要能看见。
+    凭据不进日志是本项目的硬约束，其余内容对使用者完全透明。
+
+    体积控制：单条请求 / 响应各截断到 config 里配置的上限（默认 256KB），
+    超出部分注明原文长度。截断是"看得见的不完整"，不是"悄悄丢掉"。
+
+    不设外键到 runs / models：运行记录会被清理，而调用日志是排查依据，要能独立留存；
+    run_id / model_id 只作为可查询的普通列。
+    """
+
+    __tablename__ = "llm_calls"
+    __table_args__ = (
+        Index("ix_llm_calls_run_id_id", "run_id", "id"),
+        Index("ix_llm_calls_started_at", "started_at"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # 归属：run_id 为空表示不是对话发起的调用（如连通测试、摘要、检索改写）
+    run_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    model_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # 调用方：chat / workflow / debug / summary / rewrite / probe / embedding
+    purpose: Mapped[str] = mapped_column(String(24), nullable=False, default="chat", index=True)
+    # 实际请求地址（完整 URL，含 base_url 与路径）——
+    # 排查"配错 base_url""打到了哪个上游"全靠它
+    url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+    # 请求报文（tool 定义、messages、参数全在里面）与响应报文（含 SSE 原文）
+    request_body: Mapped[dict | None] = mapped_column(JSONB)
+    response_body: Mapped[str | None] = mapped_column(Text)
+    # 响应里解析出的正文与思考过程，便于不点开原文就能看
+    response_text: Mapped[str | None] = mapped_column(Text)
+    reasoning_text: Mapped[str | None] = mapped_column(Text)
+    # 本次调用发出去的工具定义（名字 + 描述 + 参数声明），与使用的工具名分开：
+    # 前者是"给了模型什么"，后者是"模型用了什么"
+    tools_offered: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="success")
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    # 用量与耗时
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_token_ms: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
+    # 报文是否被截断（超出上限）。true 时 request_body / response_body 里注明了原文长度
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+

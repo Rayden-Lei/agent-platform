@@ -5,7 +5,8 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import (agents, api_keys, audit, auth, chat, conversations, embedding_models, kb, mcp_servers, models,
+from app.api.v1 import (agents, api_keys, audit, auth, chat, conversations, embedding_models, kb, llm_calls,
+                        mcp_servers, models,
                         prompt_templates, public_shares, runs, schedules, shares, skills, stats, system, tools, users,
                         workflows)
 
@@ -23,6 +24,7 @@ api_router.include_router(workflows.router)
 api_router.include_router(kb.router)
 api_router.include_router(tools.router)
 api_router.include_router(mcp_servers.router)
+api_router.include_router(llm_calls.router)
 api_router.include_router(runs.router)
 api_router.include_router(audit.router)
 api_router.include_router(api_keys.router)
