@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from app.config import settings
 from app.db.models import Conversation, Run
 from app.db.session import SessionLocal
 from app.services import chat_service
@@ -134,8 +135,14 @@ def test_online_chat_adds_up_usage_and_keeps_tool_args_across_rounds(client, aut
 
 
 def test_debug_retrieve_step_lists_hits_without_content(client, auth_headers, agent, monkeypatch):
+    model = client.post("/api/v1/embedding-models", headers=auth_headers, json={
+        "name": "pytest-embed-debug-" + _uid(), "provider": "openai",
+        "api_base": "https://pytest.invalid/v1", "api_key": "pytest-key",
+        "model_name": "pytest-embed-model", "dim": settings.EMBEDDING_DIM,
+    }).json()
     kb = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={
-        "name": "pytest-debug-kb-" + _uid(), "description": "", "embedding_model": "embedding-3", "chunk_size": 200, "chunk_overlap": 20,
+        "name": "pytest-debug-kb-" + _uid(), "description": "", "embedding_model_id": model["id"],
+        "chunk_size": 200, "chunk_overlap": 20,
     }).json()
     canned = {"items": [{"content": "片段正文", "score": 0.9, "chunk_id": 9, "doc_id": 3, "doc_name": "说明书.pdf", "meta": {"type": "pdf", "page": 3, "kb_id": 1},
                          "rerank_score": 0.8, "vector_score": 0.7, "keyword_score": 0.5}],

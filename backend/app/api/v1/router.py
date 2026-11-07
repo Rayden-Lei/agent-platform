@@ -5,13 +5,15 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import (agents, api_keys, audit, auth, chat, conversations, kb, mcp_servers, models, prompt_templates, public_shares, runs,
-                        schedules, shares, skills, stats, system, tools, users, workflows)
+from app.api.v1 import (agents, api_keys, audit, auth, chat, conversations, embedding_models, kb, mcp_servers, models,
+                        prompt_templates, public_shares, runs, schedules, shares, skills, stats, system, tools, users,
+                        workflows)
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(models.router)
+api_router.include_router(embedding_models.router)
 api_router.include_router(agents.router)
 api_router.include_router(prompt_templates.router)
 api_router.include_router(skills.router)

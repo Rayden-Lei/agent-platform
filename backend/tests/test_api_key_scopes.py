@@ -72,9 +72,21 @@ def _published_agent(client, auth_headers, made, model_id: int, kb_ids: list | N
     return r.json()["id"]
 
 
-def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles: list) -> int:
-    """建库并直接插一条切片（不走 MinIO 与解析）。"""
-    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-scope-kb-" + _uid(), "chunk_size": 200, "chunk_overlap": 0,
+def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles: list, model_id: int = 0) -> int:
+    """建库并直接插一条切片（不走 MinIO 与解析）。
+
+    model_id 为 0 时现建一个一次性向量模型（2026-11-08 起建库必须绑模型）。
+    """
+    if not model_id:
+        r0 = client.post("/api/v1/embedding-models", headers=auth_headers, json={
+            "name": "pytest-embed-scope-" + _uid(), "provider": "openai",
+            "api_base": "https://pytest.invalid/v1", "api_key": "pytest-key",
+            "model_name": "pytest-embed-model", "dim": settings.EMBEDDING_DIM,
+        })
+        assert r0.status_code == 200, r0.text
+        model_id = r0.json()["id"]
+    r = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={"name": "pytest-scope-kb-" + _uid(), "embedding_model_id": model_id,
+                                                                            "chunk_size": 200, "chunk_overlap": 0,
                                                                             "is_public": is_public, "visible_roles": visible_roles})
     assert r.status_code == 200, r.text
     kb_id = r.json()["id"]
@@ -95,7 +107,7 @@ def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles
 def stub_llm_and_retrieval(monkeypatch):
     """模型换成桩，检索的查询向量打桩、重排走词法（不连外部服务）。"""
     monkeypatch.setattr(chat_service, "build_llm", lambda model, params=None: AnswerModel(messages=iter(["好的"])))
-    monkeypatch.setattr(retriever, "embed_query", lambda t: [0.1] * settings.EMBEDDING_DIM)
+    monkeypatch.setattr(retriever, "embed_query", lambda t, spec=None: [0.1] * settings.EMBEDDING_DIM)
     monkeypatch.setattr(settings, "RERANK_PROVIDER", "")
 
 

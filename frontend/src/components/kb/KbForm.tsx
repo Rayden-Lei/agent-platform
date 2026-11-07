@@ -3,14 +3,18 @@ import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { Switch } from '@/components/shadcn/switch'
 import Button from '../ui/Button'
-import { createKB, updateKB, type KnowledgeBaseInput, type KnowledgeBaseRow } from '../../api'
+import { createKB, listEmbeddingModelOptions, updateKB, type EmbeddingModelOption, type KnowledgeBaseInput, type KnowledgeBaseRow } from '../../api'
 import { statusOptions } from '../../constants/status'
 import { errorText } from '../../utils/errors'
 
-// 知识库新建 / 编辑弹窗：名称、描述、向量模型（建库后不可改）、切片参数（只影响之后上传的文档）。
+// 知识库新建 / 编辑弹窗：名称、描述、向量模型（下拉选一个真实模型，建库后不可改）、切片参数（只影响之后上传的文档）。
 // 访问权限只在新建时设初始值；之后在详情的"访问权限"页签改（docs/15 KB-01），编辑只提交名称、描述与切片参数。
+//
+// 向量模型 2026-11-08 起是下拉：此前是自由文本输入框，只落库不生效，默认值还是个本平台没有的模型名，
+// 建完库看到的名字和实际用的模型是两回事。现在入库与检索都真的按选中的模型走。
 interface Props {
   open: boolean
   editing: KnowledgeBaseRow | null
@@ -21,7 +25,7 @@ interface Props {
 const EMPTY = {
   name: '',
   description: '',
-  embedding_model: 'text-embedding-3-small',
+  embedding_model_id: '',
   chunk_size: 500,
   chunk_overlap: 50,
   is_public: true,
@@ -32,7 +36,23 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
   const [values, setValues] = useState(EMPTY)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<EmbeddingModelOption[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const roles = statusOptions('role')
+
+  // 候选只在新建时拉：编辑态这个字段是只读的（建库后不可改），不必请求
+  useEffect(() => {
+    if (!open || editing) return
+    setModelsLoading(true)
+    listEmbeddingModelOptions()
+      .then((r) => {
+        setModels(r.items)
+        // 只有一个可选模型时直接选中，省一次点击；多个时留空强制人选，避免默认绑错
+        if (r.items.length === 1) setValues((s) => (s.embedding_model_id ? s : { ...s, embedding_model_id: String(r.items[0].id) }))
+      })
+      .catch((e) => setError(errorText(e, '加载向量模型失败')))
+      .finally(() => setModelsLoading(false))
+  }, [open, editing])
 
   useEffect(() => {
     if (!open) return
@@ -41,7 +61,7 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
       ? {
           name: editing.name,
           description: editing.description ?? '',
-          embedding_model: editing.embedding_model,
+          embedding_model_id: String(editing.embedding_model_id),
           chunk_size: editing.chunk_size,
           chunk_overlap: editing.chunk_overlap,
           is_public: editing.is_public,
@@ -58,16 +78,20 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
   }))
 
   const onSubmit = async () => {
-    // 服务端同样会校验，这里只是提前给出可读提示
+    // 服务端同样会校验（名称长度、切片范围、模型是否存在且启用），这里只是提前给出可读提示
     if (!values.name.trim()) { setError('请填写名称'); return }
+    if (!editing && !values.embedding_model_id) { setError('请选择向量模型'); return }
     if (values.chunk_overlap >= values.chunk_size) { setError('切片重叠要小于切片大小'); return }
     setSubmitting(true)
     try {
       const { name, description, chunk_size, chunk_overlap } = values
       const payload: KnowledgeBaseInput = editing
-        ? { name, description, chunk_size, chunk_overlap }
-        : values
-      const saved = editing ? await updateKB(editing.id, payload) : await createKB(payload)
+        ? { name, description, chunk_size, chunk_overlap, embedding_model_id: Number(values.embedding_model_id) }
+        : { ...values, embedding_model_id: Number(values.embedding_model_id) }
+      // 编辑只改这四项（多带字段服务端 422）；embedding_model_id 服务端不接收，带上只为满足类型
+      const saved = editing
+        ? await updateKB(editing.id, { name, description, chunk_size, chunk_overlap })
+        : await createKB(payload)
       toast.success(editing ? '已保存' : '创建成功')
       onSaved(saved)
       onClose()
@@ -98,9 +122,27 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="kb-model">向量模型</Label>
-            <Input id="kb-model" value={values.embedding_model} disabled={!!editing} onChange={(e) => set('embedding_model', e.target.value)} />
+            {editing ? (
+              // 建库后不可改：换了向量模型等于换了向量空间，已有切片全部作废
+              <Input id="kb-model" value={editing.embedding_model ? `${editing.embedding_model.name}（${editing.embedding_model.dim} 维）` : '模型已删除'} disabled />
+            ) : (
+              <Select value={values.embedding_model_id} onValueChange={(v) => set('embedding_model_id', v)} disabled={modelsLoading || models.length === 0}>
+                <SelectTrigger id="kb-model" className="h-9 w-full text-[13px]">
+                  <SelectValue placeholder={modelsLoading ? '加载中…' : models.length ? '选择一个向量模型' : '还没有可用的向量模型'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((m) => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name}（{m.dim} 维）</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <p className="m-0 text-[12px] text-muted-foreground">
-              {editing ? '建库后不可更改；实际使用的向量后端以系统状态为准' : '记录用，实际向量后端由服务端 EMBEDDING_* 配置决定'}
+              {editing
+                ? '建库后不可更改：换了模型等于换了向量空间，已有切片会全部作废'
+                : models.length
+                  ? '文档入库与检索都按这个模型走，建库后不可更改。候选来自「向量模型」页面'
+                  : '还没有启用的向量模型，先到「向量模型」页面添加一个，再回来建库'}
             </p>
           </div>
 

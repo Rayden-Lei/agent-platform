@@ -1,6 +1,6 @@
-def test_kb_crud(client, auth_headers):
+def test_kb_crud(client, auth_headers, embedding_model):
     k = client.post("/api/v1/knowledge-bases", headers=auth_headers, json={
-        "name": "pytest-kb", "description": "", "embedding_model": "embedding-3", "chunk_size": 200, "chunk_overlap": 20,
+        "name": "pytest-kb", "description": "", "embedding_model_id": embedding_model["id"], "chunk_size": 200, "chunk_overlap": 20,
     })
     assert k.status_code == 200, k.text
     kid = k.json()["id"]
@@ -13,7 +13,7 @@ def test_kb_crud(client, auth_headers):
     assert d.status_code == 200
 
 
-def test_upload_does_not_block_event_loop(monkeypatch, client, auth_headers):
+def test_upload_does_not_block_event_loop(monkeypatch, client, auth_headers, embedding_model):
     """上传大文件期间事件循环必须保持可用。
 
     2026-09-06 的真实故障：上传路由是 async def 却在里面直接做阻塞的 MinIO 上传，
@@ -33,7 +33,8 @@ def test_upload_does_not_block_event_loop(monkeypatch, client, auth_headers):
     from app.services import kb_service
 
     kb_id = client.post("/api/v1/knowledge-bases", headers=auth_headers,
-                        json={"name": "pytest-upload-block-kb", "chunk_size": 200, "chunk_overlap": 0}).json()["id"]
+                        json={"name": "pytest-upload-block-kb", "embedding_model_id": embedding_model["id"],
+                              "chunk_size": 200, "chunk_overlap": 0}).json()["id"]
     monkeypatch.setattr(kb_service, "upload_file", lambda name, data, ctype: time.sleep(1.5))  # 阻塞 IO 替身
     monkeypatch.setattr(kb_router, "process_document", lambda doc_id, resume=False: None)  # 不真的入库
 
@@ -91,13 +92,20 @@ def developer_headers(client, auth_headers):
 @pytest.fixture
 def offline_retrieval(monkeypatch):
     """检索不连外部模型：查询向量打桩，重排走词法（本机 .env 可能指向没在跑的 oMLX）。"""
-    monkeypatch.setattr(retriever, "embed_query", lambda text: [0.1] * settings.EMBEDDING_DIM)
+    # spec 是知识库绑定的向量模型配置（2026-11-08 起 embed_query 按库取模型）；打桩时维度仍要与切片一致
+    monkeypatch.setattr(retriever, "embed_query", lambda text, spec=None: [0.1] * settings.EMBEDDING_DIM)
     monkeypatch.setattr(settings, "RERANK_PROVIDER", "")
 
 
-def _kb_with_one_chunk(client, auth_headers, *, is_public: bool, visible_roles: list) -> dict:
-    """建库并直接插一条切片（不走 MinIO 与解析）；切片 meta 按入库时的权限写快照，与 pipeline 的写法一致。"""
-    body = {"name": "pytest-kb-acl-" + uuid.uuid4().hex[:6], "chunk_size": 200, "chunk_overlap": 0, "is_public": is_public, "visible_roles": visible_roles}
+def _kb_with_one_chunk(client, auth_headers, *, is_public: bool, visible_roles: list, model_id: int | None = None) -> dict:
+    """建库并直接插一条切片（不走 MinIO 与解析）；切片 meta 按入库时的权限写快照，与 pipeline 的写法一致。
+
+    model_id 不传时现建一个一次性向量模型（2026-11-08 起建库必须绑模型），用完由 cleanup 或调用方收尾。
+    """
+    if model_id is None:
+        model_id = _throwaway_model(client, auth_headers)
+    body = {"name": "pytest-kb-acl-" + uuid.uuid4().hex[:6], "embedding_model_id": model_id,
+            "chunk_size": 200, "chunk_overlap": 0, "is_public": is_public, "visible_roles": visible_roles}
     created = client.post("/api/v1/knowledge-bases", headers=auth_headers, json=body)
     assert created.status_code == 200, created.text
     db = SessionLocal()
@@ -111,6 +119,17 @@ def _kb_with_one_chunk(client, auth_headers, *, is_public: bool, visible_roles: 
     finally:
         db.close()
     return {**body, "id": created.json()["id"]}
+
+
+def _throwaway_model(client, auth_headers) -> int:
+    """建一个只给当前用例用的一次性向量模型，返回 id。测试结束由 cleanup 按 pytest- 前缀回收。"""
+    r = client.post("/api/v1/embedding-models", headers=auth_headers, json={
+        "name": "pytest-embed-" + uuid.uuid4().hex[:6], "provider": "openai",
+        "api_base": "https://pytest.invalid/v1", "api_key": "pytest-key",
+        "model_name": "pytest-embed-model", "dim": settings.EMBEDDING_DIM,
+    })
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
 
 
 def _set_policy(client, auth_headers, kb: dict, *, is_public: bool, visible_roles: list) -> None:
@@ -265,8 +284,9 @@ def test_kb_list_for_developer_follows_the_retrieval_rule(client, auth_headers, 
     policies = {"public": (True, []), "dev": (False, ["developer"]), "admin": (False, ["admin"])}
     ids = {}
     try:
+        mid = _throwaway_model(client, auth_headers)
         for key, (is_public, roles) in policies.items():
-            r = client.post(KB, headers=auth_headers, json={"name": f"{prefix}-{key}", "chunk_size": 200, "chunk_overlap": 0, "is_public": is_public, "visible_roles": roles})
+            r = client.post(KB, headers=auth_headers, json={"name": f"{prefix}-{key}", "embedding_model_id": mid, "chunk_size": 200, "chunk_overlap": 0, "is_public": is_public, "visible_roles": roles})
             ids[key] = r.json()["id"]
         seen = {item["id"] for item in client.get(KB, headers=developer_headers, params={"q": prefix}).json()["items"]}
         expected = {ids[k] for k, (p, roles) in policies.items() if retriever.kb_allows("developer", SimpleNamespace(is_public=p, visible_roles=roles))}
@@ -280,7 +300,7 @@ def test_kb_list_for_developer_follows_the_retrieval_rule(client, auth_headers, 
 def test_developer_cannot_save_a_policy_that_shuts_developers_out(client, auth_headers, developer_headers):
     """AC-030 ③：非 admin 保存把自己排除在外的权限 400，且不落库；admin 不受此限。"""
     name = "pytest-kb-self-" + uuid.uuid4().hex[:6]
-    base = {"name": name, "chunk_size": 200, "chunk_overlap": 0}
+    base = {"name": name, "embedding_model_id": _throwaway_model(client, auth_headers), "chunk_size": 200, "chunk_overlap": 0}
     rejected = client.post(KB, headers=developer_headers, json={**base, "is_public": False, "visible_roles": ["admin"]})
     if rejected.status_code == 200:  # 应被拒却建出来了：先删掉再让断言失败，不在共享库留数据
         client.delete(f"{KB}/{rejected.json()['id']}", headers=auth_headers)
@@ -301,7 +321,7 @@ def test_developer_cannot_save_a_policy_that_shuts_developers_out(client, auth_h
 def test_kb_create_update_delete_are_audited_with_policy_before_and_after(client, auth_headers, developer_headers):
     """AC-030 ③ 后半：改权限产生审计（update_access）且 detail 有改前改后，变更记录接口按新到旧列出；
     改名称写 update 只记改了哪些字段；没变化的保存不写审计；新建、删除也留痕。2026-10-05 前知识库的增删改不写审计。"""
-    body = {"name": "pytest-kb-audit-" + uuid.uuid4().hex[:6], "chunk_size": 200, "chunk_overlap": 0, "is_public": True, "visible_roles": []}
+    body = {"name": "pytest-kb-audit-" + uuid.uuid4().hex[:6], "embedding_model_id": _throwaway_model(client, auth_headers), "chunk_size": 200, "chunk_overlap": 0, "is_public": True, "visible_roles": []}
     kid = client.post(KB, headers=auth_headers, json=body).json()["id"]
     try:
         before, after = {"is_public": True, "visible_roles": []}, {"is_public": False, "visible_roles": ["admin", "developer"]}
@@ -325,7 +345,7 @@ def test_kb_create_update_delete_are_audited_with_policy_before_and_after(client
 def test_updating_kb_no_longer_accepts_policy_fields(client, auth_headers):
     """契约一次切换（2026-10-05）：PUT /{id} 不再接收权限与向量模型，带了 422 且什么都没改，不悄悄忽略 ——
     此前整体覆盖，只想改名称的保存会把别人刚改的权限盖回去。权限走 PUT /{id}/access。"""
-    body = {"name": "pytest-kb-put-" + uuid.uuid4().hex[:6], "chunk_size": 200, "chunk_overlap": 0}
+    body = {"name": "pytest-kb-put-" + uuid.uuid4().hex[:6], "embedding_model_id": _throwaway_model(client, auth_headers), "chunk_size": 200, "chunk_overlap": 0}
     kid = client.post(KB, headers=auth_headers, json={**body, "is_public": False, "visible_roles": ["admin"]}).json()["id"]
     try:
         for extra in ({"is_public": True}, {"visible_roles": ["caller"]}, {"embedding_model": "x"}):

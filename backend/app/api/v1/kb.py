@@ -47,10 +47,16 @@ class KnowledgeBaseUpdateIn(BaseModel):
 
 
 class KnowledgeBaseIn(KnowledgeBaseUpdateIn):
-    """创建知识库的请求体：在更新字段之外，embedding_model 记录向量化模型，is_public / visible_roles 是初始访问权限。"""
+    """创建知识库的请求体：在更新字段之外，embedding_model_id 绑定向向量模型，is_public / visible_roles 是初始访问权限。
 
-    model_config = ConfigDict(extra="ignore")  # 建库契约不变，不继承更新体的 forbid
-    embedding_model: str = Field("text-embedding-3-small", max_length=128)
+    2026-11-08 起 embedding_model 自由字符串改成外键 embedding_model_id（一次切换，不留兼容层）：
+    此前那个字段只落库不生效，默认值还写成了本平台不存在的 text-embedding-3-small，
+    建完库看到的名字和实际用的模型是两回事。现在建库必须选一个真实存在且启用的模型，
+    入库与检索都按它走；建库后不可改（换了向量空间，已有切片就废了）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    embedding_model_id: int = Field(ge=1, description="绑定的向量模型 ID，取值见 GET /embedding-models/options")
     is_public: bool = True
     visible_roles: list[KbRole] = []
 

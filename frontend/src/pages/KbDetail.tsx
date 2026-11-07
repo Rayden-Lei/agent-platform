@@ -55,7 +55,10 @@ export default function KbDetail() {
           <span className="inline-flex flex-wrap items-center gap-1.5">
             <StatusTag domain="visibility" value={kb.is_public} />
             {!kb.is_public && (kb.visible_roles || []).map((r) => <Badge key={r} tone="neutral">{statusLabel('role', r)}</Badge>)}
-            <Badge tone="accent">{kb.embedding_model}</Badge>
+            {/* 绑定的向量模型：2026-11-08 起是外键，展示名称与维度；被删时明确提示（否则会以为检索正常） */}
+            <Badge tone={kb.embedding_model ? 'accent' : 'danger'}>
+              {kb.embedding_model ? `${kb.embedding_model.name} · ${kb.embedding_model.dim} 维` : '向量模型已删除'}
+            </Badge>
           </span>
         )}
         meta={kb ? [
