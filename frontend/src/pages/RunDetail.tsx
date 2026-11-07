@@ -10,6 +10,7 @@ import TokenUsage from '../components/common/TokenUsage'
 import RunOverview from '../components/runs/RunOverview'
 import RunOwner from '../components/runs/RunOwner'
 import NodeLogTable from '../components/runs/NodeLogTable'
+import RunLlmCalls from '../components/runs/RunLlmCalls'
 import Button from '../components/ui/Button'
 import { useReview } from '../components/runs/useReview'
 import { formatDateTime, formatDuration } from '../utils/time'
@@ -67,6 +68,8 @@ export default function RunDetail() {
       tabs={run ? [
         { key: 'overview', label: '概览', children: <RunOverview run={run} /> },
         { key: 'nodes', label: `节点日志${run.nodes.length ? `（${run.nodes.length}）` : ''}`, children: <NodeLogTable nodes={run.nodes} /> },
+        // 上游视角的报文：调用链说"这一步做了什么"，这里说"上游实际收到与返回了什么"
+        { key: 'llm-calls', label: '模型调用', children: <RunLlmCalls runId={run.id} /> },
         {
           key: 'tokens', label: 'Token 与成本', children: (
             <div className="flex flex-col gap-3">

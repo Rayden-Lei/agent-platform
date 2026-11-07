@@ -21,10 +21,10 @@
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import re
-import threading
 import time
 from typing import Any
 
@@ -245,20 +245,31 @@ class LlmCallRecorder:
             logger.warning("模型调用日志写入失败 run_id=%s url=%s", self.run_id, self.url, exc_info=True)
 
 
-_CURRENT = threading.local()
+# 用 contextvars 而不是 threading.local：对话是异步的，同一个线程里会同时跑多个请求
+# （TestClient / uvicorn 都是这样）。threading.local 在协程之间是共享的，
+# 两个并发对话会互相覆盖对方的采集器 —— 结果是一边记到另一边头上，甚至记成别人的 run_id。
+# contextvars 随 asyncio task 复制，天然隔离。
+_CURRENT: contextvars.ContextVar[LlmCallRecorder | None] = contextvars.ContextVar("llm_call_recorder", default=None)
 
 
 def current() -> LlmCallRecorder | None:
-    """取当前线程 / 上下文的采集器（没有就是 None，调用方照常发请求）。"""
-    return getattr(_CURRENT, "recorder", None)
+    """取当前上下文的采集器（没有就是 None，调用方照常发请求）。"""
+    return _CURRENT.get()
 
 
-def bind(recorder: LlmCallRecorder | None) -> None:
-    _CURRENT.recorder = recorder
+def bind(recorder: LlmCallRecorder | None) -> contextvars.Token:
+    """绑定采集器，返回 token；收尾时用 unbind(token) 精确还原（而不是置空，
+    否则嵌套调用（一轮对话里再发摘要）会把自己的父采集器一起清掉）。"""
+    return _CURRENT.set(recorder)
 
 
-def unbind() -> None:
-    _CURRENT.recorder = None
+def unbind(token: contextvars.Token) -> None:
+    """还原到 bind 之前的采集器。token 必须来自同一个上下文，跨 task 传会 ValueError。"""
+    try:
+        _CURRENT.reset(token)
+    except ValueError:
+        # 跨 task 传 token（极端情况下的取消）：退化成置空，不要让日志问题打断对话
+        _CURRENT.set(None)
 
 
 def _persist(rec: LlmCallRecorder) -> None:
