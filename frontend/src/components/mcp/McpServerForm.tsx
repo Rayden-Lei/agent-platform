@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
 import {
-  createMcpServer, testMcpServer, updateMcpServer,
+  createMcpServer, parseMcpConfig, testMcpServer, updateMcpServer,
   type McpServerInput, type McpServerRow, type McpTestResult, type McpTransport,
 } from '../../api'
 import { errorText } from '../../utils/errors'
@@ -79,11 +79,20 @@ export default function McpServerForm({ open, editing, onClose, onSaved }: Props
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<McpTestResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 粘贴识别：new 时默认展开，editing 时收起（编辑不需要重新粘）
+  const [pasteText, setPasteText] = useState('')
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [parsing, setParsing] = useState(false)
+  const [pasteNotes, setPasteNotes] = useState<string[]>([])
 
   useEffect(() => {
     if (!open) return
     setError(null)
     setTestResult(null)
+    setPasteText('')
+    setPasteNotes([])
+    // 新增时默认把粘贴框摆在最前面：多数人手上有现成配置，让他先粘比让他先填五个字段快
+    setPasteOpen(!editing)
     if (editing) {
       setValues({
         name: editing.name, description: editing.description || '', transport: editing.transport,
@@ -135,6 +144,35 @@ export default function McpServerForm({ open, editing, onClose, onSaved }: Props
     }
   }
 
+  // 粘贴识别：把一段配置拆成表单字段。识别不出的字段留空，由使用者补 —— 不猜。
+  // 识别成功后填进表单，仍然要走「测试连接 / 保存」，不存在绕过校验的第二条路径
+  const onParse = async () => {
+    if (!pasteText.trim()) { setError('先粘贴一段配置'); return }
+    setParsing(true)
+    setError(null)
+    setPasteNotes([])
+    try {
+      const parsed = await parseMcpConfig(pasteText)
+      setValues((v) => ({
+        ...v,
+        name: parsed.name || v.name,
+        url: parsed.url || v.url,
+        transport: parsed.transport || v.transport,
+        allowed_hosts: parsed.allowed_hosts.length ? parsed.allowed_hosts.join('\n') : v.allowed_hosts,
+        headers: Object.keys(parsed.headers).length ? JSON.stringify(parsed.headers, null, 2) : v.headers,
+        secret: parsed.secret || v.secret,
+      }))
+      setPasteNotes(parsed.notes)
+      setPasteOpen(false)
+      toast.success('已识别，确认下面的字段后点「测试连接」')
+    } catch (e) {
+      // 400 带原因（stdio 不支持 / 认不出结构），原样上屏比"识别失败"有用
+      setError(errorText(e, '识别失败'))
+    } finally {
+      setParsing(false)
+    }
+  }
+
   // 测试连接不落库：新建时还没保存也能测；编辑时若没重填凭据，后端按 server_id 找回已存的
   const onTest = async () => {
     const { payload, error: invalid } = buildPayload(values)
@@ -168,6 +206,44 @@ export default function McpServerForm({ open, editing, onClose, onSaved }: Props
       }
     >
       <div className="flex flex-col gap-4">
+        {/* 粘贴识别：放在最前面。多数人手上有现成配置，先粘一次就能填好大半字段 */}
+        <div className="rounded-lg border border-border bg-[var(--bg-soft)] px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium">从现有配置粘贴（可选）</div>
+              <div className="mt-0.5 text-[12px] text-muted-foreground">
+                支持：服务器地址 · Claude/Cursor 的 <code className="font-mono">mcpServers</code> JSON · 「地址 + 凭据」两行
+              </div>
+            </div>
+            {!pasteOpen && (
+              <Button variant="secondary" size="sm" onClick={() => setPasteOpen(true)}>粘贴识别</Button>
+            )}
+          </div>
+          {pasteOpen && (
+            <div className="mt-2 flex flex-col gap-2">
+              <textarea
+                rows={4}
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder={'https://mcp.example.com/mcp\n\n或整段粘贴：\n{\n  "mcpServers": {\n    "github": { "url": "https://…/mcp", "headers": { "Authorization": "Bearer xxx" } }\n  }\n}'}
+                className="w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 font-mono text-[12.5px] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              />
+              <div className="flex items-center gap-2">
+                <Button variant="primary" size="sm" disabled={parsing} onClick={onParse}>
+                  {parsing ? '识别中…' : '识别并填入'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => { setPasteOpen(false); setPasteText(''); setPasteNotes([]) }}>收起</Button>
+                <span className="text-[12px] text-muted-foreground">识别不落库，填完仍要「测试连接」确认</span>
+              </div>
+            </div>
+          )}
+          {pasteNotes.length > 0 && (
+            <ul className="mt-2 flex list-disc flex-col gap-0.5 pl-4 text-[12px] text-muted-foreground">
+              {pasteNotes.map((n) => <li key={n}>{n}</li>)}
+            </ul>
+          )}
+        </div>
+
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="flex flex-1 flex-col gap-1.5">
             <Label htmlFor="mcp-name">名称</Label>

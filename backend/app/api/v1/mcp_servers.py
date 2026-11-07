@@ -14,6 +14,8 @@ from app.core.deps import require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
 from app.db.models import User
 from app.db.session import get_db
+from app.core.exceptions import BizError
+from app.mcp import import_config
 from app.services import mcp_service
 
 router = APIRouter(prefix="/mcp-servers", tags=["mcp"])
@@ -53,6 +55,12 @@ class McpBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):
     """action 只接受 "enable", "disable", "delete"，其余值 422。"""
 
 
+class McpParseIn(BaseModel):
+    """粘贴识别：一段从别处抄来的配置（URL / mcpServers JSON / 地址+凭据）。"""
+
+    text: str = Field(min_length=1, max_length=8192)
+
+
 @router.get("")
 def list_servers(
     params: PageParams = Depends(page_params),
@@ -82,6 +90,21 @@ def batch_servers(data: McpBatchIn, db: Session = Depends(get_db), user: User = 
             mcp_service.set_enabled(db, server_id, data.action == "enable", user)
 
     return run_batch(db, data.unique_ids(), act)
+
+
+@router.post("/parse")
+def parse_config(data: McpParseIn, user: User = Depends(require_roles("admin", "developer"))):
+    """把一段粘贴来的配置识别成表单字段（**不落库**）。
+
+    接受三种形式：服务器地址、Claude/Cursor 的 mcpServers JSON、"地址 + 凭据"两行。
+    识别结果回前端预填表单，使用者确认后走正常的 POST /mcp-servers ——
+    所以这里不做任何写入，白名单与凭据的合法性仍由创建接口判。
+    stdio 形式的配置能认出来但会明确拒绝并说明原因（本平台不做 stdio）。
+    """
+    try:
+        return import_config.parse_config(data.text)
+    except import_config.McpConfigError as e:
+        raise BizError(400, str(e)) from e
 
 
 @router.post("/test")
@@ -116,6 +139,27 @@ async def sync_tools(server_id: int, db: Session = Depends(get_db), user: User =
     远端不可达返回 502 并写明原因（同时记进 last_error，页面能显示上次失败原因）。
     """
     return await mcp_service.sync_tools(db, server_id, user)
+
+
+@router.post("/{server_id}/sync-and-enable")
+async def sync_and_enable(server_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """同步 + 一键启用全部工具（新建服务器时的推荐动作，把两步并成一步）。
+
+    只影响这台服务器名下的工具，不碰手工建的 HTTP 工具。重复调用幂等。
+    """
+    return await mcp_service.sync_and_enable(db, server_id, user)
+
+
+@router.post("/{server_id}/tools/enable-all")
+def enable_all_tools(server_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """一键启用该服务器同步出的全部工具（不重新同步）。"""
+    return mcp_service.enable_tools(db, server_id, True, user)
+
+
+@router.post("/{server_id}/tools/disable-all")
+def disable_all_tools(server_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """一键停用该服务器同步出的全部工具。"""
+    return mcp_service.enable_tools(db, server_id, False, user)
 
 
 @router.delete("/{server_id}")

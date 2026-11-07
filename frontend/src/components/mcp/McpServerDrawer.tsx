@@ -7,17 +7,28 @@ import TimeCell from '../common/TimeCell'
 import type { McpServerDetail } from '../../api'
 
 // MCP 服务器详情：看到它同步出来的工具清单，以及每个工具被几个智能体引用。
-// 工具在这里只读 —— 启用 / 停用去工具页做（工具是通用的，不止 MCP 一种来源，
-// 两处都能改会让"到底哪个才是当前状态"变得含糊）。
+//
+// 这里可以直接启用 / 停用工具（2026-11-08 起）。原先只读、要求去工具页操作，理由是
+// "两处都能改会让当前状态含糊"；实际上工具页混着十几种来源的工具、还要翻页找，
+// 而使用者此刻的意图就是"我刚同步完，把要用的打开" —— 让他跳走再回来是纯粹的摩擦。
+// 两处读的是同一份 is_enabled，不存在状态歧义。
 interface Props {
   server: McpServerDetail | null
   onClose: () => void
   onEdit: (server: McpServerDetail) => void
   onSync: (server: McpServerDetail) => void
+  /** 同步 + 一键启用（新建服务器后的标准动作） */
+  onSyncAndEnable: (server: McpServerDetail) => void
+  onToggleTool: (toolId: number) => void
+  /** 一键启用 / 停用该服务器名下全部工具 */
+  onBulkToggle: (enabled: boolean) => void
   syncing: boolean
+  bulkRunning: boolean
 }
 
-export default function McpServerDrawer({ server, onClose, onEdit, onSync, syncing }: Props) {
+export default function McpServerDrawer({
+  server, onClose, onEdit, onSync, onSyncAndEnable, onToggleTool, onBulkToggle, syncing, bulkRunning,
+}: Props) {
   if (!server) return null
   const copyUrl = async () => {
     try {
@@ -39,8 +50,11 @@ export default function McpServerDrawer({ server, onClose, onEdit, onSync, synci
       description={`${server.transport === 'sse' ? 'SSE' : 'HTTP'} · ${tools.length} 个工具（启用 ${enabledCount} 个）`}
       extra={
         <span className="inline-flex items-center gap-1.5">
+          <Button size="sm" variant="primary" disabled={!server.is_enabled || syncing} onClick={() => onSyncAndEnable(server)}>
+            {syncing ? '同步中…' : '同步并全部启用'}
+          </Button>
           <Button size="sm" variant="secondary" disabled={!server.is_enabled || syncing} onClick={() => onSync(server)}>
-            {syncing ? '同步中…' : '同步工具'}
+            仅同步
           </Button>
           <Button size="sm" variant="secondary" onClick={() => onEdit(server)}>编辑</Button>
         </span>
@@ -84,10 +98,27 @@ export default function McpServerDrawer({ server, onClose, onEdit, onSync, synci
         )}
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-medium text-muted-foreground">同步出的工具（{tools.length}）</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] font-medium text-muted-foreground">
+              同步出的工具（{tools.length}，启用 {enabledCount}）
+            </span>
+            {tools.length > 0 && (
+              <span className="inline-flex items-center gap-1.5">
+                <Button size="sm" variant="secondary" disabled={bulkRunning || enabledCount === tools.length}
+                  onClick={() => onBulkToggle(true)}>
+                  {bulkRunning ? '处理中…' : '全部启用'}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={bulkRunning || enabledCount === 0}
+                  onClick={() => onBulkToggle(false)}>
+                  全部停用
+                </Button>
+              </span>
+            )}
+          </div>
           {tools.length === 0 ? (
             <p className="m-0 rounded-lg border border-dashed border-border px-3 py-4 text-center text-[12.5px] text-muted-foreground">
-              还没有同步过。点右上「同步工具」拉取远端清单，新工具会以停用状态进来。
+              还没有同步过。点右上「同步并全部启用」一步拉取远端清单并打开全部工具；
+              想先逐个看过再启用就点「仅同步」，新工具会以停用状态进来。
             </p>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-1 rounded-lg border border-border p-1.5">
@@ -97,16 +128,27 @@ export default function McpServerDrawer({ server, onClose, onEdit, onSync, synci
                     {t.name}
                   </code>
                   <span className="shrink-0 text-[11.5px] text-muted-foreground" title="远端原始工具名">{t.remote_name}</span>
-                  <Badge tone={t.is_enabled ? 'success' : 'neutral'}>{t.is_enabled ? '启用' : '停用'}</Badge>
                   <span className="w-[68px] shrink-0 text-right text-[11.5px] text-muted-foreground" title="引用该工具的智能体数">
                     {t.agents_count ? `${t.agents_count} 个智能体` : '未绑定'}
                   </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={t.is_enabled}
+                    aria-label={`${t.is_enabled ? '停用' : '启用'} ${t.name}`}
+                    onClick={() => onToggleTool(t.id)}
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11.5px] transition-colors ${t.is_enabled
+                      ? 'bg-[var(--success-bg,rgba(16,185,129,0.12))] text-[var(--success)]'
+                      : 'bg-[var(--bg-soft)] text-muted-foreground'}`}
+                  >
+                    {t.is_enabled ? '已启用' : '已停用'}
+                  </button>
                 </li>
               ))}
             </ul>
           )}
           <p className="m-0 text-[12px] text-muted-foreground">
-            工具的启用与停用在「工具」页做；远端已删除的工具会标成停用并保留，不会破坏已绑定它的智能体。
+            新同步的工具默认停用：远端工具的描述是外部输入，先看过再启用。远端已删除的工具会标成停用并保留，不会破坏已绑定它的智能体。
           </p>
         </div>
       </div>
