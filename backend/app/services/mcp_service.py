@@ -306,13 +306,16 @@ def _to_tool_parameters(schema: dict) -> tuple[dict, list[str], list[str]]:
 def _tool_name(server_name: str, remote_name: str) -> str:
     """本地工具名：`{server}_{remote}`，避免跨 server 重名（§5.2）。
 
-    清洗成只含字母数字下划线：工具名会出现在模型生成的 tool_calls 里，带点、斜杠这类字符
-    会让部分模型不肯调用。超长时截断并加后缀，保证不超过 tools.name 的 128 字符。
+    清洗成 `[A-Za-z0-9_-]`：工具名会出现在模型生成的 tool_calls 里，点、斜杠、空格这类字符
+    会让部分模型不肯调用。**连字符要保留** —— 它被模型 API 明确允许（OpenAI 的函数名规则是
+    `^[a-zA-Z0-9_-]+$`），而且清洗掉会让名字变难读，也会把 `pytest-` 这类前缀打成
+    `pytest_`，测试回收的按前缀匹配就再也找不到它们（2026-11-07 漏出 10 个孤儿工具）。
+    超长时截断，保证不超过 tools.name 的 128 字符。
     """
     import re
 
     def clean(s: str) -> str:
-        return re.sub(r"[^A-Za-z0-9_]", "_", s)
+        return re.sub(r"[^A-Za-z0-9_-]", "_", s)
 
     head = clean(server_name)[:40]
     tail = clean(remote_name)[: TOOL_NAME_MAX - len(head) - 1]

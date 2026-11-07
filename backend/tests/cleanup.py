@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -103,9 +104,51 @@ def purge_test_rows(db: Session, since: datetime) -> dict[str, int]:
         if removed:
             deleted[table] = removed
 
+    # MCP 孤儿工具（服务器已删、工具还在）单独扫一遍：它们的 name 不一定以 pytest- 开头，
+    # 上面的按名回收够不到（2026-11-07 漏出 10 个）
+    orphans = purge_mcp_orphans(db, since)
+    if orphans:
+        deleted["tools_mcp_orphans"] = orphans
+
     if skipped:
         deleted["_skipped"] = skipped
     return deleted
+
+
+def purge_mcp_orphans(db: Session, since: datetime) -> int:
+    """兜底回收"服务器已删、工具还在"的测试残留。
+
+    tools.name 由 `{server}_{remote}` 拼成，清洗规则一变就可能不再以 pytest- 开头
+    （2026-11-07：连字符被换成下划线，`pytest-mcp-x` 变成 `pytest_mcp_x`，前缀匹配全失效，
+    漏出 10 个孤儿工具）。这里不看 name，改看"它指向的服务器已经不存在或名字是 pytest-"。
+
+    删除时顺带把 tool_id 从所有智能体的 tool_ids 里摘掉（JSONB 无外键，删了会留悬空 id）。
+    """
+    from sqlalchemy import text as _text
+
+    rows = db.execute(_text(
+        "select t.id from tools t left join mcp_servers s on s.id = t.mcp_server_id "
+        "where t.mcp_server_id is not null and t.created_at >= :since "
+        "and (s.id is null or s.name like :prefix)"
+    ), {"since": since, "prefix": TEST_PREFIX + "%"}).all()
+    ids = [r[0] for r in rows]
+    if not ids:
+        return 0
+    removed = 0
+    for tool_id in ids:
+        savepoint = db.begin_nested()
+        try:
+            for (agent_id, tool_ids) in db.execute(_text("select id, tool_ids from agents where tool_ids @> :ids"), {"ids": json.dumps([tool_id])}).all():
+                kept = [x for x in (tool_ids or []) if x != tool_id]
+                db.execute(_text("update agents set tool_ids = cast(:ids as jsonb) where id = :id"),
+                           {"ids": json.dumps(kept), "id": agent_id})
+            result = db.execute(_text('delete from tools where id = :id'), {"id": tool_id})
+            removed += result.rowcount
+        except IntegrityError:
+            savepoint.rollback()
+            continue
+        savepoint.commit()
+    return removed
 
 
 def purge_since(since: datetime) -> dict[str, int]:
