@@ -11,6 +11,7 @@ from app.db.models import Run, RunNode, Workflow
 from app.db.session import SessionLocal
 from app.workflow.engine import build_workflow
 from app.workflow.validation import branch_predecessors, validate_graph
+from tests.sandbox_steps import code_step
 
 
 def _node(node_id: str, node_type: str, **config) -> dict:
@@ -60,7 +61,7 @@ def test_two_sleep_branches_run_concurrently_and_join_collects_tail_outputs():
     elapsed = time.perf_counter() - started
     assert elapsed < 1.6, f"两条 1 秒分支串行了：{elapsed:.2f}s"
     assert result["output"] == {"a": "A", "b": "B"}
-    assert sorted(result["steps"]) == ["code", "code", "join", "parallel"]
+    assert sorted(result["steps"]) == sorted(["join", "parallel", code_step(), code_step()])
     assert result["node_outputs"] == {"par": "in", "a": "A", "b": "B", "join": {"a": "A", "b": "B"}}
 
 
@@ -206,7 +207,7 @@ def test_graph_without_parallel_is_unaffected_by_validation(client, auth_headers
     try:
         r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "go"}})
         assert r.status_code == 200, r.text
-        assert r.json()["status"] == "success" and r.json()["steps"] == ["condition:True", "loop:1", "code", "loop:2"]
+        assert r.json()["status"] == "success" and r.json()["steps"] == ["condition:True", "loop:1", code_step(), "loop:2"]
     finally:
         client.delete(f"/api/v1/workflows/{wf.json()['id']}", headers=auth_headers)
 

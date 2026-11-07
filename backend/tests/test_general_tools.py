@@ -118,24 +118,41 @@ def test_config_fields_declared_for_tools():
 
 
 def test_secret_never_leaves_via_config_out(db):
-    """工具行里的密钥加密存 secret_enc，_config_out 只给 has_secret，绝不下发明文。"""
+    """工具行里的密钥加密存 secret_enc，_config_out 只给声明和 has_secret，绝不下发明文。
+
+    造数自己造，不依赖库里已有 web_search 工具行：CI 是空库，`.first()` 返回 None 会让这条
+    用例直接 AttributeError —— 那等于"密钥脱敏"从没在 CI 上真正验过。
+
+    行名必须仍是 web_search（不带 pytest- 前缀）：_config_out 按名字从 BUILTIN_PARAMETERS /
+    TOOL_CONFIG_FIELDS 补声明，换个名字就只测到"非内置工具原样返回 config"，验不到"补声明但
+    不下发密钥"这条真正要守的路径。因此回收只能靠下面的 finally 删除，不能靠 cleanup.py 的
+    前缀扫描 —— 这是本用例唯一需要人工留意的地方，别把 finally 里的 delete 删掉。
+    """
     from app.core.security import encrypt_secret
     from app.db.models import Tool
-    from app.services.tool_service import _config_out
+    from app.services.tool_service import _config_out, _to_dict
 
     secret = "sk-tool-owned-never-leaked-9999"
-    t = db.query(Tool).filter(Tool.name == "web_search").first()
-    original = (dict(t.config or {}), t.secret_enc)
+    t = Tool(
+        name="web_search", description="pytest 造数：只用于验证 _config_out 不下发密钥，用例结束即删", type="builtin",
+        config={"default_limit": 3, "endpoint": "https://example.com/search"}, timeout=20,
+        secret_enc=encrypt_secret(secret),
+    )
+    db.add(t)
+    db.commit()
     try:
-        t.config = {**(t.config or {}), "default_limit": 3}
-        t.secret_enc = encrypt_secret(secret)
-        db.commit()
         out = _config_out(t)
         assert secret not in str(out), "明文出现在接口返回里"
-        assert out.get("default_limit") == 3
+        assert out.get("default_limit") == 3, "普通配置项要照常带出来"
+        # 走的是内置分支：参数声明与配置项声明都是代码里的，不落库
+        assert "query" in out["parameters"]["properties"]
         assert any(f["kind"] == "secret" for f in out["config_fields"])
+        # 对外整体形态（工具页真正拿到的那个 dict）同样只认 has_secret
+        whole = _to_dict(t)
+        assert secret not in str(whole), "明文出现在工具对外形态里"
+        assert whole["auth"]["has_secret"] is True
     finally:
-        t.config, t.secret_enc = original
+        db.delete(t)
         db.commit()
 
 
