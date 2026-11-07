@@ -216,6 +216,11 @@ def _queries_for(model: ModelConfig, llm: Any, message_text: str) -> list[str]:
     return _rewrite_queries(model, llm, message_text)
 
 
+# 检索并发的进程级闸门（见 _retrieve_all）：同一时刻最多这么多 (库, 查询) 任务在跑。
+# 取 8 = 单次请求的外层并发上限，保证单请求行为不变，只压住多请求叠加时的总量。
+_RETRIEVAL_SLOTS = threading.BoundedSemaphore(8)
+
+
 class Retrieval(NamedTuple):
     citations: list
     acl_rejected: int
@@ -231,13 +236,19 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict 
     kb_names = kb_names or {}
 
     def _one(pair):
-        clock = chat_trace.Clock()
-        result = retrieve_with_stats(pair[0], pair[1], top_k, role=role, kb_scope=kb_scope)
+        # 每个 (库, 查询) 任务都要先抢进程级槽位：外层线程池最多 8 个并发，而每个任务内部
+        # 还会按关键词数再开最多 8 个线程（retriever 的关键词召回），两者相乘是 64 路 DB 连接
+        # + 64 路 embedding 请求 —— 20 个知识库 × 3 个改写查询就能打满，随后所有人的首字节一起变慢。
+        # 闸门放在任务粒度上（而不是整个请求一次），这样单个请求仍能跑满，多请求叠加时被压住总数。
+        with _RETRIEVAL_SLOTS:
+            clock = chat_trace.Clock()
+            result = retrieve_with_stats(pair[0], pair[1], top_k, role=role, kb_scope=kb_scope)
         return pair[0], result, chat_trace.retrieve_step(kb_names.get(pair[0], f"知识库 #{pair[0]}"), pair[1], result, clock)
 
     if len(pairs) == 1:
         results = [_one(pairs[0])]
     else:
+        # 线程池只负责"别让单个请求串行"，真正的总闸门是 _RETRIEVAL_SLOTS
         with ThreadPoolExecutor(max_workers=min(8, len(pairs))) as ex:
             results = list(ex.map(_one, pairs))
     merged: dict = {}
