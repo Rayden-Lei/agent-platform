@@ -133,8 +133,24 @@ def refresh_conversation_summary(db: Session, model: ModelConfig, llm: Any, conv
     return True
 
 
-def schedule_summary_refresh(model_id: int, conversation_id: int) -> threading.Thread:
-    """响应结束后在后台线程刷新摘要：自己开会话，失败只记日志。返回线程对象便于测试等待。"""
+# 后台摘要刷新的并发闸门：每个会话结束后都会起一个线程调一次模型，
+# 不设上限时高并发对话会把线程数、数据库连接数、上游并发三者一起拉爆
+# （上游限流之后又反过来拖慢所有人的首字节）。
+# 用信号量把"同时跑几个摘要"钉死在个位数：抢不到的直接跳过这一轮，
+# 下一轮对话攒够批次还会再触发，摘要晚一轮不影响正确性。
+_SUMMARY_SLOTS = threading.Semaphore(4)
+
+
+def schedule_summary_refresh(model_id: int, conversation_id: int) -> threading.Thread | None:
+    """响应结束后在后台线程刷新摘要：自己开会话，失败只记日志。返回线程对象便于测试等待。
+
+    并发受 _SUMMARY_SLOTS 限制：抢不到槽位就跳过本轮（返回 None），
+    下一条消息进来时还会再试 —— 摘要不是实时功能，晚一轮完全可接受。
+    """
+    if not _SUMMARY_SLOTS.acquire(blocking=False):
+        logger.info("跳过本轮摘要刷新（后台并发已满）conversation_id=%s", conversation_id)
+        return None
+
     def _run():
         db = SessionLocal()
         try:
@@ -147,6 +163,8 @@ def schedule_summary_refresh(model_id: int, conversation_id: int) -> threading.T
             logger.exception("后台刷新会话摘要失败 conversation_id=%s", conversation_id)
         finally:
             db.close()
+            _SUMMARY_SLOTS.release()
+
     thread = threading.Thread(target=_run, name=f"summary-{conversation_id}", daemon=True)
     thread.start()
     return thread

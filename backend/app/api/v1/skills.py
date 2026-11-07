@@ -47,9 +47,14 @@ class SkillIn(BaseModel):
 
 
 class SkillImportIn(BaseModel):
-    """粘贴导入：SKILL.md 全文（含 frontmatter）。"""
+    """粘贴导入：SKILL.md 全文（含 frontmatter）。
 
-    text: str = Field(min_length=1)
+    上限 128KB（正文上限 64KB 的两倍，给 frontmatter 与格式留余量）：
+    没有上限时一段 100MB 的文本会让解析用的 DOTALL 正则与 splitlines 吃满 CPU 与内存 ——
+    这个接口在鉴权之后、任何业务校验之前就有开销。
+    """
+
+    text: str = Field(min_length=1, max_length=128 * 1024)
 
 
 class SkillBatchIn(BatchIn[Literal["delete"]]):

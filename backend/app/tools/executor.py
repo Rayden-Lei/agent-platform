@@ -16,6 +16,10 @@ from app.services.middleware import ToolPermissionMiddleware, run_acting
 from app.tools import general
 from app.tools.permission import ToolCallContext
 
+# 单次工具返回的字符上限：一条结果会进模型上下文并落库，不设限时对方返回几十 MB
+# 就能把这轮对话和数据库一起撑爆（内置 http_request 早就有 max_bytes，这里补齐）
+MAX_RESPONSE_CHARS = 100_000
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,11 +192,23 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
             else:
                 resp = await client.request(method, url, params=auth_params or None, json=args, headers=headers)
             resp.raise_for_status()
+            # 返回体上限：一条工具结果会进模型上下文与落库，不设限时对方返回几十 MB 就能
+            # 把这轮对话和数据库一起撑爆。超限按字符截断并明确告知模型"还有更多"。
+            body = resp.text[:MAX_RESPONSE_CHARS]
+            truncated = len(resp.text) > MAX_RESPONSE_CHARS
             try:
-                return resp.json()
-            except ValueError:
+                parsed = json.loads(body) if body else {}
+            except json.JSONDecodeError:
                 # 对方返回的不是 JSON（纯文本/HTML），按文本返回是预期行为
-                return {"result": resp.text}
+                return {"result": body + ("…（已截断）" if truncated else "")}
+            # **顶层必须是对象**：工作流引擎直接 result.get("denied")，返回数组或标量会 AttributeError
+            # 把整条运行搞挂。这不是对方"错"，OpenAI 风格的接口约定就是对象；但仍然要兜住。
+            if not isinstance(parsed, dict):
+                return {"result": parsed}
+            if truncated:
+                parsed["_truncated"] = True
+                parsed["_note"] = f"响应超过 {MAX_RESPONSE_CHARS} 字符已截断，原文 {len(resp.text)} 字符"
+            return parsed
     except httpx.HTTPError as e:
         # httpx 的错误文案带完整地址，查询参数里的凭据会跟着进日志与工具结果（结果会回给模型、显示在对话里），先打码
         message = _scrub(str(e), secret)

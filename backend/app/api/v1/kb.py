@@ -158,23 +158,54 @@ async def upload_document(
     """上传文档（docs/04 4.8）：文件名只保留最后一段并清洗，扩展名须在上传策略的白名单内（400），
     超过 KB_UPLOAD_MAX_MB 413；这些都在写 MinIO、建文档行之前拒绝。"""
     name, ext = await run_in_threadpool(kb_service.check_upload, db, kb_id, user, file.filename, file.size)
-    content = await _read_limited(file, settings.KB_UPLOAD_MAX_MB * 1024 * 1024)
+    # 先把上传流落到临时文件，再流式传给 MinIO。
+    # 之前是"整块读进内存 → bytes 传给 MinIO"：一次上传里同时存在请求体、bytearray、
+    # bytes 拷贝与 put_object 的流四份数据，而 KB_UPLOAD_MAX_MB 是 200MB ——
+    # 几个大文件并发就能把进程撑爆（机器只有 1.7GB 内存）。
+    # 现在内存占用与文件大小无关，超大文件在落盘阶段就会被 413 拦下。
+    tmp_path = await run_in_threadpool(_spool_upload, file, settings.KB_UPLOAD_MAX_MB * 1024 * 1024)
     # 存 MinIO 是阻塞 IO（几十 MB 的文件走公网要几十秒），必须挪出事件循环 ——
     # 写在 async 路由里会占住整个进程：2026-09-06 一次上传卡了 436 秒，期间所有接口都不响应，页面看着像服务挂了
-    doc = await run_in_threadpool(kb_service.create_document, db, kb_id, user, name, ext, content, file.content_type or "application/octet-stream")
+    doc = await run_in_threadpool(kb_service.create_document_from_path, db, kb_id, user, name, ext, tmp_path,
+                                  file.content_type or "application/octet-stream")
     # 解析 / 分块 / 向量化放入后台任务异步执行，接口先返回文档记录，前端轮询 status
     background_tasks.add_task(process_document, doc.id)
     return {"id": doc.id, "kb_id": kb_id, "name": name, "file_type": doc.file_type, "status": doc.status}
 
 
-async def _read_limited(file: UploadFile, limit: int) -> bytes:
-    """分块读取并计数，超过上限 413。file.size 拿不到时（分块传输）也拦得住，不会先整块读进内存再判断。"""
-    buf = bytearray()
-    while chunk := await file.read(1024 * 1024):
-        buf.extend(chunk)
-        if len(buf) > limit:
-            raise kb_service.upload_too_large()
-    return bytes(buf)
+def _spool_upload(file: UploadFile, limit: int) -> str:
+    """把上传流分块落到临时文件，返回路径。超过上限 413 并删掉半成品。
+
+    为什么落盘而不是进内存：上限是 200MB，一次上传在内存里会同时存在多份副本；
+    而 MinIO 的 fput_object 本来就是按块读文件，落盘反而少一次拷贝。
+    分块读 + 边读边计数：file.size 拿不到时（分块传输）也拦得住，不会先整块读进内存再判断。
+
+    调用方（`create_document_from_path`）负责删除这个文件；这里用 delete=False 是因为
+    需要把路径跨函数传递，Windows 上打开中的临时文件也无法第二次打开。
+    """
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="kb-upload-")
+    written = 0
+    try:
+        with open(fd, "wb") as out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    raise kb_service.upload_too_large()
+                out.write(chunk)
+    except BaseException:
+        # 任何失败（含 413）都要把半成品删掉，否则 200MB 的残file 会堆满 /tmp
+        import os
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 @router.get("/{kb_id}/documents")

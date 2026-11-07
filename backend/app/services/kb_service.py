@@ -1,3 +1,4 @@
+import logging
 import re
 import unicodedata
 import uuid
@@ -12,8 +13,10 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.session import rows_to_dict
 from app.db.models import Agent, AgentVersion, AuditLog, Document, DocumentChunk, EmbeddingModel, KnowledgeBase, User
-from app.rag.minio_client import upload_file
+from app.rag.minio_client import remove_object, upload_file, upload_path
 from app.rag.retriever import kb_allows, retrieve, retrieve_with_stats
+
+logger = logging.getLogger(__name__)
 
 SORTABLE = {"id": KnowledgeBase.id, "name": KnowledgeBase.name, "updated_at": KnowledgeBase.updated_at}
 DOC_SORTABLE = {"id": Document.id, "name": Document.name, "status": Document.status, "chunk_count": Document.chunk_count, "created_at": Document.created_at}
@@ -281,14 +284,31 @@ def check_upload(db: Session, kb_id: int, user: User, filename: str | None, size
     return name, ext
 
 
-def create_document(db: Session, kb_id: int, user: User, name: str, ext: str, content: bytes, content_type: str) -> Document:
-    """上传文档：先落 MinIO（对象名带 uuid 前缀防重名），库记录初始为 uploading，由异步解析管道置 ready/failed。
-    name / ext 须先经 check_upload 清洗与校验；空文件 400（解析出来什么都没有，只会留一篇失败的文档）。写审计 upload。"""
-    if not content:
-        raise BizError(400, "文件是空的")
-    get_kb(db, kb_id, user.role)
-    object_name = f"{uuid.uuid4().hex}_{name}"
-    upload_file(object_name, content, content_type or "application/octet-stream")
+def create_document_from_path(db: Session, kb_id: int, user: User, name: str, ext: str, path: str,
+                              content_type: str) -> Document:
+    """上传文档（从本地临时文件流式写 MinIO）：对象名带 uuid 前缀防重名，库记录初始为 uploading，
+    由异步解析管道置 ready/failed。name / ext 须先经 check_upload 清洗与校验；空文件 400。
+    写审计 upload。临时文件由这里负责删除（无论成功失败）。
+
+    为什么不再收 bytes：上限 200MB，整块读进内存后同一次上传里会同时存在多份副本，
+    几个并发就能把只有 1.7GB 内存的机器撑爆。fput_object 按块读文件，内存占用与大小无关。
+    """
+    import os
+
+    size = os.path.getsize(path)
+    object_name = ""
+    try:
+        if size == 0:
+            raise BizError(400, "文件是空的")
+        get_kb(db, kb_id, user.role)
+        object_name = f"{uuid.uuid4().hex}_{name}"
+        upload_path(object_name, path, size, content_type or "application/octet-stream")
+    finally:
+        # 临时文件无论上传成功与否都要删：失败时留在 /tmp 就是垃圾
+        try:
+            os.unlink(path)
+        except OSError:
+            logger.warning("上传临时文件清理失败 path=%s", path)
 
     from app.rag.pipeline import NODE_NAME
     # 记下由本节点处理：共享库上另一台后端重启时不会来抢这篇
@@ -347,10 +367,23 @@ def _get_document(db: Session, kb_id: int, doc_id: int, role: str | None) -> Doc
 
 
 def delete_document(db: Session, kb_id: int, doc_id: int, user: User) -> None:
-    """删除文档（切片级联删除）；文档必须属于该知识库，否则按不存在处理。写审计 delete（与删除同一次提交）。"""
+    """删除文档（切片级联删除）；文档必须属于该知识库，否则按不存在处理。写审计 delete（与删除同一次提交）。
+
+    对象存储里的原文件也要删：库里删行不会连带删 MinIO 对象，不清就是永久垃圾
+    （桶只增不减；技能路径一直是显式清的，这条之前漏了）。
+    顺序：先落库、再删对象 —— 库删失败时对象还在，可以重试；反过来先删对象、库又失败，
+    文档还在但原文件没了，重新解析会直接失败。删对象失败只记日志不抛：文档行已经删掉，
+    此时再报错会让调用方以为没删成而重试。
+    """
     doc = _get_document(db, kb_id, doc_id, user.role)
+    object_name = doc.file_path
     db.delete(doc)
     _audit_document(db, user, "delete", doc)
+    if object_name:
+        try:
+            remove_object(object_name)
+        except Exception:
+            logger.warning("文档已删除但原文件清理失败 doc_id=%s object=%s", doc_id, object_name, exc_info=True)
 
 
 def prepare_reprocess(db: Session, kb_id: int, doc_id: int, user: User) -> Document:

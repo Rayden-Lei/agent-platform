@@ -7,7 +7,8 @@ from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import hash_password
-from app.db.models import Agent, AgentShare, KnowledgeBase, ModelConfig, User, Workflow
+from app.db.models import (Agent, AgentShare, KnowledgeBase, McpServer, ModelConfig, PromptTemplate, Skill, Tool, User,
+                           Workflow)
 from app.schemas import UserCreate, UserUpdate
 
 SORTABLE = {"id": User.id, "username": User.username, "created_at": User.created_at}
@@ -101,6 +102,15 @@ def delete_user(db: Session, user_id: int, operator: User | None = None) -> None
         refs.append("知识库")
     if db.query(Workflow).filter(Workflow.created_by == user_id).first():
         refs.append("工作流")
+    # 技能与提示词模板的 created_by 同样是 RESTRICT，漏检会撞外键、冒成 500 而不是可读的 409
+    if db.query(Skill).filter(Skill.created_by == user_id).first():
+        refs.append("技能")
+    if db.query(PromptTemplate).filter(PromptTemplate.created_by == user_id).first():
+        refs.append("提示词模板")
+    if db.query(Tool).filter(Tool.created_by == user_id).first():
+        refs.append("工具")
+    if db.query(McpServer).filter(McpServer.created_by == user_id).first():
+        refs.append("MCP 连接器")
     # 公开访客的会话与运行记在分享创建者名下（docs/15 3.6），删了创建者访客数据就没有归属
     if db.query(AgentShare).filter(AgentShare.created_by == user_id).first():
         refs.append("分享链接")
