@@ -101,10 +101,15 @@ def run_script(skill: Skill, path: str, payload: dict | None = None, limits: san
     if found["inline"] is not None:
         code = found["inline"]
     else:
+        # 取对象（超限抛 ValueError）与解码（非 UTF-8 抛 UnicodeDecodeError）分两段处理：
+        # UnicodeDecodeError 是 ValueError 的子类，写在同一组 except 里排在后面就永远抓不到，
+        # 用户会看到 minio_client 的通用报错而不是"脚本不是 UTF-8"。
         try:
-            code = minio_client.read_bytes(found["object"], limit=SCRIPT_READ_MAX_BYTES).decode("utf-8")
+            data = minio_client.read_bytes(found["object"], limit=SCRIPT_READ_MAX_BYTES)
         except ValueError as e:
             raise BizError(400, str(e)) from e
+        try:
+            code = data.decode("utf-8")
         except UnicodeDecodeError as e:
             raise BizError(400, f"脚本不是 UTF-8 文本：{found['name']}") from e
     return sandbox.run_python(code, payload, limits)

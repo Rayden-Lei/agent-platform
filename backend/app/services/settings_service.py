@@ -207,7 +207,9 @@ def _item(spec: SettingSpec, row: SystemSetting | None) -> dict:
     if spec.kind == KIND_SECRET:
         # configured：库里有值或 .env 里有值都算配好了，页面据此显示"已配置 / 未配置"
         item["configured"] = bool(value)
-        item["masked"] = _mask_secret(value)
+        # 文本类参数在 _coerce 里已经收敛成 str；这里再按非 str 兜底成空串，
+        # 掩码函数只该拿到字符串，类型上也就不用抹成 Any
+        item["masked"] = _mask_secret(value if isinstance(value, str) else "")
     return item
 
 
