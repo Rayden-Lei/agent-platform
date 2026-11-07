@@ -75,7 +75,7 @@ def _summarize_history(model: ModelConfig, llm: Any, previous_summary: str, pend
         prompt += "【更早对话的已有摘要】\n" + previous_summary + "\n\n【需要并入摘要的新对话】\n"
     prompt += _plain_text(pending)
     try:
-        resp = guarded_invoke(model, llm, prompt)
+        resp = guarded_invoke(model, llm, prompt, purpose="summary")
         summary = (resp.content or "").strip() if resp else ""
     except Exception as e:
         # 摘要失败不影响对话，但这批历史会退化为字符截断，质量下降，必须能看见
@@ -183,7 +183,7 @@ def _rewrite_queries(model: ModelConfig, llm: Any, message_text: str) -> list[st
     )
 
     def _invoke():
-        return guarded_invoke(model, llm, prompt)
+        return guarded_invoke(model, llm, prompt, purpose="rewrite")
 
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as FutureTimeoutError

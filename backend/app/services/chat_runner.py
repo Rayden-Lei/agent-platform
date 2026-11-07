@@ -128,7 +128,10 @@ async def _agent_events(ctx: chat_service.ChatContext, state: StreamState, event
     # dict[str, int] 满足不了它（键名与取值都不是任意字符串/整数）。
     config: RunnableConfig = {"recursion_limit": 3 * max_rounds + 10}
     # 熔断包装：打开期直接抛 503；首个 chunk 视为成功，建立流之前的异常计入失败
-    llm_stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, config=config, stream_mode="messages"))
+    # 带上 run_id：模型调用日志靠它归到某次运行上（运行详情的「模型调用」页签按它查）。
+    # 不带的话日志只能靠时间猜，一次运行里有多次调用时分不清谁是谁。
+    llm_stream = guarded_astream(ctx.model, graph.astream({"messages": ctx.history_messages}, config=config, stream_mode="messages"),
+                                 purpose="debug" if source == "debug" else "chat", run_id=run_id)
     async for chunk, _meta in llm_stream:
         if isinstance(chunk, AIMessageChunk):
             call_id = chunk.id or "_"

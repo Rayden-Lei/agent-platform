@@ -102,14 +102,28 @@ def _new_llm(model: ModelConfig, params: dict):
     return ReasoningChatOpenAI(**kwargs)
 
 
-def guarded_invoke(model: ModelConfig, llm, input_value):
-    """同步调用 + 熔断：打开期直接抛 BizError(503) 不请求上游；结果按熔断器规则记录。"""
+def guarded_invoke(model: ModelConfig, llm, input_value, *, purpose: str = "chat", run_id: int | None = None):
+    """同步调用 + 熔断：打开期直接抛 BizError(503) 不请求上游；结果按熔断器规则记录。
+
+    同步路径（工作流 agent 节点、检索改写、摘要）也要记日志：这些调用的报文同样只能靠原始
+    记录排查，只记对话那一路会让人误以为"只有对话会花 token"。binding 用 token 精确还原。
+    """
     breaker.before_call(model.id, model.name)
+    recorder = llm_log.LlmCallRecorder(purpose=purpose, run_id=run_id, model_id=model.id, model_name=model.name) \
+        if settings.LLM_LOG_ENABLED else None
+    token = llm_log.bind(recorder) if recorder is not None else None
     try:
         resp = llm.invoke(input_value)
     except Exception as e:
         breaker.record_failure(model.id, model.name, e)
+        if recorder is not None:
+            recorder.finish(status="error", error=f"{type(e).__name__}: {e}")
         raise
+    finally:
+        if recorder is not None:
+            recorder.finish()
+            if token is not None:
+                llm_log.unbind(token)
     breaker.record_success(model.id, model.name)
     return resp
 
