@@ -82,3 +82,38 @@ export const batchMcpServers = (ids: number[], action: 'enable' | 'disable' | 'd
   batchAction('/mcp-servers', ids, action)
 // 测试连接不落库：新建时还没保存也能测。编辑已有服务器且没重填凭据时传 server_id，后端找回已存凭据
 export const testMcpServer = (data: McpServerInput & { server_id?: number }) => post<McpTestResult>('/mcp-servers/test', data)
+
+/** 粘贴识别的结果：识别不出的字段为 null，由使用者补；notes 是给使用者看的说明 */
+export interface McpParsedConfig {
+  name: string | null
+  url: string
+  transport: McpTransport
+  headers: Record<string, string>
+  secret: string | null
+  allowed_hosts: string[]
+  notes: string[]
+}
+
+// 把一段从别处抄来的配置识别成表单字段（不落库）。支持：地址 / mcpServers JSON / 地址+凭据两行。
+// stdio 形式（npx、uvx）会 400 并说明"本平台不支持 stdio"——那不是配错了，是能力边界
+export const parseMcpConfig = (text: string) => post<McpParsedConfig>('/mcp-servers/parse', { text })
+
+/** 一键启用 / 停用全部工具的结果 */
+export interface McpBulkToggleResult {
+  total: number
+  changed: number
+  is_enabled: boolean
+}
+
+// 一键启用该服务器同步出的全部工具：信任一台服务器是一个整体决定，不该逐个点
+export const enableAllMcpTools = (id: number) => post<McpBulkToggleResult>(`/mcp-servers/${id}/tools/enable-all`)
+export const disableAllMcpTools = (id: number) => post<McpBulkToggleResult>(`/mcp-servers/${id}/tools/disable-all`)
+
+/** 同步 + 一键启用（新建服务器后的标准动作，两步合成一步） */
+export interface McpSyncEnableResult extends McpSyncResult {
+  enabled_tools: number
+  tools_total: number
+}
+
+export const syncAndEnableMcpServer = (id: number) =>
+  post<McpSyncEnableResult>(`/mcp-servers/${id}/sync-and-enable`)

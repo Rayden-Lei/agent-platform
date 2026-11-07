@@ -458,3 +458,35 @@ def _restore_degraded(tool: Tool, args: dict) -> dict:
             # 不是 JSON 就原样发：远端可能本来就要一个普通字符串
             logger.info("MCP 工具 %s 的参数 %s 不是合法 JSON，按原样转发", tool.name, name)
     return out
+
+
+def enable_tools(db: Session, server_id: int, enabled: bool, user: User) -> dict:
+    """一键启用 / 停用某台服务器同步出的**全部**工具。
+
+    为什么需要：同步出来的工具默认停用（远端描述是外部输入，先由人看过再启用）。一台服务器
+    常有十几个工具，逐个点开关是把人劝退的主要摩擦点；而"我信任这台服务器"本来就是一个整体决定。
+
+    只动该服务器名下的行，不碰手工建的 HTTP 工具；调用方传 enabled 而不是"翻转"，
+    重复提交是幂等的（与 set_tool_enabled 同口径）。
+    """
+    get_server(db, server_id)
+    rows = db.query(Tool).filter(Tool.mcp_server_id == server_id).all()
+    changed = [t for t in rows if t.is_enabled != enabled]
+    for t in changed:
+        t.is_enabled = enabled
+    if changed:
+        db.commit()
+        record_audit(db, user, "enable" if enabled else "disable", "mcp_server", server_id,
+                     detail={"tools": len(changed)})
+    return {"total": len(rows), "changed": len(changed), "is_enabled": enabled}
+
+
+async def sync_and_enable(db: Session, server_id: int, user: User) -> dict:
+    """同步 + 一键启用，合并成一步（新建服务器时的默认动作）。
+
+    顺序不能反：先同步才知道有哪些工具，同步完再整体启用。
+    中间任何一步失败都原样上抛，让调用方看到是哪一步坏了。
+    """
+    result = await sync_tools(db, server_id, user)
+    enabled = enable_tools(db, server_id, True, user)
+    return {**result, "enabled_tools": enabled["changed"], "tools_total": enabled["total"]}

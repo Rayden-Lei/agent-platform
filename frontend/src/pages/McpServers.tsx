@@ -3,7 +3,8 @@ import { toast } from 'sonner'
 import { Plug, Plus } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import {
-  batchMcpServers, deleteMcpServer, getMcpServer, listMcpServers, syncMcpServer, toggleMcpServer,
+  batchMcpServers, deleteMcpServer, disableAllMcpTools, enableAllMcpTools, getMcpServer, listMcpServers,
+  syncAndEnableMcpServer, syncMcpServer, toggleMcpServer, toggleTool,
   type McpServerDetail, type McpServerRow,
 } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
@@ -38,6 +39,8 @@ export default function McpServers() {
   const [current, setCurrent] = useState<McpServerDetail | null>(null)
   // 同步要连远端，可能几秒：记下正在同步的那一行，按钮显示"同步中…"
   const [syncingId, setSyncingId] = useState<number | null>(null)
+  // 一键启用 / 停用全部工具：单行操作，不加 spinner 就看不出点没点上
+  const [bulkRunning, setBulkRunning] = useState(false)
   const openCreate = () => { setEditing(null); setFormOpen(true) }
   const empty = (
     <EmptyState
@@ -72,6 +75,47 @@ export default function McpServers() {
       list.reload()
     } finally {
       setSyncingId(null)
+    }
+  }
+
+  // 同步 + 一键启用：新建服务器后的标准动作。两步并一步，省掉"同步完发现工具全是停用的"这一愣
+  const onSyncAndEnable = async (r: McpServerRow | McpServerDetail) => {
+    setSyncingId(r.id)
+    try {
+      const res = await syncAndEnableMcpServer(r.id)
+      toast.success(`同步完成：共 ${res.tools_total} 个工具，已启用 ${res.enabled_tools} 个` +
+        (res.disabled ? `，停用 ${res.disabled} 个（远端已移除）` : ''))
+      await reloadAll()
+    } catch (e) {
+      toast.error(errorText(e, '同步失败'))
+    } finally {
+      setSyncingId(null)
+    }
+  }
+
+  // 一键启用 / 停用该服务器的全部工具
+  const onBulkToggle = async (enabled: boolean) => {
+    if (!current) return
+    setBulkRunning(true)
+    try {
+      const res = enabled ? await enableAllMcpTools(current.id) : await disableAllMcpTools(current.id)
+      toast.success(res.changed ? `已${enabled ? '启用' : '停用'} ${res.changed} 个工具` : '状态已经是目标值，没有变化')
+      await reloadAll()
+    } catch (e) {
+      toast.error(errorText(e, enabled ? '批量启用失败' : '批量停用失败'))
+    } finally {
+      setBulkRunning(false)
+    }
+  }
+
+  // 单个工具开关：与工具页读的是同一份 is_enabled，不存在状态歧义
+  const onToggleTool = async (toolId: number) => {
+    try {
+      await toggleTool(toolId)
+      if (current) setCurrent(await getMcpServer(current.id))
+      list.reload()
+    } catch (e) {
+      toast.error(errorText(e, '切换失败'))
     }
   }
 
@@ -144,7 +188,11 @@ export default function McpServers() {
         onClose={() => setCurrent(null)}
         onEdit={(s) => { setCurrent(null); onEdit(s) }}
         onSync={onSync}
+        onSyncAndEnable={onSyncAndEnable}
+        onToggleTool={onToggleTool}
+        onBulkToggle={onBulkToggle}
         syncing={syncingId === current?.id}
+        bulkRunning={bulkRunning}
       />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((s) => s.id === id)?.name} />
     </ListPage>
