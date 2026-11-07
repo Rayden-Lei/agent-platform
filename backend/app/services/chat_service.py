@@ -269,7 +269,12 @@ def prepare_chat(db: Session, caller: conversation_service.Caller, agent_id: int
         missing_detail="会话不存在或不属于该智能体", run_type="chat",
         input_data={"message": message}, model_id=live.model_id, agent_version=agent_version,
     )
-    return replay if replay is not None else prepared
+    if replay is not None:
+        return replay
+    # open_turn 的返回是"二选一"：(PreparedTurn, None) 或 (None, ReplayChat)。回放已在上一条分支返回，
+    # 走到这里 prepared 必定有值；检查器推不出这个关系，按路由里同一个口径断言一次。
+    assert prepared is not None
+    return prepared
 
 
 def _skills_block(skills: list) -> str:
