@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     MODEL_MAX_RETRIES: int = 0
     MODEL_BREAKER_FAIL_THRESHOLD: int = 5
     MODEL_BREAKER_OPEN_SECONDS: int = 30
+    # 模型调用全量日志（2026-11-08）：每次请求的地址、请求体、响应体、工具定义都存进 llm_calls。
+    # 单条报文按字符数截断到这么多（默认 256KB）；0 表示不记录。凭据一律打码，其余全部保留
+    LLM_LOG_ENABLED: bool = True
+    LLM_LOG_MAX_CHARS: int = 262144
     RAG_TOP_K: int = 4
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入
