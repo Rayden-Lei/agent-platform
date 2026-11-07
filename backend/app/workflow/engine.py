@@ -245,7 +245,7 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
             resp = guarded_invoke(model, llm, [
                 SystemMessage(content=prompt_override or live.system_prompt),
                 HumanMessage(content=str(input_val)),
-            ])
+            ], purpose="workflow", run_id=run_id)
             out = _finalize_node_output(node_id, resp.content, config)
             out["steps"] = [f"agent:{live.name}"]
             _finish_node(rn_id, "success", out["output"])
