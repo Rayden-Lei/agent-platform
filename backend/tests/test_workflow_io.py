@@ -152,8 +152,29 @@ def test_end_outputs_declared_shape(client, auth_headers):
     assert r2.json()["output"] == "v"
 
 
+def _ensure_calculator_tool(client, auth_headers) -> int:
+    """确保库里有一行 calculator 工具，返回它的 id（已存在则复用）。
+
+    为什么需要它：calculator / current_time 是**代码内置**的能力（每个智能体无条件挂上），
+    但工作流工具节点是按 `tools` 表里的名字查的（engine._make_tool_node）。空库时那一行不存在，
+    节点直接返回「工具不存在」。本地开发库早就被建过了，所以这两个用例只在 CI 的空库上失败。
+
+    造的这行带 pytest- 前缀，会话结束由 tests/cleanup.py 回收。
+    """
+    existing = client.get("/api/v1/tools", headers=auth_headers, params={"page_size": 100}).json()["items"]
+    found = next((t for t in existing if t["name"] == "calculator"), None)
+    if found is not None:
+        return found["id"]
+    created = client.post("/api/v1/tools", headers=auth_headers, json={
+        "name": "calculator", "description": "计算数学表达式", "type": "builtin", "config": {}, "timeout": 30,
+    })
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
 def test_tool_node_resolves_ref_in_fixed_args(client, auth_headers):
     """工具节点的固定参数写 {{start.x}} 时按引用取值（WF-27），不拼字符串。"""
+    _ensure_calculator_tool(client, auth_headers)
     graph = {
         "nodes": [
             {"id": "s", "type": "start", "config": {"variables": [{"name": "expression", "type": "text"}]}},
@@ -170,6 +191,7 @@ def test_tool_node_resolves_ref_in_fixed_args(client, auth_headers):
 
 def test_builtin_tool_exposes_parameter_declaration(client, auth_headers):
     """内置工具的声明随 config 下发（WF-26），前端据此生成表单而不是让人手写 JSON。"""
+    _ensure_calculator_tool(client, auth_headers)
     tools = client.get("/api/v1/tools", headers=auth_headers, params={"page_size": 100}).json()["items"]
     calc = next(t for t in tools if t["name"] == "calculator")
     properties = calc["config"]["parameters"]["properties"]
