@@ -21,10 +21,11 @@ interface Props {
 const UNSET = '__unset__'
 
 export default function ToolTestArgsForm({ tool, values, onChange, jsonText, onJsonChange }: Props) {
-  // 内置工具的参数声明由后端随 config 一并下发（tools/builtin.py），所以三种工具类型走同一套表单；
-  // 只有"既不是 http 又没有声明"的旧数据才退回 JSON 文本框（2026-11-05 前内置工具都是这种）
+  // 内置工具的参数声明由后端随 config 一并下发（tools/builtin.py），MCP 工具的声明是同步时从远端
+  // inputSchema 转来的，所以三种工具类型走同一套表单；
+  // 只有"既不是外部工具又没有声明"的旧数据才退回 JSON 文本框（2026-11-05 前内置工具都是这种）
   const params = tool.config?.parameters
-  if (tool.type !== 'http' && !params) {
+  if (tool.type !== 'http' && tool.type !== 'mcp' && !params) {
     return (
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="tool-args-json">参数(JSON)</Label>
