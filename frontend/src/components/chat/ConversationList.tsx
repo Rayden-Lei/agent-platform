@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { ConversationRow } from '../../api'
 import { fromNow } from '../../utils/time'
+import InlineConfirm from '../ui/InlineConfirm'
 
 // 会话列表：搜索 + 新建 + 按更新时间倒序；当前会话高亮，悬停出现删除。
 // 改造后改为自绘列表（原实现用 antd List），不再有内建分页，改为"加载更多"。
@@ -68,16 +69,24 @@ export default function ConversationList({ conversations, total, currentId, q, o
                 <div className="truncate" style={{ fontWeight: active ? 550 : 400 }}>{c.title || '未命名会话'}</div>
                 <div className="text-[11px]" style={{ color: 'var(--fg-subtle)' }}>{fromNow(c.updated_at)}</div>
               </div>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onDelete(c.id) }}
-                title="删除会话"
-                aria-label="删除会话"
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded shrink-0 relative after:absolute after:-inset-2 after:content-['']"
-                style={{ color: '#DC2626' }}
+              {/* 二次确认：删除会话会连带删掉整段对话记录，误点代价高。
+                  全站其他删除都走 InlineConfirm，这里之前是点一下就删（2026-11-08 修）。 */}
+              <InlineConfirm
+                message={`确定删除会话「${c.title || '未命名会话'}」？这条会话的全部消息与运行记录都会被删除。`}
+                confirmLabel="删除"
+                danger
+                onConfirm={() => onDelete(c.id)}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
-              </button>
+                <button
+                  type="button"
+                  title="删除会话"
+                  aria-label="删除会话"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded shrink-0 relative after:absolute after:-inset-2 after:content-['']"
+                  style={{ color: 'var(--danger, #DC2626)' }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
+                </button>
+              </InlineConfirm>
             </div>
           )
         })}

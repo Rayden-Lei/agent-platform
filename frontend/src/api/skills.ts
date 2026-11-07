@@ -40,6 +40,8 @@ export interface SkillRow {
   updated_at: string | null
   /** 列表附带：绑定该技能的智能体数 */
   agents_count?: number
+  /** 详情附带：绑定该技能的智能体清单（删不掉时「仍有 N 个绑定」得知道是哪几个） */
+  agents?: { id: number; name: string; status: string }[]
   /** 列表不下发，详情 / 保存响应才有 */
   content?: string
 }
