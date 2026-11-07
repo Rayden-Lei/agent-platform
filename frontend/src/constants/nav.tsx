@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench, BookOpen, Blocks, Binary } from 'lucide-react'
+import { Plug, ScrollText, Clock, LayoutDashboard, Database, FileText, History, KeyRound, Network, Bot, Settings, Users, Zap, Wrench, BookOpen, Blocks, Binary, Cpu } from 'lucide-react'
 
 // 导航表：菜单项、分组、角色可见性与页面标题的唯一来源（docs/01 第 3 节权限矩阵、docs/17 §2 分组）。
 // 详情页（/agents/3）按路径前缀匹配到父菜单，标题显示父菜单名。
@@ -38,6 +38,8 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/skills', label: '技能', icon: <BookOpen />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/mcp-servers', label: 'MCP 连接器', icon: <Blocks />, group: 'capability', roles: ['admin', 'developer'] },
   { key: '/runs', label: '运行记录', icon: <History />, group: 'operation', roles: ['admin', 'developer'] },
+  // 调用日志与运行记录并列：运行记录是"业务上发生了什么"，调用日志是"上游到底收到了什么"，排查时两张表要对着看
+  { key: '/llm-logs', label: '模型调用日志', icon: <Cpu />, group: 'operation', roles: ['admin', 'developer'] },
   { key: '/schedules', label: '定时任务', icon: <Clock />, group: 'operation', roles: ['admin', 'developer'] },
   { key: '/api-keys', label: 'API Key', icon: <KeyRound />, group: 'operation', roles: ['admin', 'developer'] },
   { key: '/users', label: '用户管理', icon: <Users />, group: 'system', roles: ['admin'] },

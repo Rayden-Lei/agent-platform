@@ -105,7 +105,11 @@ def get_detail(db: Session, server_id: int) -> dict:
         **_to_dict(s, len(tools), _creators(db, [s]).get(s.created_by)),
         "tools": [
             {"id": t.id, "name": t.name, "remote_name": t.remote_name, "description": t.description,
-             "is_enabled": t.is_enabled, "agents_count": counts.get(t.id, 0)}
+             "is_enabled": t.is_enabled, "agents_count": counts.get(t.id, 0),
+             # 参数声明带回来，抽屉里才能直接生成试用表单（否则要跳去工具页才能试一次）
+             "parameters": (t.config or {}).get("parameters") or {"type": "object", "properties": {}},
+             "schema_notes": (t.config or {}).get("schema_notes") or [],
+             "source_missing": bool((t.config or {}).get("source_missing"))}
             for t in tools
         ],
     }
@@ -345,8 +349,25 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
     created, updated, disabled = 0, 0, 0
     seen: set[str] = set()
 
+    # 名字冲突预检：工具名在库里没有唯一约束，但工作流节点按 name 引用工具（`.first()` 取任意一行），
+    # 重名会静默调错工具。服务器改名后重新同步、或手工建的工具撞上「服务器名_远端名」时都会发生，
+    # 因此一次性把「本服务器之外的」已有名字取出来（一次查询），逐条判。
+    taken: dict[str, int] = {
+        name: tid for tid, name in db.query(Tool.id, Tool.name).filter(
+            (Tool.mcp_server_id != server_id) | (Tool.mcp_server_id.is_(None))
+        ).all()
+    }
+
     for rt in remote_tools:
         seen.add(rt.name)
+        local_name = _tool_name(s.name, rt.name)
+        clash = taken.get(local_name)
+        if clash is not None:
+            raise BizError(
+                409,
+                f"同步失败：工具名 {local_name} 已被另一个工具（ID {clash}）占用。"
+                "工具名由「服务器名_远端工具名」生成，请改一个服务器名再同步",
+            )
         parameters, notes, degraded = _to_tool_parameters(rt.input_schema)
         config = {
             "parameters": parameters,
@@ -361,14 +382,14 @@ async def sync_tools(db: Session, server_id: int, user: User) -> dict:
         row = existing.get(rt.name)
         if row is None:
             db.add(Tool(
-                name=_tool_name(s.name, rt.name), description=description, type="mcp",
+                name=local_name, description=description, type="mcp",
                 config=config, timeout=30,
                 # 新建默认停用：远端工具描述是外部输入，先由人看过再启用（§5 风险控制）
                 is_enabled=False, mcp_server_id=server_id, remote_name=rt.name, created_by=user.id,
             ))
             created += 1
         else:
-            row.name = _tool_name(s.name, rt.name)
+            row.name = local_name
             row.description = description
             row.config = config
             # is_enabled 不动：那是人做的决定，同步不该替他改
