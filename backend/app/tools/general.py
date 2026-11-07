@@ -48,16 +48,74 @@ TOOL_CONFIG_DEFAULTS: dict[str, dict] = {
 }
 
 
-def tool_config(name: str, config: dict | None, key: str):
-    """取某个工具自己的配置项：工具行里的值优先，没有则用 TOOL_CONFIG_DEFAULTS 兜底。
+def tool_config(name: str, config: dict | None, key: str) -> object:
+    """取某个工具自己的配置项**原始值**：工具行里的值优先，没有则用 TOOL_CONFIG_DEFAULTS 兜底。
 
     配置随工具行走（tools.config），因此同一平台上的两个 web_search 工具可以指向
     不同的搜索服务；不是全局一份。
+
+    返回的是未经校验的原始值：页面上存下来的是字符串，库里的历史行也可能是数字，
+    键没在 TOOL_CONFIG_DEFAULTS 里声明时是 None。要参与计算一律用下面三个取用函数，
+    别自己对返回值做 float() / int()——那正是配置缺失时抛 TypeError 的来源。
     """
     conf = config or {}
     if key in conf and conf[key] not in (None, ""):
         return conf[key]
     return TOOL_CONFIG_DEFAULTS.get(name, {}).get(key)
+
+
+def _as_int(raw: object) -> int | None:
+    """把配置里的原始值收敛成整数；转不出来返回 None，兜底交给调用处。"""
+    if isinstance(raw, (int, float, str)):
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _as_float(raw: object) -> float | None:
+    """把配置里的原始值收敛成小数，语义同 _as_int。"""
+    if isinstance(raw, (int, float, str)):
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def tool_config_str(name: str, config: dict | None, key: str) -> str:
+    """取文本配置项：工具行里的值优先，没有则用默认值（缺省是空串）。"""
+    raw = tool_config(name, config, key)
+    if isinstance(raw, str):
+        return raw
+    return "" if raw is None else str(raw)
+
+
+def tool_config_int(name: str, config: dict | None, key: str) -> int:
+    """取整数配置项。页面表单存下来的值是字符串（"30"），历史行里也见过数字，两种都认。
+
+    真转不出来说明配置被写坏了：退回 TOOL_CONFIG_DEFAULTS 并留日志——调用处要的是一个
+    确定的数，不该因为一处坏配置在请求路径上抛 TypeError / ValueError。
+    """
+    raw = tool_config(name, config, key)
+    value = _as_int(raw)
+    if value is not None:
+        return value
+    default = _as_int(tool_config(name, None, key)) or 0
+    logger.warning("工具配置 %s.%s 不是整数：%r，改用默认值 %s", name, key, raw, default)
+    return default
+
+
+def tool_config_float(name: str, config: dict | None, key: str) -> float:
+    """取小数配置项，语义同 tool_config_int。"""
+    raw = tool_config(name, config, key)
+    value = _as_float(raw)
+    if value is not None:
+        return value
+    default = _as_float(tool_config(name, None, key)) or 0.0
+    logger.warning("工具配置 %s.%s 不是小数：%r，改用默认值 %s", name, key, raw, default)
+    return default
 
 
 def _err(message: str) -> dict:
@@ -235,7 +293,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
     parts = urlsplit(url.strip())
     if parts.scheme not in ("http", "https"):
         return _err("只支持 http / https")
-    ok, reason = _host_allowed(parts.hostname or "", tool_config("http_request", config, "allowed_hosts") or "")
+    ok, reason = _host_allowed(parts.hostname or "", tool_config_str("http_request", config, "allowed_hosts"))
     if not ok:
         logger.warning("http_request 拒绝访问：url=%r reason=%s", url[:200], reason)
         return _err(reason)
@@ -254,7 +312,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
     if m not in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"):
         return _err(f"不支持的方法：{m}")
 
-    timeout = float(tool_config("http_request", config, "timeout"))
+    timeout = tool_config_float("http_request", config, "timeout")
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.request(m, url.strip(), headers=hdrs, content=body or None)
@@ -264,7 +322,7 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
         logger.warning("http_request 请求失败：url=%r error=%s", url[:200], e)
         return _err(f"请求失败：{type(e).__name__}: {e}")
 
-    max_bytes = int(tool_config("http_request", config, "max_bytes"))
+    max_bytes = tool_config_int("http_request", config, "max_bytes")
     raw = resp.content[:max_bytes]
     truncated = len(resp.content) > max_bytes
     try:
@@ -297,16 +355,16 @@ def web_search(query: str, limit: int = 0, *, config: dict | None = None, api_ke
     key = (api_key or "").strip()
     if not key:
         return _err("联网搜索未配置 API Key：去「工具」页编辑 web_search 填上，或在本机 .env 设置 SEARCHPRO_KEY 后新建工具")
-    endpoint = (tool_config("web_search", config, "endpoint") or "").strip()
+    endpoint = tool_config_str("web_search", config, "endpoint").strip()
     if not endpoint:
         return _err("联网搜索未配置接口地址：去「工具」页编辑 web_search 填写")
 
-    max_limit = int(tool_config("web_search", config, "max_limit"))
-    default_limit = int(tool_config("web_search", config, "default_limit"))
+    max_limit = tool_config_int("web_search", config, "max_limit")
+    default_limit = tool_config_int("web_search", config, "default_limit")
     want = int(limit) if str(limit or "").strip() not in ("", "0") else default_limit
     n = max(1, min(want, max_limit))
 
-    timeout = float(tool_config("web_search", config, "timeout"))
+    timeout = tool_config_float("web_search", config, "timeout")
     payload = {"Query": q}
     try:
         with httpx.Client(timeout=timeout) as client:
