@@ -159,15 +159,30 @@ def _tool_calls_for_display(tool_calls: list, full: bool) -> list:
     return rows
 
 
-def list_messages(db: Session, conversation_id: int, caller: Caller, full_tool_results: bool = False, full_allowed: bool = False) -> list[dict]:
-    """取会话内全部消息（按 ID 升序，即对话顺序），先校验会话归属。token_usage 随消息返回，刷新后历史消息仍能显示用量。
+# 历史消息一次最多返回多少条。原来是"整段返回"，长会话（每条最多带 8000 字工具结果）
+# 一次能返回几十 MB —— 页面会卡死，服务端也要把整份数据读进内存再序列化。
+# 取最近 N 条而不是最早 N 条：打开会话要看的是最近的对话，往前翻是次要需求。
+MESSAGES_MAX = 500
+
+
+def list_messages(db: Session, conversation_id: int, caller: Caller, full_tool_results: bool = False,
+                  full_allowed: bool = False, limit: int = MESSAGES_MAX) -> list[dict]:
+    """取会话内最近 limit 条消息（按 ID 升序返回，即对话顺序），先校验会话归属。
+    token_usage 随消息返回，刷新后历史消息仍能显示用量。
     工具结果按 PREVIEW 返回；full_tool_results 才给库里那份完整结果，full_allowed 由路由按调用方身份给出
     （admin / developer 的登录请求），先校验归属再判权限，不通过的不暴露会话是否存在。
-    分享访客不走这里（会把工具入参与结果、引用的 kb_id / score、用量整包返回），用 share_service 的访客结构。"""
+    分享访客不走这里（会把工具入参与结果、引用的 kb_id / score、用量整包返回），用 share_service 的访客结构。
+
+    **上限是必须的**：消息内容里带工具结果（每条最多 8000 字），无上限时打开一个长会话
+    就是把几十 MB 拉进浏览器。取最近 N 条用"倒序取 N 再翻回来"，只扫索引不扫全表。"""
     get_owned_conversation(db, conversation_id, caller)
     if full_tool_results and not full_allowed:
         raise BizError(403, "只有 admin / developer 的登录请求可以查看完整工具结果")
-    rows = db.query(Message).filter(Message.conversation_id == conversation_id).order_by(Message.id).all()
+    cap = max(1, min(limit, MESSAGES_MAX))
+    rows = list(reversed(
+        db.query(Message).filter(Message.conversation_id == conversation_id)
+        .order_by(Message.id.desc()).limit(cap).all()
+    ))
     return [
         {
             "id": m.id,

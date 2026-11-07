@@ -37,7 +37,12 @@ def get_minio() -> Minio:
 
 
 def upload_file(object_name: str, data: bytes, content_type: str) -> None:
-    """把内存字节流上传为对象。length 必须与 data 实际长度一致（此处直接用 len(data)）。"""
+    """把内存字节流上传为对象。length 必须与 data 实际长度一致（此处直接用 len(data)）。
+
+    大文件请用 `upload_path`：把整个文件读进内存后，同一次上传里会同时存在
+    "请求体 + bytearray + bytes 拷贝 + put_object 的流"这几份副本，
+    KB_UPLOAD_MAX_MB 是 200MB 时几个并发上传就能把进程撑爆。
+    """
     client = get_minio()
     client.put_object(
         settings.MINIO_BUCKET,
@@ -46,6 +51,15 @@ def upload_file(object_name: str, data: bytes, content_type: str) -> None:
         length=len(data),
         content_type=content_type,
     )
+
+
+def upload_path(object_name: str, path: str, size: int, content_type: str) -> None:
+    """从本地文件流式上传：内存占用与文件大小无关（minio 按块读）。
+
+    调用方负责把上传流落到这个临时文件并删掉它。
+    """
+    client = get_minio()
+    client.fput_object(settings.MINIO_BUCKET, object_name, path, content_type=content_type)
 
 
 def download_file(object_name: str, local_path: str) -> None:

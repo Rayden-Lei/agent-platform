@@ -35,7 +35,10 @@ def kb(client, auth_headers, embedding_model):
 def stored(monkeypatch) -> list:
     """对象存储与后台处理打桩：记下上传了哪些对象，后台处理不跑。"""
     uploads: list = []
-    monkeypatch.setattr(kb_service, "upload_file", lambda name, data, ctype: uploads.append((name, len(data))))
+    # 2026-11-08 起上传走"落临时文件 → fput_object 流式传"，不再把整块 bytes 交给 upload_file；
+    # 打桩点跟着换成 upload_path，size 由文件实际长度给出
+    monkeypatch.setattr(kb_service, "upload_path",
+                        lambda name, path, size, ctype: uploads.append((name, size)))
     monkeypatch.setattr(kb_route, "process_document", lambda doc_id: None)
     return uploads
 

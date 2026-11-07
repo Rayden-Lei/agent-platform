@@ -106,7 +106,15 @@ def get_skill(db: Session, skill_id: int) -> Skill:
 
 
 def get_skill_detail(db: Session, skill_id: int) -> dict:
-    return {**_to_dict(get_skill(db, skill_id)), "agents_count": bound_agent_count(db, skill_id)}
+    s = get_skill(db, skill_id)
+    # 附上绑定的智能体清单，而不只是数量：技能删不掉时（409「仍有 N 个智能体绑定」）
+    # 使用者需要知道到底是哪几个，否则只能一个个智能体点开去找。
+    agents = db.query(Agent.id, Agent.name, Agent.status).filter(Agent.skill_ids.contains([skill_id])).order_by(Agent.id).all()
+    return {
+        **_to_dict(s),
+        "agents_count": len(agents),
+        "agents": [{"id": a.id, "name": a.name, "status": a.status} for a in agents],
+    }
 
 
 def create_skill(db: Session, data, user: User) -> dict:

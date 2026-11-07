@@ -211,6 +211,8 @@ def test_schedule_summary_refresh_runs_in_background(client, auth_headers, db, c
     }).json()["id"]
     try:
         thread = chat_service.schedule_summary_refresh(mid, conversation.id)
+        # 并发满了会返回 None（跳过本轮）；测试里只有一个调用方，正常应当拿到线程
+        assert thread is not None, "后台并发未满时应当真的起线程"
         thread.join(10)
         assert not thread.is_alive()
         assert calls == [(mid, conversation.id)]
