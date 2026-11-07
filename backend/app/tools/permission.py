@@ -73,11 +73,31 @@ def check(ctx: ToolCallContext) -> tuple[str, str | None]:
         # 之前是"放行 + 每次 WARN"（给存量工具留补配置的窗口），窗口关掉后还放行等于这道闸门不存在；
         # 只有 admin_test 例外（在上面提前返回），管理员仍能测未配白名单的工具，否则新工具永远配不出来。
         return "deny", f"工具 {tool.name} 未配置 allowed_hosts，无法判断目标地址是否可信"
-    # 后缀匹配而不是精确匹配：api.example.com 要能覆盖 v2.api.example.com，
-    # 但必须带点前缀，否则 "notapi.example.com" 会被 "api.example.com" 误放行
-    if any(host == item or host.endswith("." + item) for item in allowed):
+    # 匹配规则（三种写法都要认，界面上三种都在用）：
+    #   精确：api.example.com 只放行它自己
+    #   隐式后缀：api.example.com 同时覆盖 v2.api.example.com（必须带点前缀，
+    #             否则 "notapi.example.com" 会被 "api.example.com" 误放行）
+    #   显式通配：*.openai.com —— 工具页的配置说明就是这么教用户填的，
+    #             不认这个写法的话，照说明填写等于 100% 被拒，而且配置看起来完全正确
+    if any(_host_matches(host, item) for item in allowed):
         return "allow", None
     return "deny", f"工具目标地址不在白名单内：{host or '（未配置 URL）'}"
+
+
+def _host_matches(host: str, pattern: str) -> bool:
+    """单个白名单项与目标主机的匹配。pattern 支持 `*` 前缀与裸域名两种写法。"""
+    pattern = pattern.strip().lower().lstrip(".")
+    host = host.lower()
+    if not pattern:
+        return False
+    if pattern.startswith("*"):
+        # *.openai.com：匹配任意层级子域，但**不含** openai.com 本身
+        # （与 TLS 通配证书语义一致；要连根域就再写一条 openai.com）
+        suffix = pattern[1:]
+        if not suffix.startswith("."):
+            return False
+        return host.endswith(suffix) and host != suffix[1:]
+    return host == pattern or host.endswith("." + pattern)
 
 
 def log_decision(ctx: ToolCallContext, decision: str, reason: str | None) -> None:

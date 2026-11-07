@@ -7,6 +7,8 @@
 版本语义与提示词模板同口径：影响模型所见的字段（name / description / content）变化才 +1，
 只改显示名、常驻开关不升版本。不保留历史快照 —— 技能没有发布流程，改完即对所有线上智能体生效。
 """
+import logging
+
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,6 +30,8 @@ DESCRIPTION_MAX = 1024
 CONTENT_MAX_BYTES = 64 * 1024
 # 影响模型所见的字段：这些变化才升版本
 MODEL_FACING = ("name", "description", "content")
+
+logger = logging.getLogger(__name__)
 
 SORTABLE = {"id": Skill.id, "name": Skill.name, "display_name": Skill.display_name, "version": Skill.version, "updated_at": Skill.updated_at}
 
@@ -166,11 +170,17 @@ def delete_skill(db: Session, skill_id: int, user: User) -> None:
     name = s.name
     resources = list(s.resources or [])
     db.delete(s)
-    db.commit()
-    # 对象存储里的资源要显式清：库里删了行不会连带删 MinIO 对象，不清就是永久垃圾。
-    # 放在 commit 之后：先保证库里删成功，再清对象；反过来若 commit 失败，对象已经没了但技能还在。
-    skill_resource.drop_all(skill_id, resources)
+    # 审计在 commit 之前写：record_audit 自带 commit，本来就会把这次删除一起提交。
+    # 反过来（删除 commit 之后再审计）一旦审计或 MinIO 出错，就出现「行没了、审计没写」的静默记录缺失。
     record_audit(db, user, "delete", "skill", skill_id, detail={"name": name})
+    # 对象存储放在库操作全部成功之后再清：库里删失败时对象还在，可以重试；
+    # 反过来先清对象、库又删失败，技能还在但脚本全没了，那是不可恢复的。
+    # 清理失败也只记日志不抛：技能行已经删掉，此时再报错会让调用方以为没删成而重试。
+    try:
+        skill_resource.drop_all(skill_id, resources)
+    except Exception:
+        logger.warning("技能已删除但资源清理失败 skill_id=%s resources=%s", skill_id,
+                       [r.get("object") for r in resources if r.get("object")], exc_info=True)
 
 
 def load_for_model(db: Session, skill_ids: list, name: str) -> Skill:

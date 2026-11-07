@@ -11,8 +11,11 @@ def record_audit(db, user, action: str, resource: str, resource_id=None, detail=
     - detail：附加上下文（如变更前后值），需可 JSON 序列化
     - ip：来源 IP；不传时自动取请求上下文里的客户端 IP，无请求上下文（调度线程、脚本）时为空。
       调用点不必各自传 IP，中间件解析一次即可覆盖全部审计。
-    注意：本函数内部自行 commit；若调用方在同一事务中还有未提交的修改，会一并提交，
-    且此后无法再整体回滚。审计失败会随事务一起回滚。
+
+    **自带 commit**：若调用方在同一事务中还有未提交的修改，会一并提交，此后无法再整体回滚。
+    因此**必须在业务改动都做完、后续不会再抛异常之后**才调用它 —— 典型反例是
+    "flush → audit（此处 commit）→ 序列化抛异常"，结果是接口 500 但数据已经落库。
+    正确顺序是"flush → 序列化 → audit"。审计失败会随事务一起回滚。
     """
     log = AuditLog(
         user_id=user.id if user else None,

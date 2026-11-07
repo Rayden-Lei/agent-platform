@@ -166,10 +166,27 @@ def list_tools(db: Session, params: PageParams, q: str | None = None, tool_type:
     return page
 
 
+def _check_name_taken(db: Session, name: str, exclude_id: int | None = None) -> None:
+    """工具名唯一（409）。
+
+    `tools.name` 在库里没有唯一约束，但它是**工作流 tool 节点引用工具的唯一键**
+    （`workflow/engine.py` 按 `Tool.name` 查后 `.first()`）。重名时 `.first()` 会静默取到
+    任意一行 —— 工作流看起来配得对、实际调的是另一个工具，运行记录上也看不出来。
+    MCP 同步出的名字带服务器名前缀（`{服务器名}_{远端名}`），正常不会与手工工具撞，
+    但服务器改名后再同步就会撞上自己旧的那批，所以这里统一判。
+    """
+    query = db.query(Tool.id).filter(Tool.name == name)
+    if exclude_id is not None:
+        query = query.filter(Tool.id != exclude_id)
+    if db.query(query.exists()).scalar():
+        raise BizError(409, f"工具名称「{name}」已存在：工作流节点按名称引用工具，重名会导致调错工具")
+
+
 def create_tool(db: Session, data, user: User) -> dict:
     """新建工具（type 决定执行方式，config 为各类型工具的参数配置）。凭据加密后存 secret_enc；写审计 create。"""
     _check_auth(data, bool(data.secret))
     _check_allowed_hosts(data.config, data.type)
+    _check_name_taken(db, data.name)
     t = Tool(name=data.name, description=data.description, type=data.type, config=data.config, timeout=data.timeout,
              auth=data.auth.stored(), secret_enc=encrypt_secret(data.secret) if data.secret else None, created_by=user.id)
     db.add(t)
@@ -209,6 +226,8 @@ def update_tool(db: Session, tool_id: int, data, user: User) -> dict:
     had_secret = bool(t.secret_enc)
     _check_auth(data, bool(data.secret) or (had_secret and not data.clear_secret))
     _check_allowed_hosts(data.config, data.type)
+    if data.name != t.name:
+        _check_name_taken(db, data.name, exclude_id=t.id)
     before = {f: getattr(t, f) for f in _AUDITED_FIELDS}
     t.name = data.name
     t.description = data.description

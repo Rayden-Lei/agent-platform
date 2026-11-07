@@ -145,9 +145,14 @@ def create_kb(db: Session, data, user) -> dict:
     )
     db.add(kb)
     db.flush()
+    # 顺序很关键：先序列化、再写审计。
+    # record_audit 自带 commit，会把当前事务里未提交的改动一起提交。如果先审计再序列化，
+    # 一旦 _serialize 抛异常（例如关联的向量模型行在并发下被删），接口返回 500 但知识库已经落库 ——
+    # 用户看到失败又重试，库里就多出一份同名知识库。
+    # 现在序列化失败时还没有 commit，整个事务随请求回滚，不会留下半成品。
+    result = _serialize(db, [kb])[0]
     record_audit(db, user, "create", "knowledge_base", kb.id, detail={"name": kb.name, **_policy(kb.is_public, kb.visible_roles)})
-    db.refresh(kb)
-    return _serialize(db, [kb])[0]
+    return result
 
 
 def get_kb(db: Session, kb_id: int, role: str | None) -> KnowledgeBase:
