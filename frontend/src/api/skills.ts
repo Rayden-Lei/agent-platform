@@ -109,3 +109,28 @@ export const uploadSkillResource = (id: number, file: File, onProgress?: (percen
 // 资源名带目录时路径里含 /，服务端用 {name:path} 接；这里按段编码，不整体 encodeURIComponent（那样 / 会变成 %2F 匹配不上）
 export const deleteSkillResource = (id: number, name: string) =>
   del<OkResponse>('/skills/' + id + '/resources/' + name.split('/').map(encodeURIComponent).join('/'))
+
+/** 技能对模型长什么样（纯本地拼装，不调模型、不花 token） */
+export interface SkillPreview {
+  id: number
+  name: string
+  is_enabled: boolean
+  always_on: boolean
+  /** 非常驻技能：这一行进「可用技能」目录，模型据此决定要不要加载 */
+  in_catalog: boolean
+  catalog_line: string
+  /** 常驻技能：这段正文每轮都拼进系统提示 */
+  always_on_body: string
+  /** 模型真调 load_skill 时拿到的完整返回 */
+  load_skill_result: string
+  tokens: { catalog: number; always_on_body: number; load_skill_result: number }
+  /** 每轮固定开销：常驻=正文，按需=目录那一行 */
+  per_turn_overhead: number
+  content_bytes: number
+  /** 按常见写错法给的提示，只提示不阻断 */
+  advice: string[]
+}
+
+// 预览「模型眼里的这个技能」：哪段会进提示词、多少 token、有什么坑。
+// 这条把反馈回路从"绑到智能体跑一轮"缩短到"点一下"——技能写错最贵的是试错成本
+export const previewSkill = (id: number) => get<SkillPreview>('/skills/' + id + '/preview')

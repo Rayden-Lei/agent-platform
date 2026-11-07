@@ -116,6 +116,17 @@ def parse_skill_md(data: SkillImportIn, user: User = Depends(require_roles("admi
     return parsed
 
 
+@router.get("/{skill_id}/preview")
+def preview_skill(skill_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+    """预览这个技能**实际对模型长什么样**（纯本地拼装，不调模型、不花 token）。
+
+    技能最容易写错的两处是 description（决定模型会不会想到用它）和 always_on（正文每轮
+    都进上下文）。这两点在编辑框里看不出来，以往的反馈回路是"绑到智能体上跑一轮"——
+    这个接口把那一步省掉，直接在技能页告诉使用者：哪一行会进提示词、多少 token、有什么坑。
+    """
+    return skill_service.preview_for_model(db, skill_id)
+
+
 @router.get("/{skill_id}/resources")
 def list_resources(skill_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """技能的资源清单：文件型的补实际大小，对象被外部删掉时标 missing。"""
