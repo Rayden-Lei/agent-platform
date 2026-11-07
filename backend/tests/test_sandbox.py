@@ -61,11 +61,32 @@ def test_timeout_kills_hanging_process():
 
 
 def test_cpu_limit_catches_runaway_loop():
-    """CPU 时间兜底：即使墙钟还没到，烧满 CPU 时间也会被杀（exit -24 = SIGXCPU）。"""
+    """CPU 时间兜底：即使墙钟还没到，烧满 CPU 时间也会被杀。
+
+    要证明的语义是"被资源限额杀掉，而不是自己正常退出"，所以按「信号 × 退出码表示法」
+    两种口径各列两个信号，覆盖面是穷举的，不是随手放宽：
+
+    | 结局                       | 直接子进程（basic） | 隔着 bwrap |
+    |---------------------------|--------------------|-----------|
+    | macOS 上收 SIGXCPU          | -24                | 不适用（bwrap 只在 Linux） |
+    | Linux 上被 SIGKILL          | -9                 | 137 = 128+9（bwrap 自己 128+sig 退出）|
+
+    -24 / -9 是 Python subprocess 对"被信号杀死"的表示法；137 是 bubblewrap 把子进程的
+    SIGKILL 转成 128+9 后的样子 —— Linux CI 实测就是 137。Linux 上之所以常常直接吃
+    SIGKILL 而不是 SIGXCPU：setrlimit 这里把软硬限额设成同一个值（见 LIMITS_BOOTSTRAP），
+    超过硬限额内核对整组发 SIGKILL，软限额的 SIGXCPU 未必来得及生效。
+    1 —— 限额压根没设进去时引导程序自己 sys.exit(1)，用户代码没跑起来，同样不是"正常退出"。
+
+    "被限额杀掉而不是跑满"还有 timed_out is False 兜着（墙钟 20s、CPU 1s）：就算这里
+    的退出码集合再宽，限额失效导致跑满 20s 也一定在这条断言之前红。反过来，用户代码
+    自己报错(1)或崩溃的其它码都不在上面的集合里，所以"任何非 0 都行"这种写法是不必要的。
+    """
     r = _run("x = 0\nwhile True: x += 1", timeout_seconds=20, cpu_seconds=1)
     assert r.ok is False
     assert r.timed_out is False, "应该被 CPU 限额杀掉，而不是等到墙钟超时"
-    assert r.exit_code in (-24, 1), f"期望 SIGXCPU 或 Python 自己退出，实际 {r.exit_code}"
+    assert r.exit_code in (-24, -9, 137, 1), (
+        f"期望被限额信号杀掉（SIGXCPU -24 / SIGKILL -9 / bwrap 转写 137）或引导程序退出 1，实际 {r.exit_code}"
+    )
 
 
 def test_exception_surfaces_stderr():

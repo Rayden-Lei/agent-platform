@@ -4,11 +4,14 @@
 只用不依赖外部服务的节点（start / end / condition / code / loop / human_review），直接编译图执行，不落运行记录（run_id=None）。
 断言到具体值：steps 逐字相同、node_outputs 逐键相同。
 """
+import json
 import uuid
 
 from langgraph.types import Command
 
+from app.runtime import sandbox
 from app.workflow.engine import build_workflow
+from tests.sandbox_steps import code_step, code_steps
 
 
 def _node(node_id: str, node_type: str, **config) -> dict:
@@ -48,14 +51,14 @@ def _condition_graph() -> dict:
 
 def test_condition_true_branch():
     result = _run(_condition_graph(), "yes")
-    assert result["steps"] == ["condition:True", "code"]
+    assert result["steps"] == ["condition:True", code_step()]
     assert result["node_outputs"] == {"code_a": "A"}
     assert result["output"] == "A" and result["condition_result"] is True
 
 
 def test_condition_false_branch():
     result = _run(_condition_graph(), "no")
-    assert result["steps"] == ["condition:False", "code"]
+    assert result["steps"] == ["condition:False", code_step()]
     assert result["node_outputs"] == {"code_b": "B"}
     assert result["output"] == "B" and result["condition_result"] is False
 
@@ -64,7 +67,7 @@ def test_condition_expression_error_takes_false_branch():
     graph = _condition_graph()
     graph["nodes"][1]["config"]["expression"] = "input.undefined_attr > 1"
     result = _run(graph, "yes")
-    assert result["steps"] == ["condition:False", "code"] and result["node_outputs"] == {"code_b": "B"}
+    assert result["steps"] == ["condition:False", code_step()] and result["node_outputs"] == {"code_b": "B"}
 
 
 # ---------- 循环节点 ----------
@@ -80,14 +83,14 @@ def _loop_graph(**loop_config) -> dict:
 def test_loop_by_count_runs_loop_node_count_times_and_body_count_minus_one():
     # 现有语义：count=3 时 loop 节点经过 3 次（loop_index 1/2/3），第 3 次判 3 < 3 为假退出，body 只执行 2 次
     result = _run(_loop_graph(count=3), "x")
-    assert result["steps"] == ["loop:1", "code", "loop:2", "code", "loop:3"]
+    assert result["steps"] == ["loop:1", code_step(), "loop:2", code_step(), "loop:3"]
     assert result["loop_index"] == 3
     assert result["node_outputs"] == {"body": "ran"} and result["output"] == "ran"
 
 
 def test_loop_by_expression_exits_when_false():
     result = _run(_loop_graph(expression="loop_index < 2"), "x")
-    assert result["steps"] == ["loop:1", "code", "loop:2"]
+    assert result["steps"] == ["loop:1", code_step(), "loop:2"]
     assert result["loop_index"] == 2
 
 
@@ -104,12 +107,12 @@ def test_human_review_interrupt_then_resume_runs_to_end():
     g = build_workflow(graph)
     cfg = {"configurable": {"thread_id": "engine-test-" + uuid.uuid4().hex[:12]}}
     paused = g.invoke({"input": "x", "steps": []}, cfg)
-    assert paused["steps"] == ["code"] and paused["node_outputs"] == {"pre": "draft"}
+    assert paused["steps"] == [code_step()] and paused["node_outputs"] == {"pre": "draft"}
     assert paused["__interrupt__"][0].value == {"node_id": "review", "instruction": "请审核", "data": "draft"}
 
     result = g.invoke(Command(resume={"approved": True}), cfg)
     assert "__interrupt__" not in result
-    assert result["steps"] == ["code", 'human_review:{"approved": true}', "code"]
+    assert result["steps"] == [code_step(), 'human_review:{"approved": true}', code_step()]
     assert result["review_result"] == '{"approved": true}'
     assert result["node_outputs"] == {"pre": "draft", "review": {"approved": True}, "post": "post:{'approved': True}"}
     assert result["output"] == "post:{'approved': True}"
@@ -127,7 +130,7 @@ def _chain(second_code: str, **second_config) -> dict:
 def test_first_node_defaults_to_input_and_next_defaults_to_previous_output():
     result = _run(_chain("result = 'b:' + str(input)"), "hello")
     assert result["node_outputs"] == {"code_a": "a:hello", "code_b": "b:a:hello"}
-    assert result["output"] == "b:a:hello" and result["steps"] == ["code", "code"]
+    assert result["output"] == "b:a:hello" and result["steps"] == code_steps(2)
 
 
 def test_input_ref_input():
@@ -173,7 +176,7 @@ def test_node_outputs_accumulate_over_all_executed_nodes():
         "edges": [_edge("s", "c1"), _edge("c1", "c2"), _edge("c2", "c3"), _edge("c3", "e")],
     }
     result = _run(graph, "ignored")
-    assert result["steps"] == ["code", "code", "code"]
+    assert result["steps"] == code_steps(3)
     assert result["node_outputs"] == {"c1": 1, "c2": 2, "c3": 20}
     assert result["output"] == 20 and result["input"] == "ignored"
 
@@ -185,3 +188,26 @@ def test_code_node_without_result_falls_back_to_output_variable():
     }
     result = _run(graph, "x")
     assert result["node_outputs"] == {"c1": "via-output"} and result["output"] == "via-output"
+
+
+# ---------- 沙箱模式标记 ----------
+# 本文件其余用例的 steps 期望值由 tests/sandbox_steps.code_step() 按当前环境的沙箱实际模式生成
+# （macOS/降级是 "code"，Linux + bwrap 是 "code:bwrap"）。这里用打桩把两种模式各自的字面值钉死，
+# 保证"按环境生成"没有掩盖引擎的行为：后缀必须真的来自 sandbox 的 mode。
+
+def test_code_step_marker_bwrap(monkeypatch):
+    """沙箱真的走 bwrap 时，steps 必须带 bwrap 后缀 —— 运行详情页靠它看出代码在真沙箱里跑过。"""
+    monkeypatch.setattr(sandbox, "probe", lambda refresh=False: sandbox.SandboxCapability(sandbox.MODE_BWRAP, None, {"bwrap": "/usr/bin/bwrap"}))
+    fake = sandbox.SandboxResult(True, json.dumps("A"), None, "", 0, 1, sandbox.MODE_BWRAP)
+    monkeypatch.setattr(sandbox, "run_python", lambda code, payload=None, limits=None: fake)
+    assert code_step() == "code:bwrap"
+    assert _run(_condition_graph(), "yes")["steps"] == ["condition:True", "code:bwrap"]
+
+
+def test_code_step_marker_degraded(monkeypatch):
+    """降级（basic）时 steps 只有 "code"，不带后缀 —— 不让"隔离没生效"看起来像生效了。"""
+    monkeypatch.setattr(sandbox, "probe", lambda refresh=False: sandbox.SandboxCapability(sandbox.MODE_BASIC, "测试桩：降级", {}))
+    fake = sandbox.SandboxResult(True, json.dumps("A"), None, "", 0, 1, sandbox.MODE_BASIC)
+    monkeypatch.setattr(sandbox, "run_python", lambda code, payload=None, limits=None: fake)
+    assert code_step() == "code"
+    assert _run(_condition_graph(), "yes")["steps"] == ["condition:True", "code"]

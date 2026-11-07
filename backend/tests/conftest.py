@@ -86,15 +86,26 @@ def caller_headers(client, auth_headers):
     client.delete(f"/api/v1/users/{created.json()['id']}", headers=auth_headers)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def key_scope(client, auth_headers) -> dict:
     """建 API Key 必须带至少一项作用域（docs/15 3.7.1，2026-10-05 起）。不关心作用域的用例（鉴权、配额、限流、管理接口拒绝）
-    共用这个只授权了一个空流程工作流的作用域；真要调智能体或工作流的用例按实际调用的资源授权。"""
+    共用这个只授权了一个空流程工作流的作用域；真要调智能体或工作流的用例按实际调用的资源授权。
+
+    **必须是 function 级，不能是 session 级**（2026-11-07 改）。原来是 session 级，只在会话开头
+    建一次，然后全会话复用 —— 但 tests/test_cleanup.py 会调 cleanup.purge_test_rows()，
+    按 `pytest-` 前缀 + 时间窗整表回收，这个工作流名字正好是 `pytest-key-scope-*`，
+    于是被当成残留删掉，后续所有用它的用例拿到「工作流不存在」再 KeyError。
+    症状极具迷惑性：单跑某个文件时好时坏、换个顺序就换一批用例失败。
+
+    function 级的代价是每个用例多建删一个工作流（轻量操作），换来的是彻底没有顺序依赖。
+    """
     graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
     w = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-key-scope-" + uuid.uuid4().hex[:6], "description": "", "graph": graph})
     assert w.status_code == 200, w.text
-    yield {"workflow_ids": [w.json()["id"]]}
-    client.delete(f"/api/v1/workflows/{w.json()['id']}", headers=auth_headers)
+    try:
+        yield {"workflow_ids": [w.json()["id"]]}
+    finally:
+        client.delete(f"/api/v1/workflows/{w.json()['id']}", headers=auth_headers)
 
 
 @pytest.fixture
