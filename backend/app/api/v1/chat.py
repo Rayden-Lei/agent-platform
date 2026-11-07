@@ -105,13 +105,17 @@ async def sse_stream(events):
             while True:
                 if pending is None:
                     pending = asyncio.ensure_future(it.__anext__())
-                done, _ = await asyncio.wait({pending}, timeout=SSE_HEARTBEAT_SECONDS)
+                # 先取成局部变量再断言：pending 声明为 Optional，上面那次赋值不给检查器留下"走到这里必定有值"的推理，
+                # 而塞进 wait 的集合与后面的 .result() 都要求是确定的 Task。
+                task = pending
+                assert task is not None
+                done, _ = await asyncio.wait({task}, timeout=SSE_HEARTBEAT_SECONDS)
                 if not done:
                     # 只是慢，不是结束：发心跳，继续等同一个 Task
                     yield ": ping\n\n"
                     continue
                 try:
-                    event = pending.result()
+                    event = task.result()
                 except StopAsyncIteration:
                     break
                 pending = None
@@ -138,8 +142,12 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
                                        data.client_message_id, api_key)
     if isinstance(prepared, chat_service.ReplayChat):  # 重复的 client_message_id：回放首次的结果
         return StreamingResponse(sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
+    # 智能体对话跑的必定是某个发布版本（prepare_chat 已断言过一次），这里再断言是把"非 None"带给检查器；
+    # 属性访问的收窄在不同检查器下不稳定，先取成局部变量。
+    agent_version = prepared.agent_version
+    assert agent_version is not None
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
-                                conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
+                                conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=agent_version,
                                 kb_scope=kb_scope, source=conversation_service.RUN_SOURCE_OF[caller.channel])
     return StreamingResponse(sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
 
@@ -158,6 +166,9 @@ async def model_chat(model_id: int, data: ChatIn, request: Request, db: Session 
                                                data.conversation_id, data.client_message_id)
     if replay is not None:  # 重复的 client_message_id：回放首次的结果
         return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
+    # open_turn 的返回是"二选一"：(PreparedTurn, None) 或 (None, ReplayChat)，回放已经在上一条分支返回，
+    # 这条分支里 prepared 必定有值；检查器推不出这个关系，断言一次。
+    assert prepared is not None
     turn = chat_runner.ModelTurn(model_id=model_id, user_id=user.id, message=data.message,
                                  conversation_id=prepared.conversation_id, run_id=prepared.run_id,
                                  source=conversation_service.RUN_SOURCE_OF[caller.channel])
@@ -178,9 +189,15 @@ async def workflow_chat(workflow_id: int, data: ChatIn, request: Request, db: Se
                                                data.message, data.conversation_id, data.client_message_id)
     if replay is not None:
         return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
+    # 同上：回放这条分支已经返回，走到这里的 prepared 必定有值。
+    assert prepared is not None
+    # 执行参数由 prepare_workflow_chat 一次算好放在 extra 里（run 记录的 input_data 也是同一份 inputs），
+    # 这里只取出来用，不再重算；它在 prepare_workflow_chat 里必然是 {"inputs": ...}。
+    extra = prepared.extra
+    assert extra is not None
     turn = chat_runner.WorkflowTurn(workflow_id=workflow_id, user_id=user.id, role=user.role, message=data.message,
                                     conversation_id=prepared.conversation_id, run_id=prepared.run_id,
-                                    inputs=prepared.extra["inputs"])
+                                    inputs=extra["inputs"])
     return StreamingResponse(sse_stream(chat_runner.stream_workflow(turn)), media_type="text/event-stream")
 
 

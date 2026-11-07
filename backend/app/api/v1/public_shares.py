@@ -85,8 +85,12 @@ async def guest_chat(code: str, data: GuestChatIn, db: Session = Depends(get_db)
     if isinstance(prepared, chat_service.ReplayChat):
         events = chat_runner.replay_chat(prepared)
     else:
+        # 访客对话与登录对话同一条链路：跑的必定是某个发布版本（prepare_chat 已断言过一次），
+        # 这里再断言是把"非 None"带给检查器；先取成局部变量，属性访问的收窄不稳定。
+        agent_version = prepared.agent_version
+        assert agent_version is not None
         turn = chat_runner.ChatTurn(agent_id=guest.agent_id, user_id=caller.user_id, role=role, message=data.message,
-                                    conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=prepared.agent_version,
+                                    conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=agent_version,
                                     allow_http_tools=allow_http_tools, source="share")
         events = chat_runner.stream_chat(turn)
     return StreamingResponse(sse_stream(share_service.guest_events(events, show_citations)), media_type="text/event-stream", headers=headers)
