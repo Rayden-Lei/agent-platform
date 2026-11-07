@@ -286,11 +286,17 @@ def _make_tool_node(config: dict, run_id: int, node_id: str, default_ref: str | 
         rn_id = _start_node(run_id, node_id, "tool", input_val)
         db = SessionLocal()
         try:
-            tool_db = db.query(Tool).filter(Tool.name == tool_name).first()
-            if tool_db is None:
+            # 取两行：重名时明确失败，而不是 .first() 静默取任意一行（调用点会调错工具且看不出来）
+            candidates = db.query(Tool).filter(Tool.name == tool_name).limit(2).all()
+            if not candidates:
                 out = {"output": json.dumps({"error": f"工具不存在: {tool_name}"}, ensure_ascii=False)}
                 _finish_node(rn_id, "failed", out["output"], "工具不存在")
                 return out
+            if len(candidates) > 1:
+                out = {"output": json.dumps({"error": f"工具名称重复，无法确定调用哪一个: {tool_name}"}, ensure_ascii=False)}
+                _finish_node(rn_id, "failed", out["output"], "工具名称重复")
+                return out
+            tool_db = candidates[0]
             if not tool_db.is_enabled:
                 raise ValueError(f"工具已停用: {tool_name}")
             if fixed_args:
