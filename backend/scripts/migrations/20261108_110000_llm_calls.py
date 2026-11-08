@@ -62,11 +62,11 @@ DDL = [
         created_at timestamptz NOT NULL DEFAULT now()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS ix_llm_calls_run_id ON llm_calls (run_id)",
-    "CREATE INDEX IF NOT EXISTS ix_llm_calls_model_id ON llm_calls (model_id)",
-    "CREATE INDEX IF NOT EXISTS ix_llm_calls_purpose ON llm_calls (purpose)",
-    "CREATE INDEX IF NOT EXISTS ix_llm_calls_started_at ON llm_calls (started_at)",
-    "CREATE INDEX IF NOT EXISTS ix_llm_calls_run_id_id ON llm_calls (run_id, id)",
+    # 索引全部由 ORM 模型（LlmCall.__table_args__ / index=True）声明，create_all 会建。
+    # 这里**不再重复建模已声明的索引**：create_all 与迁移在同一进程里先后执行时，
+    # 两边建同名索引会 DuplicateTable 中断建表，连锁导致后续所有表都不存在
+    # （2026-11-08 空库 CI 连红四次）。只在"只跑迁移不启动应用"的部署路径里，
+    # 表本身由下面的 CREATE TABLE 建出来，索引随后由应用启动时的 create_all 补齐。
 ]
 
 
