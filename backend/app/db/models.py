@@ -536,7 +536,10 @@ class LlmCall(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     first_token_ms: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
+    # 注意：**不要**再加 index=True —— 上面 __table_args__ 已经显式声明了
+    # Index("ix_llm_calls_started_at")，两者叠加会让 create_all 生成两个同名索引，
+    # 空库首次建表直接 DuplicateTable 崩掉（2026-11-08 CI 红了四次就是这条）。
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     # 报文是否被截断（超出上限）。true 时 request_body / response_body 里注明了原文长度
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
