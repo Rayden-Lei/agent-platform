@@ -77,6 +77,18 @@ jobs:
           INITIAL_ADMIN_PASSWORD: ci-admin-pass-0001
           TEST_ADMIN_PASSWORD: ci-admin-pass-0001
 
+      # 失败时把用例清单打进**步骤日志**：PR 页面的 check 输出是公开可读的，
+      # 而 Job 日志要仓库 admin 权限才给下载（拉一次 403）。原来只写 Job Summary，
+      # 没权限的人在 PR 里什么都看不到。
+      - name: Report failures to step log
+        if: failure()
+        run: |
+          echo "=== FAILED CASES ==="
+          grep -E "^FAILED|^ERROR" /tmp/pytest.log | head -40 || true
+          echo ""
+          echo "=== SHORT TRACEBACK ==="
+          tail -200 /tmp/pytest.log || true
+
   frontend-build:
     runs-on: ubuntu-latest
     steps:
