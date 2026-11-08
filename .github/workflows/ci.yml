@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# 失败时要把清单写成 PR 评论：默认 token 在 pull_request 事件下是只读的，
+# 必须显式声明需要的权限，否则 gh pr comment 会 403。
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   backend-test:
     runs-on: ubuntu-latest
@@ -77,17 +83,38 @@ jobs:
           INITIAL_ADMIN_PASSWORD: ci-admin-pass-0001
           TEST_ADMIN_PASSWORD: ci-admin-pass-0001
 
-      # 失败时把用例清单打进**步骤日志**：PR 页面的 check 输出是公开可读的，
-      # 而 Job 日志要仓库 admin 权限才给下载（拉一次 403）。原来只写 Job Summary，
-      # 没权限的人在 PR 里什么都看不到。
-      - name: Report failures to step log
-        if: failure()
+      # 失败时把用例清单写成 **PR 评论**。
+      # 为什么不是步骤日志：Job 日志要仓库 admin 权限才给下载（拉一次 403），
+      # Step Summary 要登录浏览器才看得到；而 PR 评论走公开的 issues comments API，
+      # 任何有读权限的客户端（包括插件）都能直接拿到。
+      # 这样 CI 红了之后，第一现场信息是"谁能读仓库谁能看"，不必来要日志权限。
+      - name: Report failures as PR comment
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          echo "=== FAILED CASES ==="
-          grep -E "^FAILED|^ERROR" /tmp/pytest.log | head -40 || true
-          echo ""
-          echo "=== SHORT TRACEBACK ==="
-          tail -200 /tmp/pytest.log || true
+          {
+            echo "<!-- ci-failure-report -->"
+            echo "### ❌ backend-test 失败"
+            echo ""
+            echo "运行：[$RUN_URL]($RUN_URL)"
+            echo ""
+            echo "#### 失败用例"
+            echo '```'
+            grep -E "^FAILED|^ERROR" /tmp/pytest.log | head -40 || echo "(未捕获到 FAILED 行)"
+            echo '```'
+            echo ""
+            echo "#### 短回溯"
+            echo '```'
+            sed -n "/^=* FAILURES =*$/,/^=* short test summary/p" /tmp/pytest.log | head -200 || true
+            tail -60 /tmp/pytest.log || true
+            echo '```'
+          } > /tmp/ci-comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/ci-comment.md || {
+            echo "写评论失败，退回打到步骤日志"; cat /tmp/ci-comment.md;
+          }
 
   frontend-build:
     runs-on: ubuntu-latest
