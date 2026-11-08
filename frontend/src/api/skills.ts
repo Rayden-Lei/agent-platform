@@ -91,6 +91,51 @@ export interface ParsedSkill {
 // 使用者确认后走正常的 createSkill —— 导入与手填共用同一条校验路径
 export const parseSkillMd = (text: string) => post<ParsedSkill>('/skills/parse', { text })
 
+// ===== 从 GitHub 导入（2026-11-08）=====
+// 贴仓库里技能目录的浏览地址，服务端拉 SKILL.md 与它的资源。分两步：
+// 先预览（不落库，使用者确认字段），再 commit。
+// 只支持 github.com 的浏览地址：服务端限定域名，不开放任意 URL 抓取（SSRF）。
+export interface GitHubImportPreview extends ParsedSkill {
+  /** 预览时用的原始地址：确认导入时要原样回传（服务端据此重新抓取） */
+  url: string
+  /** owner/repo */
+  repo: string
+  /** 实际用的分支：地址里没写就是仓库默认分支 */
+  ref: string
+  /** 技能目录在仓库里的路径 */
+  dir_path: string
+  /** 会一起导入的资源（只有名字与大小，内容在服务端） */
+  files: { name: string; size: number }[]
+  /** 被跳过的文件及原因（非文本类型、超大、超数量上限） */
+  skipped: string[]
+}
+
+/** 确认导入的请求体：技能字段由使用者确认后带回，**正文以服务端重新抓取为准** */
+export interface GitHubImportCommit {
+  url: string
+  name: string
+  display_name: string
+  description: string
+  always_on: boolean
+  is_enabled: boolean
+}
+
+export interface GitHubImportResult extends SkillRow {
+  imported: {
+    repo: string
+    ref: string
+    dir_path: string
+    files: string[]
+    skipped: string[]
+  }
+}
+
+export const previewSkillFromGitHub = (url: string) =>
+  post<GitHubImportPreview>('/skills/import-github', { url }, { timeout: 60000 })
+
+export const commitSkillFromGitHub = (data: GitHubImportCommit) =>
+  post<GitHubImportResult>('/skills/import-github/commit', data, { timeout: 120000 })
+
 // ===== 技能资源（docs/04 §4.20）=====
 // 首版只收 .py：沙箱按 python 起进程，别的语言需要另一套加固。单个上限 512KB（服务端 413）。
 // 上传走 FormData，与知识库文档上传同一写法（axios 自动带 multipart 头，不设超时）

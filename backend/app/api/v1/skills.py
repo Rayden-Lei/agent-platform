@@ -4,6 +4,7 @@
 技能正文会进模型上下文，可能含内部地址与操作规则，与提示词模板同口径：写操作一律写审计，
 分享访客拿不到正文（分享链路只按 skill_ids 装配，不暴露技能列表接口）。
 """
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -16,10 +17,12 @@ from app.core.batch import BatchIn, run_batch
 from app.core.deps import require_roles
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, page_params, sort_params
-from app.db.models import User
+from app.db.models import Skill, User
 from app.db.session import get_db
-from app.services import skill_import, skill_resource, skill_service
+from app.services import skill_github, skill_import, skill_resource, skill_service
 from app.services.skill_service import CONTENT_MAX_BYTES, DESCRIPTION_MAX, SKILL_NAME_MAX, SKILL_NAME_PATTERN
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -55,6 +58,31 @@ class SkillImportIn(BaseModel):
     """
 
     text: str = Field(min_length=1, max_length=128 * 1024)
+
+
+class SkillGitHubIn(BaseModel):
+    """从 GitHub 导入：仓库里某个技能目录的浏览地址。
+
+    只接受 github.com 的浏览地址（/tree/分支/路径 或 /blob/分支/路径）与仓库根 ——
+    解析与出站安全全在 skill_github 里，路由不做任何地址判断。
+    """
+
+    url: str = Field(min_length=1, max_length=512)
+
+
+class SkillGitHubCommitIn(SkillGitHubIn):
+    """确认导入：地址 + 使用者确认后的技能字段。
+
+    字段由前端从预览结果带回来（使用者可能改了 name / display_name），
+    但**内容以服务端重新抓取为准** —— 不信任客户端回传的正文：
+    否则前端可以把一段任意文本塞进 content，绕过"导入与手填同一条校验路径"的约定。
+    """
+
+    name: str = Field(min_length=1, max_length=SKILL_NAME_MAX, pattern=SKILL_NAME_PATTERN)
+    display_name: str = Field(min_length=1, max_length=128)
+    description: str = Field(min_length=1, max_length=DESCRIPTION_MAX)
+    always_on: bool = False
+    is_enabled: bool = True
 
 
 class SkillBatchIn(BatchIn[Literal["delete"]]):
@@ -119,6 +147,104 @@ def parse_skill_md(data: SkillImportIn, user: User = Depends(require_roles("admi
     if size > CONTENT_MAX_BYTES:
         raise BizError(400, f"技能正文最多 {CONTENT_MAX_BYTES // 1024}KB，这个文件解析出 {size / 1024:.1f}KB，先拆成多个技能")
     return parsed
+
+
+@router.post("/import-github")
+def import_from_github(data: SkillGitHubIn, user: User = Depends(require_roles("admin", "developer"))):
+    """从 GitHub 地址**预览**一个技能：拉 SKILL.md 与它的资源，解析成技能字段，**不落库**。
+
+    与 /parse 一样不写库、不建对象：结果回给前端填进确认弹窗，使用者确认后走 /import-github/commit。
+    这样导入与手填共用同一条保存路径（name 格式、正文 64KB、重名 409），不存在第二套校验。
+
+    返回里带 files（文件名与大小，不含内容，避免响应过大）与 skipped（被跳过的文件及原因）——
+    使用者要能看见"哪些资源没拉下来、为什么"，而不是导入完发现脚本少了一个。
+    """
+    try:
+        fetched = skill_github.fetch_skill(data.url)
+    except skill_github.SkillFetchError as e:
+        raise BizError(400, str(e)) from e
+    try:
+        parsed = skill_import.parse_skill_md(fetched["skill_md"])
+    except skill_import.SkillImportError as e:
+        raise BizError(400, f"抓到 SKILL.md 了，但格式不对：{e}") from e
+    size = len(parsed["content"].encode("utf-8"))
+    if size > CONTENT_MAX_BYTES:
+        raise BizError(400, f"技能正文最多 {CONTENT_MAX_BYTES // 1024}KB，这个技能解析出 {size / 1024:.1f}KB，先拆成多个技能")
+    return {
+        **parsed,
+        "url": data.url,
+        "repo": fetched["repo"],
+        "ref": fetched["ref"],
+        "dir_path": fetched["dir_path"],
+        "files": [{"name": f["name"], "size": len(f["content"])} for f in fetched["files"]],
+        "skipped": fetched["skipped"],
+    }
+
+
+@router.post("/import-github/commit")
+def commit_github_import(data: SkillGitHubCommitIn, db: Session = Depends(get_db),
+                         user: User = Depends(require_roles("admin", "developer"))):
+    """确认导入：**重新抓取**并落库，资源一并写进对象存储。
+
+    两处刻意的设计：
+
+    1. 正文与资源以**服务端重新抓取**为准，不用客户端回传的 content。
+       否则前端可以塞任意文本进 content，绕开"导入与手填同一条校验路径"。
+       代价是两次请求抓两遍 —— 这点开销换掉一个绕过点，划算。
+    2. 抓取失败时**什么都不写**：先在内存里凑齐 SKILL.md 与全部资源，再建技能、再传资源。
+       资源上传是逐个进行的，一旦中途失败，已传的对象会跟着技能一起回滚清理，
+       不留"技能建了但资源没传全"的半成品。
+
+    返回新建的技能详情 + 实际写入的资源清单。
+    """
+    try:
+        fetched = skill_github.fetch_skill(data.url)
+    except skill_github.SkillFetchError as e:
+        raise BizError(400, str(e)) from e
+    try:
+        parsed = skill_import.parse_skill_md(fetched["skill_md"])
+    except skill_import.SkillImportError as e:
+        raise BizError(400, f"抓到 SKILL.md 了，但格式不对：{e}") from e
+
+    files = fetched["files"]
+    if len(files) > MAX_RESOURCES:
+        raise BizError(400, f"这个技能带了 {len(files)} 个资源文件，最多支持 {MAX_RESOURCES} 个。先删掉不用的再导入")
+
+    # 正文用服务端解析出来的，不用请求体里的
+    payload = SkillIn(
+        name=data.name, display_name=data.display_name, description=data.description,
+        content=parsed["content"], always_on=data.always_on, is_enabled=data.is_enabled,
+    )
+    created = skill_service.create_skill(db, payload, user)
+
+    written: list[dict] = []
+    try:
+        for f in files:
+            content_type = "text/x-python" if f["name"].endswith(".py") else "text/plain"
+            written.append(skill_resource.store_file(created["id"], f["name"], f["content"], content_type))
+        if written:
+            db.query(Skill).filter(Skill.id == created["id"]).update({"resources": written}, synchronize_session=False)
+            db.commit()
+    except Exception:
+        # 资源没传全就整个撤掉：不留"技能建了但脚本少一个"的半成品 ——
+        # 那种技能对模型是坏的，跑 run_skill_script 时才报错，排查成本高得多。
+        logger.warning("GitHub 导入时资源写入失败，回滚整个技能 id=%s", created.get("id"), exc_info=True)
+        try:
+            for w in written:
+                skill_resource.drop_file(w["object"])
+        except Exception:
+            logger.warning("回滚时清理对象存储失败 id=%s", created.get("id"), exc_info=True)
+        skill_service.delete_skill(db, created["id"], user)
+        raise BizError(500, "资源写入失败，已回滚，本次导入未生效") from None
+
+    db.refresh(db.get(Skill, created["id"]))
+    detail = skill_service.get_skill_detail(db, created["id"])
+    record_audit(db, user, "import_github", "skill", created["id"],
+                 detail={"name": detail["name"], "repo": fetched["repo"], "ref": fetched["ref"],
+                         "files": [w["name"] for w in written]})
+    return {**detail, "imported": {"repo": fetched["repo"], "ref": fetched["ref"],
+                                   "dir_path": fetched["dir_path"],
+                                   "files": [w["name"] for w in written], "skipped": fetched["skipped"]}}
 
 
 @router.get("/{skill_id}/preview")

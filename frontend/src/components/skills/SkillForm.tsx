@@ -4,7 +4,10 @@ import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
-import { createSkill, updateSkill, type ParsedSkill, type SkillInput, type SkillRow } from '../../api'
+import {
+  commitSkillFromGitHub, createSkill, updateSkill,
+  type GitHubImportPreview, type ParsedSkill, type SkillInput, type SkillRow,
+} from '../../api'
 import { errorText } from '../../utils/errors'
 import SkillResources from './SkillResources'
 
@@ -16,8 +19,12 @@ import SkillResources from './SkillResources'
 interface Props {
   open: boolean
   editing: SkillRow | null
-  /** 导入 SKILL.md 解析出的字段：只用于新建态预填，确认后照常走 createSkill */
-  prefill?: ParsedSkill | null
+  /**
+   * 导入结果：只用于新建态预填。
+   * - 带 repo/ref（来自 GitHub 预览）：保存时走 /import-github/commit，把资源一起建出来
+   * - 不带（本地文件 / 粘贴）：照常走 createSkill，资源要事后单独上传
+   */
+  prefill?: ParsedSkill | GitHubImportPreview | null
   onClose: () => void
   onSaved: () => void
 }
@@ -99,8 +106,23 @@ export default function SkillForm({ open, editing, prefill, onClose, onSaved }: 
     }
     setSubmitting(true)
     try {
-      if (editing) await updateSkill(editing.id, payload)
-      else await createSkill(payload)
+      if (editing) {
+        await updateSkill(editing.id, payload)
+      } else if (prefill && 'repo' in prefill) {
+        // 来自 GitHub 预览：走导入接口，让服务端把资源一起建出来。
+        // 正文与资源以**服务端重新抓取**为准，不传 content —— 前端塞的正文不会被采用，
+        // 这样导入与手填仍然是同一条校验路径。
+        await commitSkillFromGitHub({
+          url: (prefill as GitHubImportPreview).url,
+          name: payload.name,
+          display_name: payload.display_name,
+          description: payload.description,
+          always_on: payload.always_on,
+          is_enabled: payload.is_enabled,
+        })
+      } else {
+        await createSkill(payload)
+      }
       toast.success(editing ? '保存成功' : '创建成功')
       onSaved()
       onClose()
@@ -212,6 +234,26 @@ export default function SkillForm({ open, editing, prefill, onClose, onSaved }: 
         {/* 资源区只在编辑态：资源挂在 /skills/{id}/resources 下，新建时还没有 id */}
         {editing ? (
           <SkillResources skillId={editing.id} onChanged={onSaved} />
+        ) : prefill && 'repo' in prefill ? (
+          // GitHub 导入：资源与服务端一起建出来，这里先说清楚会带上什么、跳过了什么
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[12px] leading-relaxed">
+            <div className="font-medium text-foreground">
+              会一起导入 {prefill.files.length} 个资源文件
+            </div>
+            {prefill.files.length > 0 && (
+              <div className="mt-1 text-muted-foreground">
+                {prefill.files.map((f) => f.name).join('、')}
+              </div>
+            )}
+            {prefill.skipped.length > 0 && (
+              <div className="mt-1 text-muted-foreground">
+                <span className="text-[var(--warning)]">跳过</span>：{prefill.skipped.join('、')}
+              </div>
+            )}
+            <div className="mt-1 text-muted-foreground">
+              来源：<code className="font-mono">{prefill.repo}</code> · {prefill.dir_path || '(仓库根)'} @ {prefill.ref}
+            </div>
+          </div>
         ) : (
           <p className="m-0 text-[12px] text-muted-foreground">保存后可以给这个技能上传脚本资源。</p>
         )}
