@@ -250,10 +250,24 @@ _PRIVATE_NETS = [
 
 
 def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
-    """域名白名单 + 内网地址拦截。allowed 是这个工具自己的白名单（逗号分隔）。
+    """域名白名单 + 内网地址拦截。allowed 是这个**工具自己的能力配置**（逗号分隔）。
 
     白名单为空时**只拦内网**、放行公网：让工具开箱可用。
     配了白名单则严格按白名单（支持 *.example.com 后缀通配）。
+
+    **与 tools/permission.check 的"空名单 = 拒绝"不是矛盾，是两层不同的东西**，
+    这一点以前没写清楚，容易被当成 bug：
+
+    - 这一层是 `type=builtin` 的能力配置。内置工具在 permission.check 里第 2 步就
+      `return "allow"`（它们没有"工具行地址"可查，闸门那套 `config.url` + `allowed_hosts`
+      对它们不适用），所以**内置 http_request 是自己管自己的出站安全**：
+      强制 DNS 解析后拦内网段（防止 `http://127.0.0.1` 换个域名绕过），
+      管理员想进一步收窄就显式填白名单。
+    - `permission.check` 那一层管的是**工具行**（`type=http` / `mcp`）的目标地址：地址写在
+      工具配置里、由管理员填，模型改不了；空名单等于闸门不存在，所以拒绝。
+
+    两者对空的处理相反，是因为**默认值的安全性不同**：内置工具默认"公网可达但碰不到内网"
+    已经是安全的下限；工具行的地址是任意 URL，没有白名单就无从判断。
     """
     if not host:
         return False, "URL 缺少主机名"
@@ -274,11 +288,37 @@ def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
     patterns = [p.strip().lower() for p in allow.split(",") if p.strip()]
     h = host.lower()
     for p in patterns:
-        if p == h:
-            return True, ""
-        if p.startswith("*.") and (h == p[2:] or h.endswith(p[1:])):
+        if _pattern_matches(h, p):
             return True, ""
     return False, f"域名不在白名单内：{host}（允许：{', '.join(patterns)}）"
+
+
+def _pattern_matches(host: str, pattern: str) -> bool:
+    """单个白名单项与主机的匹配，规则与 tools/permission._host_matches 完全一致。
+
+    **为什么要复用同一套规则**：allowed_hosts 在项目里有两种用法（工具行的执行闸门、
+    内置 http_request 的能力配置），同一个键名两处理解不同的话，管理员按文档填了
+    在 A 处生效、在 B 处不生效，而且都不报错 —— 这是典型的静默失效。
+
+    统一后三种写法：
+    - 精确：`api.example.com` 只放行它自己
+    - 隐式后缀：`api.example.com` 同时覆盖 `v2.api.example.com`（必须带点前缀，
+      否则 `notapi.example.com` 会被误放行）
+    - 显式通配：`*.openai.com` 匹配任意层级子域，但**不含** `openai.com` 本身
+      （与 TLS 通配证书语义一致；要连根域就再写一条 `openai.com`）
+
+    以前这里对 `*.openai.com` 还额外放行了根域，与 permission 那边不一致，已统一。
+    """
+    pattern = pattern.strip().lower().lstrip(".")
+    host = host.lower()
+    if not pattern:
+        return False
+    if pattern.startswith("*"):
+        suffix = pattern[1:]
+        if not suffix.startswith("."):
+            return False
+        return host.endswith(suffix) and host != suffix[1:]
+    return host == pattern or host.endswith("." + pattern)
 
 
 async def http_request(url: str, method: str = "GET", headers: str = "", body: str = "",
