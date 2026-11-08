@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { BookOpen, Plus, Upload } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
-import { batchSkills, deleteSkill, getSkill, getSkillStats, listSkills, updateSkill, type ParsedSkill, type SkillInput, type SkillRow } from '../api'
+import { batchSkills, deleteSkill, getSkill, getSkillStats, listSkills, updateSkill, type GitHubImportPreview, type ParsedSkill, type SkillInput, type SkillRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
@@ -37,7 +37,7 @@ export default function Skills() {
   const [editing, setEditing] = useState<SkillRow | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   // 导入解析出的字段：只用于新建态预填，使用者确认后走正常保存（不落库、不另开写入路径）
-  const [prefill, setPrefill] = useState<ParsedSkill | null>(null)
+  const [prefill, setPrefill] = useState<ParsedSkill | GitHubImportPreview | null>(null)
   const [current, setCurrent] = useState<SkillRow | null>(null)
   const list = usePagedList<SkillRow>(listSkills, {
     filters,
@@ -84,8 +84,10 @@ export default function Skills() {
   const columns = useMemo(() => buildSkillColumns({ onOpen: openDetail, onToggle, onEdit: openEdit, onDelete }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openCreate = () => { setEditing(null); setPrefill(null); setFormOpen(true) }
-  // 导入：解析成功后接着打开新建弹窗，字段已填好，使用者确认后才写库
-  const onImported = (parsed: ParsedSkill) => {
+  // 导入：解析成功后接着打开新建弹窗，字段已填好，使用者确认后才写库。
+  // GitHub 预览还带着要一起导入的资源与来源地址，一并传下去 —— 保存时要用它走
+  // /import-github/commit（正文与资源以服务端重新抓取为准），而不是普通的 createSkill。
+  const onImported = (parsed: ParsedSkill | GitHubImportPreview) => {
     setImportOpen(false)
     setEditing(null)
     setPrefill(parsed)

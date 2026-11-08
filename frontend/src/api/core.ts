@@ -17,7 +17,10 @@ export type PageQuery = { page?: number; page_size?: number } & Record<string, s
 
 // 拦截器已把响应解包成 res.data，这里只是把类型收窄，避免每个页面各写一遍 as any
 export const get = <T = any>(url: string, params?: object) => client.get(url, { params }) as unknown as Promise<T>
-export const post = <T = any>(url: string, data?: unknown) => client.post(url, data) as unknown as Promise<T>
+// config 用于少数需要单独设超时的接口（如 GitHub 导入要等服务端抓取，默认 30s 可能不够）。
+// 不传时行为与以前完全一致。
+export const post = <T = any>(url: string, data?: unknown, config?: object) =>
+  client.post(url, data, config) as unknown as Promise<T>
 export const put = <T = any>(url: string, data?: unknown) => client.put(url, data) as unknown as Promise<T>
 export const del = <T = any>(url: string) => client.delete(url) as unknown as Promise<T>
 
