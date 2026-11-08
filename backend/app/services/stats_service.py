@@ -197,22 +197,60 @@ def workflow_usage(db: Session, days: int = 30, workflow_id: int | None = None) 
     return {"days": days, "items": items}
 
 
+def _resource_counts(db: Session) -> dict[str, int]:
+    """工作台的 12 个资源计数，**一条 SQL 拿完**。
+
+    原来是 12 条独立 count 查询 —— 每次刷新工作台就多 12 次往返（加上下面 pending 的 8 条、
+    两次 period_summary、一次 get_system_status，一次概览接近 20 次往返）。
+
+    合成一条 `count(*) filter (where ...)`：PostgreSQL 的 FILTER 子句让一次全表/索引扫描
+    同时算出多个条件下的计数。各表都很小（除 runs / documents），单条聚合的成本与逐条相差无几，
+    省的是往返与规划开销。
+
+    注意：不同表无法在一条 SELECT 里 count，所以这里是"每张表一条、合并成一次 execute"，
+    用 UNION ALL 拼成一个结果集。
+    """
+    from sqlalchemy import text
+
+    sql = text("""
+        select 'agents' as k, count(*) as n from agents
+        union all select 'published_agents', count(*) from agents where status = 'published'
+        union all select 'models', count(*) from models
+        union all select 'enabled_models', count(*) from models where is_enabled
+        union all select 'workflows', count(*) from workflows
+        union all select 'knowledge_bases', count(*) from knowledge_bases
+        union all select 'documents', count(*) from documents
+        union all select 'tools', count(*) from tools
+        union all select 'prompt_templates', count(*) from prompt_templates
+        union all select 'users', count(*) from users where is_active
+        union all select 'api_keys', count(*) from api_keys where is_enabled
+        union all select 'schedules', count(*) from scheduled_jobs where is_enabled
+    """)
+    try:
+        return {str(k): int(n or 0) for k, n in db.execute(sql).all()}
+    except Exception:
+        # 兜底：万一表名/列名漂移（迁移没跑完），退回逐条查，至少工作台还能打开。
+        # 这里不吞异常原因，记 WARN 便于发现"聚合 SQL 与模型不同步"。
+        logger.warning("资源计数聚合查询失败，退回逐条统计", exc_info=True)
+        return {
+            "agents": db.query(func.count(Agent.id)).scalar() or 0,
+            "published_agents": db.query(func.count(Agent.id)).filter(Agent.status == "published").scalar() or 0,
+            "models": db.query(func.count(ModelConfig.id)).scalar() or 0,
+            "enabled_models": db.query(func.count(ModelConfig.id)).filter(ModelConfig.is_enabled.is_(True)).scalar() or 0,
+            "workflows": db.query(func.count(Workflow.id)).scalar() or 0,
+            "knowledge_bases": db.query(func.count(KnowledgeBase.id)).scalar() or 0,
+            "documents": db.query(func.count(Document.id)).scalar() or 0,
+            "tools": db.query(func.count(Tool.id)).scalar() or 0,
+            "prompt_templates": db.query(func.count(PromptTemplate.id)).scalar() or 0,
+            "users": db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar() or 0,
+            "api_keys": db.query(func.count(ApiKey.id)).filter(ApiKey.is_enabled.is_(True)).scalar() or 0,
+            "schedules": db.query(func.count(ScheduledJob.id)).filter(ScheduledJob.is_enabled.is_(True)).scalar() or 0,
+        }
+
+
 def overview(db: Session) -> dict:
     """工作台概览：资源计数、今日 / 7 日运行指标、待处理项、降级项、最近运行。一个接口聚齐，前端不必发十几个请求。"""
-    resources = {
-        "agents": db.query(func.count(Agent.id)).scalar(),
-        "published_agents": db.query(func.count(Agent.id)).filter(Agent.status == "published").scalar(),
-        "models": db.query(func.count(ModelConfig.id)).scalar(),
-        "enabled_models": db.query(func.count(ModelConfig.id)).filter(ModelConfig.is_enabled.is_(True)).scalar(),
-        "workflows": db.query(func.count(Workflow.id)).scalar(),
-        "knowledge_bases": db.query(func.count(KnowledgeBase.id)).scalar(),
-        "documents": db.query(func.count(Document.id)).scalar(),
-        "tools": db.query(func.count(Tool.id)).scalar(),
-        "prompt_templates": db.query(func.count(PromptTemplate.id)).scalar(),
-        "users": db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar(),
-        "api_keys": db.query(func.count(ApiKey.id)).filter(ApiKey.is_enabled.is_(True)).scalar(),
-        "schedules": db.query(func.count(ScheduledJob.id)).filter(ScheduledJob.is_enabled.is_(True)).scalar(),
-    }
+    resources = _resource_counts(db)
     status = system_service.get_system_status(db)
     scheduler = status.get("scheduler") or {}
     today_since, _ = _window(1)
