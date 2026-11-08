@@ -210,7 +210,7 @@ function McpToolItem({ tool, onToggle }: { tool: McpToolRow; onToggle: () => voi
           aria-label={`${tool.is_enabled ? '停用' : '启用'} ${tool.name}`}
           onClick={onToggle}
           className={`shrink-0 rounded-full px-2 py-0.5 text-[11.5px] transition-colors ${tool.is_enabled
-            ? 'bg-[var(--success-bg,rgba(16,185,129,0.12))] text-[var(--success)]'
+            ? 'bg-[var(--success-soft)] text-[var(--success)]'
             : 'bg-[var(--bg-soft)] text-muted-foreground'}`}
         >
           {tool.is_enabled ? '已启用' : '已停用'}

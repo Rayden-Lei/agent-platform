@@ -46,7 +46,7 @@ export default function Drawer({ open, title, description, onClose, footer, extr
         </div>
 
         {error && (
-          <div className="shrink-0 border-t border-border bg-[var(--danger-bg,rgba(220,38,38,0.06))] px-5 py-2">
+          <div className="shrink-0 border-t border-border bg-[var(--danger-soft)] px-5 py-2">
             <p className="m-0 whitespace-pre-wrap break-words text-[12.5px] text-destructive">{error}</p>
           </div>
         )}
