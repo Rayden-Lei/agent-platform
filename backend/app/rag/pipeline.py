@@ -141,6 +141,44 @@ def split_table_row(seg: dict, chunk_size: int, chunk_overlap: int) -> list:
     return [{"content": piece, "meta": {**seg["meta"], "part": n}} for n, piece in enumerate(pieces, start=1)]
 
 
+# 文档处理的后台执行器（2026-11-08）。
+#
+# 为什么不能用 BackgroundTasks：它是**同步函数**，Starlette 会把它丢进 anyio 的默认线程池
+# （40 线程），而同一批线程也正是 FastAPI 里所有 `def` 路由的运行时。process_document 里
+# 还有 `while not slot.acquire(timeout=...)` 这种**阻塞等待**：几篇大文件并发上传就能把池占满，
+# 表现是整站变慢（所有同步路由一起排队），而不是"只有文档处理慢"。
+#
+# 改成自己的守护线程：与请求线程池彻底隔离，排队等待只占自己的线程。
+_worker_lock = threading.Lock()
+_worker: "ThreadPoolExecutor | None" = None
+
+
+def _executor() -> "ThreadPoolExecutor":
+    """文档处理专用线程池（进程内单例）。
+
+    上限取 INGEST_CONCURRENCY + 4：真正干活的最多是 INGEST_CONCURRENCY 个（下面还有信号量守着），
+    额外几个用来容纳"排队等信号量"的任务，不至于让第 N+1 篇一直不进线程（那样连心跳都不刷）。
+    """
+    global _worker
+    if _worker is None:
+        with _worker_lock:
+            if _worker is None:
+                _worker = ThreadPoolExecutor(
+                    max_workers=max(2, settings.INGEST_CONCURRENCY + 4),
+                    thread_name_prefix="ingest",
+                )
+    return _worker
+
+
+def schedule_processing(doc_id: int, resume: bool = False) -> None:
+    """把一篇文档丢给**文档处理专用**线程池（不占请求线程池）。
+
+    语义与原来的 background_tasks.add_task 一致：立即返回、不阻塞请求；
+    异常在 worker 里自行消化（process_document 内部已经把失败落到 doc.error）。
+    """
+    _executor().submit(process_document, doc_id, resume)
+
+
 def process_document(doc_id: int, resume: bool = False) -> None:
     """后台处理一篇文档：下载 → 解析 → 分片 → 向量化 → 入库。失败落 doc.error 并记日志。多篇排队时按 INGEST_CONCURRENCY 串行。
 

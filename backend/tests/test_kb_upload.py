@@ -39,7 +39,7 @@ def stored(monkeypatch) -> list:
     # 打桩点跟着换成 upload_path，size 由文件实际长度给出
     monkeypatch.setattr(kb_service, "upload_path",
                         lambda name, path, size, ctype: uploads.append((name, size)))
-    monkeypatch.setattr(kb_route, "process_document", lambda doc_id: None)
+    monkeypatch.setattr(kb_route, "schedule_processing", lambda doc_id: None)
     return uploads
 
 
