@@ -321,7 +321,7 @@ def test_resume_api_rejects_live_processing_and_accepts_failed_or_stalled(client
 
     kb_id, doc_id = kb_doc
     monkeypatch.setattr(pipeline, "process_document", lambda doc_id, resume=False: None)  # 路由只排队，不真处理
-    monkeypatch.setattr("app.api.v1.kb.process_document", lambda doc_id, resume=False: None)
+    monkeypatch.setattr("app.api.v1.kb.schedule_processing", lambda doc_id, resume=False: None)
     db = SessionLocal()
     try:
         doc = db.get(Document, doc_id)

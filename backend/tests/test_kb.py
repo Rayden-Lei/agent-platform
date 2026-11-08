@@ -39,7 +39,7 @@ def test_upload_does_not_block_event_loop(monkeypatch, client, auth_headers, emb
     # 先用临时文件落盘、再 fput_object 流式传，内存占用与文件大小无关。
     # 这里照样 sleep，验证的是"存储是阻塞调用、必须挪出事件循环"，与实现细节无关。
     monkeypatch.setattr(kb_service, "upload_path", lambda name, path, size, ctype: time.sleep(1.5))
-    monkeypatch.setattr(kb_router, "process_document", lambda doc_id, resume=False: None)  # 不真的入库
+    monkeypatch.setattr(kb_router, "schedule_processing", lambda doc_id, resume=False: None)  # 不真的入库
 
     async def _scenario():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as ac:
@@ -238,7 +238,7 @@ def _audits(client, auth_headers, resource: str, resource_id: int, action: str) 
 def no_storage(monkeypatch):
     """上传与后台处理打桩：不写 MinIO、不解析。"""
     monkeypatch.setattr(kb_service, "upload_path", lambda name, path, size, ctype: None)
-    monkeypatch.setattr(kb_route, "process_document", lambda doc_id, *args: None)
+    monkeypatch.setattr(kb_route, "schedule_processing", lambda doc_id, *args: None)
 
 
 @pytest.fixture

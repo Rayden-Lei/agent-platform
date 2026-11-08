@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ from app.core.deps import require_roles
 from app.core.pagination import PageParams, SortParams, page_params, sort_params, time_range
 from app.db.models import User
 from app.db.session import get_db
-from app.rag.pipeline import process_document
+from app.rag.pipeline import schedule_processing
 from app.services import kb_service
 
 router = APIRouter(prefix="/knowledge-bases", tags=["kb"])
@@ -150,7 +150,6 @@ def delete_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(re
 @router.post("/{kb_id}/documents")
 async def upload_document(
     kb_id: int,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "developer")),
@@ -169,7 +168,7 @@ async def upload_document(
     doc = await run_in_threadpool(kb_service.create_document_from_path, db, kb_id, user, name, ext, tmp_path,
                                   file.content_type or "application/octet-stream")
     # 解析 / 分块 / 向量化放入后台任务异步执行，接口先返回文档记录，前端轮询 status
-    background_tasks.add_task(process_document, doc.id)
+    schedule_processing(doc.id)
     return {"id": doc.id, "kb_id": kb_id, "name": name, "file_type": doc.file_type, "status": doc.status}
 
 
@@ -228,7 +227,7 @@ def list_documents(
 
 # 固定路径必须声明在 /{doc_id} 之前
 @router.post("/{kb_id}/documents/batch")
-def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+def batch_documents(kb_id: int, data: DocumentBatchIn,  db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量删除 / 重新解析文档：逐条独立执行；重新解析的文档排进后台任务。知识库不可见时整个请求 404，不逐条报失败。"""
     kb_service.get_kb(db, kb_id, user.role)
     queued: list[int] = []
@@ -240,23 +239,23 @@ def batch_documents(kb_id: int, data: DocumentBatchIn, background_tasks: Backgro
 
     result = run_batch(db, data.unique_ids(), _apply)
     for doc_id in queued:
-        background_tasks.add_task(process_document, doc_id)
+        schedule_processing(doc_id)
     return result
 
 
 @router.post("/{kb_id}/documents/{doc_id}/resume")
-def resume_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+def resume_document(kb_id: int, doc_id: int,  db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """中断后继续处理：失败或已无心跳的处理中文档，从已入库的切片接着向量化（切片参数没变时不重来）；正常处理中 400。"""
     doc = kb_service.prepare_resume(db, kb_id, doc_id, user)
-    background_tasks.add_task(process_document, doc.id, True)
+    schedule_processing(doc.id, True)
     return {"id": doc.id, "status": doc.status, "chunk_count": doc.chunk_count, "chunk_total": doc.chunk_total}
 
 
 @router.post("/{kb_id}/documents/{doc_id}/reprocess")
-def reprocess_document(kb_id: int, doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
+def reprocess_document(kb_id: int, doc_id: int,  db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """重新解析文档（失败的文档重试，或切片参数改了之后重建）：清掉旧切片后排进后台任务；处理中的文档 400。"""
     doc = kb_service.prepare_reprocess(db, kb_id, doc_id, user)
-    background_tasks.add_task(process_document, doc.id)
+    schedule_processing(doc.id)
     return {"id": doc.id, "status": doc.status}
 
 
