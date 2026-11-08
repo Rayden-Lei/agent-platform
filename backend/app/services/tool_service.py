@@ -133,15 +133,25 @@ def _check_allowed_hosts(config: dict | None, tool_type: str) -> None:
 
 
 def _agents_count_by_tool(db: Session, tool_ids: set[int]) -> dict[int, int]:
-    """引用各工具的智能体数。tool_ids 是 JSONB 数组没有外键，一次拉回全部智能体的 (id, tool_ids) 在内存里数；
-    智能体表小，避免对每个工具发一条 contains 查询。"""
+    """引用各工具的智能体数（库侧聚合，只回 {工具id: 数量}）。
+
+    原来是把整张 agents 表的 tool_ids 拉回 Python 全量累加 —— 哪怕列表只看第一页 20 条，
+    也把全表 JSONB 读进内存。工具页是常开的页面，这个开销随 agents 行数线性增长。
+    改成 jsonb_array_elements_text 在库里展开后按 id 分组，开销与表大小解耦。
+    """
+    from sqlalchemy import text
+
     if not tool_ids:
         return {}
+    # cast(... as int)：参数后紧跟 ::int 会被 SQLAlchemy 的 :name 语法解析错
+    rows = db.execute(text(
+        "select cast(tid as int) as tid, count(*) as n from agents, "
+        "jsonb_array_elements_text(coalesce(tool_ids, '[]'::jsonb)) as tid "
+        "where cast(tid as int) = any(:ids) group by tid"
+    ), {"ids": list(tool_ids)}).all()
     counts = {tid: 0 for tid in tool_ids}
-    for (ids,) in db.query(Agent.tool_ids).all():
-        for tid in ids or []:
-            if tid in counts:
-                counts[tid] += 1
+    for tid, n in rows:
+        counts[int(tid)] = int(n)
     return counts
 
 

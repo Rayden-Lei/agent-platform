@@ -67,10 +67,43 @@ def _check_content_size(content: str) -> None:
 
 
 def bound_agent_count(db: Session, skill_id: int) -> int:
-    """绑定该技能的智能体数。skill_ids 是 JSONB 数组无外键，只能扫非空的行后在内存里数；
-    智能体数量是百级，比给 JSONB 建 GIN 索引更划算（docs/17 §4.3 选了 JSONB 而非关联表）。"""
-    rows = db.query(Agent.id, Agent.skill_ids).filter(Agent.skill_ids != []).all()
-    return sum(1 for _, ids in rows if skill_id in (ids or []))
+    """绑定该技能的智能体数。
+
+    在**库侧**用 jsonb_array_elements_text 展开后聚合，而不是把整张 agents 表的 JSONB
+    拉回 Python 再数 —— 后者每次打开列表/详情都把全表读进内存，智能体到几千行时开销明显。
+    这里只返回一行计数，网络与内存开销与表大小无关。
+
+    （skill_ids 是 JSONB 数组无外键，只能这样聚合；docs/17 §4.3 选了 JSONB 而非关联表。）
+    """
+    from sqlalchemy import text
+
+    # 注意：参数后面不能紧跟 ::int —— SQLAlchemy 的 :name 语法会把 :sid::int 解析错，
+    # 用 cast(:sid as int) 才是安全写法。
+    value = db.execute(text(
+        "select count(*) from agents "
+        "where coalesce(skill_ids, '[]'::jsonb) @> to_jsonb(cast(:sid as int))"
+    ), {"sid": skill_id}).scalar_one()
+    return int(value or 0)
+
+
+def _bindings_for(db: Session, skill_ids: set[int]) -> dict[int, int]:
+    """一次查出本页各技能被多少智能体绑定（库侧聚合，只回 {技能id: 数量}）。
+
+    `@>` 是 JSONB 的"包含"判定，语义就是"数组里有这个 id"，比 LIKE 匹配字符串可靠
+    （不会把 1 和 11 混起来）。
+    """
+    from sqlalchemy import text
+
+    if not skill_ids:
+        return {}
+    # 用 cast(... as int)：参数后面紧跟 ::int 会被 SQLAlchemy 的 :name 语法解析错。
+    # jsonb_array_elements_text 展开后元素是文本，直接和整数比会类型不匹配。
+    rows = db.execute(text(
+        "select cast(sid as int) as sid, count(*) as n from agents, "
+        "jsonb_array_elements_text(coalesce(skill_ids, '[]'::jsonb)) as sid "
+        "where cast(sid as int) = any(:ids) group by sid"
+    ), {"ids": list(skill_ids)}).all()
+    return {int(sid): int(n) for sid, n in rows}
 
 
 def list_skills(db: Session, params: PageParams, q: str | None = None, always_on: bool | None = None,
@@ -87,12 +120,10 @@ def list_skills(db: Session, params: PageParams, q: str | None = None, always_on
     rows = page["items"]
     creator_ids = {s.created_by for s in rows if s.created_by}
     creators = rows_to_dict(db.query(User.id, User.username).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
-    # 绑定数一次扫非空行算完，不逐行查库
-    bindings: dict[int, int] = {}
-    if rows:
-        for _, ids in db.query(Agent.id, Agent.skill_ids).filter(Agent.skill_ids != []):
-            for sid in ids or []:
-                bindings[sid] = bindings.get(sid, 0) + 1
+    # 绑定数：在库侧展开 JSONB 后一次聚合，**只取本页这几个技��� id**。
+    # 原来是把整张 agents 表的 skill_ids 拉回 Python 全量累加 —— 哪怕只看第一页 20 条，
+    # 也把全表的 JSONB 读进内存（把 N+1 换成了全表扫，问题没解决只是换了个形态）。
+    bindings: dict[int, int] = _bindings_for(db, {s.id for s in rows})
     page["items"] = [{**_summary(s), "agents_count": bindings.get(s.id, 0), "created_by_username": creators.get(s.created_by)} for s in rows]
     return page
 

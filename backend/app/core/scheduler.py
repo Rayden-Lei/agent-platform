@@ -97,6 +97,23 @@ def _add_job(sched: BackgroundScheduler, sj: ScheduledJob) -> None:
     sched.add_job(_run_scheduled_job, trigger, args=[sj.id], id=str(sj.id), replace_existing=True)
 
 
+def peek_scheduler() -> BackgroundScheduler | None:
+    """只看调度器**是否已在跑**，不启动它；未启动返回 None。
+
+    为什么要这个只读入口：`GET /system/status` 与 `GET /stats/overview` 都是只读接口，
+    但它们内部调 `get_system_status()` → `get_scheduler()`，而后者是"懒启动"——
+    一个探活请求就会拉起后台线程、把库里所有启用任务注册进来。
+
+    后果不是性能问题而是**副作用藏在读接口里**：
+    - 测试里本该由 lifespan 控制的调度器，被某个读用例意外启动，之后所有用例都在有调度器的
+      进程里跑（隐藏耦合，且顺序一变就飘）；
+    - 哪天要"关掉调度器跑单进程"，一个探活请求就把它拉起来了。
+
+    状态展示只关心"已启动的话注册了几个"，用这个函数就够。
+    """
+    return _scheduler
+
+
 def get_scheduler() -> BackgroundScheduler:
     """获取全局调度器（懒启动）：首次调用创建并启动 BackgroundScheduler，
     并把 DB 中所有启用中的定时任务注册进去；后续调用直接返回同一实例。
