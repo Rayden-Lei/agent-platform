@@ -42,6 +42,12 @@ def make_skill(client, auth_headers):
         body = {"name": "pytest-skill-" + _uid(), "display_name": "测试技能", "description": "测试用的一句话",
                 "content": "步骤一：做事。", "always_on": False, "is_enabled": True}
         body.update(changes)
+        # 强制 pytest- 前缀：有些用例要断言"目录里出现某个具体名字"，于是传了固定名
+        # （expense-form / dup-skill / always-rule）。一旦用例中途失败，这些行就永远留在
+        # 开发库里 —— cleanup.py 只按 pytest- 前缀回收，够不到它们。
+        # 这里统一补前缀，断言处也跟着用返回的 name，不再硬编码。
+        if not body["name"].startswith("pytest-"):
+            body["name"] = "pytest-" + body["name"]
         r = client.post("/api/v1/skills", headers=auth_headers, json=body)
         assert r.status_code == 200, r.text
         created.append(r.json()["id"])
@@ -77,15 +83,15 @@ def test_create_and_get_skill(client, auth_headers, make_skill):
     detail = client.get(f"/api/v1/skills/{s['id']}", headers=auth_headers).json()
     assert detail["content"] == "# 报销流程\n1. 打开系统"
     assert detail["version"] == 1
-    row = client.get("/api/v1/skills", headers=auth_headers, params={"q": "expense-form"}).json()["items"][0]
+    row = client.get("/api/v1/skills", headers=auth_headers, params={"q": s["name"]}).json()["items"][0]
     assert "content" not in row
 
 
 def test_duplicate_name_409(client, auth_headers, make_skill):
     """name 是模型调 load_skill 时唯一能传的标识，重名会让它取错手册。"""
-    make_skill(name="dup-skill")
+    first = make_skill(name="dup-skill")
     r = client.post("/api/v1/skills", headers=auth_headers, json={
-        "name": "dup-skill", "display_name": "另一个", "description": "x", "content": "y"})
+        "name": first["name"], "display_name": "另一个", "description": "x", "content": "y"})
     assert r.status_code == 409, r.text
 
 
@@ -162,9 +168,9 @@ def test_catalog_only_for_on_demand_and_body_for_always_on(client, auth_headers,
         ctx = chat_service._context_from_config(db, run_config_from_snapshot(1, snap), "你好", None)
         prompt = ctx.system_prompt
         assert "回答必须以【结论】开头。" in prompt, "常驻技能的正文要进系统提示"
-        assert "- expense-form：测试用的一句话" in prompt, "按需技能要进目录"
+        assert f"- {on_demand['name']}：测试用的一句话" in prompt, "按需技能要进目录"
         assert "步骤一：打开系统。" not in prompt, "按需技能的正文不能进系统提示"
-        assert "- always-rule：" not in prompt, "常驻技能不该再进目录"
+        assert f"- {always['name']}：" not in prompt, "常驻技能不该再进目录"
         assert "load_skill" in [t.name for t in ctx.tools]
     finally:
         db.close()

@@ -34,12 +34,19 @@ def _database_status(db: Session) -> dict:
 
 
 def _scheduler_status(db: Session) -> dict:
-    """已注册任务数与库中启用任务数不一致，通常意味着有任务的 cron 非法而被跳过。"""
+    """已注册任务数与库中启用任务数不一致，通常意味着有任务的 cron 非法而被跳过。
+
+    **用 peek_scheduler 而不是 get_scheduler**：这是只读状态接口，
+    不能因为有人探活就把后台调度线程拉起来（见 scheduler.peek_scheduler 的说明）。
+    调度器没启动时运行状态如实报 False，注册数记 0。
+    """
     enabled = db.query(ScheduledJob).filter(ScheduledJob.is_enabled == True).count()  # noqa: E712
     try:
-        from app.core.scheduler import get_scheduler
+        from app.core.scheduler import peek_scheduler
 
-        sched = get_scheduler()
+        sched = peek_scheduler()
+        if sched is None:
+            return {"running": False, "registered_jobs": 0, "enabled_jobs": enabled}
         registered = len(sched.get_jobs())
         return {"running": bool(sched.running), "registered_jobs": registered, "enabled_jobs": enabled}
     except Exception as e:

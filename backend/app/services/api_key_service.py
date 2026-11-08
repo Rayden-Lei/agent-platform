@@ -1,5 +1,6 @@
 import hashlib
 import ipaddress
+import logging
 import secrets
 from datetime import datetime, timezone
 
@@ -15,6 +16,9 @@ from app.core.request_context import get_client_ip
 from app.db.session import rows_to_dict
 from app.db.models import Agent, ApiKey, KnowledgeBase, User, Workflow
 from app.services import kb_service
+
+
+logger = logging.getLogger(__name__)
 
 
 def hash_key(key: str) -> str:
@@ -68,7 +72,15 @@ def authenticate(db: Session, raw_key: str) -> tuple[User, ApiKey, RateLimitResu
     db.commit()
     if not consumed:
         raise BizError(429, "API Key 配额已用尽")
-    db.refresh(ak)
+    # commit 之后 user 与 ak 都已过期（SessionLocal 是默认 expire_on_commit=True），
+    # 再访问 user.role / ak.quota 会各自触发一次 SELECT —— 等于每个 Key 请求多两次查询。
+    # 显式 refresh 一次把两者拉回来，比让调用方在后面陆续触发更省，也避免它在不同 session 里
+    # 拿到半失效的对象。refresh 失败不该让请求失败：数据已经落库，配额确实扣了。
+    try:
+        db.refresh(user)
+        db.refresh(ak)
+    except Exception:
+        logger.warning("API Key 鉴权后刷新对象失败，调用方可能多几次查询 id=%s", ak.id, exc_info=True)
     return user, ak, rate_limit
 
 
