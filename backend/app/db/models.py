@@ -5,7 +5,6 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
 
-from app.config import settings
 from app.db.base import Base
 
 
@@ -197,8 +196,9 @@ class EmbeddingModel(Base, TimestampMixin):
     为什么单独一张表而不是复用 models：models 是对话（chat/completions）配置，字段语义（价格、思考模式、
     默认参数）对 embedding 端点全都不适用；混在一起会让"模型"页面同时出现两种调用协议，选错就报 400。
 
-    dim 必须与 document_chunks.embedding 的列宽一致：pgvector 是定长列，维度和列宽不一致时插入直接报错，
-    所以在保存时就校验，不留到入库时才炸（见 embedding_model_service.create/update）。
+    dim 必须是**受支持的维度之一**（app/rag/embedding_dims.SUPPORTED_DIMS）：切片表的向量按维度分了列
+    （embedding_768 / _1024 / _1536 / _3072），没有对应列的维度插入直接报错。所以在保存时就校验，
+    不留到入库时才炸 —— 入库在后台线程里，用户只看得到文档 failed（见 embedding_model_service.create/update）。
 
     api_key_enc 与 models.api_key_enc 同一口径：AES 加密落库，任何接口只回 has_key，明文不出服务端。
     """
@@ -210,7 +210,7 @@ class EmbeddingModel(Base, TimestampMixin):
     api_base: Mapped[str] = mapped_column(String(255), nullable=False)
     api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    # 该模型实际产出的向量维度：保存时与 document_chunks.embedding 的列宽比对，不一致拒绝
+    # 该模型实际产出的向量维度：保存时校验它是受支持维度之一（决定写进哪一列），不满足拒绝
     dim: Mapped[int] = mapped_column(Integer, nullable=False)
     # 单次请求最多带几条文本（阿里云百炼 20，本地 oMLX 可更大）；入库流水线按它分批
     request_size: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
@@ -262,7 +262,16 @@ class DocumentChunk(Base):
     doc_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     kb_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list] = mapped_column(Vector(settings.EMBEDDING_DIM), nullable=False)
+    # 向量按维度分列（2026-11-15）：pgvector 一列一个定长维度，同一实例里要支持不同维度的向量模型，
+    # 只能一个维度一列。每行只有与所属知识库模型维度一致的那一列有值，其余为 NULL；检索按库的维度选列。
+    # 没有 CHECK 约束兜底"只一列非空"：判据在检索侧（按维度选列 + IS NOT NULL），写入只有 pipeline 一处。
+    # 维度集合与索引能力的唯一来源是 app.rag.embedding_dims，这里只用它的列名约定，不重复定义。
+    embedding_768: Mapped[list | None] = mapped_column(Vector(768), nullable=True)
+    embedding_1024: Mapped[list | None] = mapped_column(Vector(1024), nullable=True)
+    embedding_1536: Mapped[list | None] = mapped_column(Vector(1536), nullable=True)
+    # 3072 维超出 pgvector 0.6 的 ANN 索引上限（2000），这一列没有 HNSW，检索走顺序扫描；
+    # 仍然支持它是因为 text-embedding-3-large 就是 3072 维，拒掉等于任务没做完。见 embedding_dims.is_indexed
+    embedding_3072: Mapped[list | None] = mapped_column(Vector(3072), nullable=True)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -274,9 +283,29 @@ class Workflow(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     graph: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # 草稿修订号：每保存一次 +1，与 published_version 无关（草稿改了线上不动）
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # draft 从未发布 / published 有线上版本（docs/15 FR-075，与智能体同一套语义）
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    # 发布语义（FR-075）：本行是草稿，对外入口只读 published_version 指向的不可变快照；从未发布为空
+    published_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
+class WorkflowVersion(Base):
+    """工作流发布版本：不可变快照，字段只由 runtime.workflow_config.snapshot_of 定义；
+    回滚上线也生成新版本，历史不改写（与 agent_versions 同一套语义）。"""
+
+    __tablename__ = "workflow_versions"
+    __table_args__ = (UniqueConstraint("workflow_id", "version", name="uq_workflow_versions_workflow_version"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workflow_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 发布说明
 
 
 class WorkflowNode(Base):
@@ -380,6 +409,8 @@ class Run(Base):
     # 运营指标按它排除调试流量；server_default 让部署窗口里旧代码的写入不失败，迁移回填可重复执行纠正
     source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ui")
     agent_version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 本次回答用的线上版本号；调试运行为空
+    # 本次执行用的工作流线上版本号（FR-075）；试跑与 2026-11-15 之前的运行不记录（为空，不伪造版本号）
+    workflow_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     api_key_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     schedule_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("scheduled_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
     share_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("agent_shares.id", ondelete="SET NULL"), nullable=True)  # source=share 时的分享链接

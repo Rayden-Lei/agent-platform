@@ -1,13 +1,16 @@
-"""工作流（Workflow）路由：工作流的增删改查、复制、批量删除、试运行、正式运行、人工审核续跑与运行记录。
+"""工作流（Workflow）路由：工作流的增删改查、复制、批量删除、试运行、正式运行、人工审核续跑与运行记录，
+以及发布 / 版本历史 / 回滚上线（FR-075）。
 
-除运行 / 续跑显式允许 API Key 外，本模块接口仅允许 admin / developer 角色访问。
+发布语义（docs/15 FR-075，与智能体 FR-039 同一套）：本模块读写的 graph 是**草稿**；
+运行、工作流对话、定时任务、API Key 只读 published_version 指向的不可变快照。
+除运行 / 续跑 / 参数声明显式允许 API Key 外，本模块接口仅允许 admin / developer 角色访问。
 """
 
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, Depends, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
@@ -54,6 +57,10 @@ class WorkflowBatchIn(BatchIn[Literal["delete"]]):
     """action 只接受 "delete"，其余值 422。"""
 
 
+class PublishIn(BaseModel):
+    note: str | None = Field(None, max_length=200)  # 发布说明，进版本历史与审计
+
+
 @router.get("")
 def list_workflows(
     params: PageParams = Depends(page_params),
@@ -64,7 +71,10 @@ def list_workflows(
     user: User = Depends(require_roles("admin", "developer")),
 ):
     """工作流列表（分页），支持名称模糊、状态过滤；sort 可选 id / name / status / version / updated_at；
-    附节点数、创建人、最近 7 天运行数、最近运行时间、定时任务数。"""
+    附节点数、创建人、最近 7 天运行数、最近运行时间、定时任务数、线上版本与"有未发布改动"。
+
+    status 语义（FR-075）：draft 从未发布、published 有线上版本。注意"有未发布改动"是独立的
+    has_unpublished_changes —— 已发布的工作流改草稿后 status 仍是 published（线上还能跑）。"""
     return workflow_service.list_workflows(db, params, q, status, sort)
 
 
@@ -106,8 +116,45 @@ def get_workflow_parameters(workflow_id: int, request: Request, db: Session = De
 
 @router.put("/{workflow_id}")
 def update_workflow(workflow_id: int, data: WorkflowIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
-    """按 ID 更新工作流（版本号 +1）。graph 不合法 400。"""
+    """按 ID 更新工作流**草稿**（草稿修订号 +1，线上不变）。graph 不合法 400。
+
+    保存 ≠ 发布：要让改动对外生效（运行、对话、定时任务、API Key）必须再调 publish。
+    """
     return workflow_service.update_workflow(db, workflow_id, data, user)
+
+
+@router.post("/{workflow_id}/publish")
+def publish_workflow(workflow_id: int, data: PublishIn | None = Body(None), db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin", "developer"))):
+    """发布草稿成为线上版本（可带发布说明）；发布前跑完整图校验，不通过 400 且不生成版本。
+
+    草稿与线上一致时 publish_result=unchanged，不生成新版本（幂等，双击不会连出两个版本）。
+    """
+    return workflow_service.publish_workflow(db, workflow_id, user, note=data.note if data else None)
+
+
+@router.get("/{workflow_id}/versions")
+def list_versions(workflow_id: int, params: PageParams = Depends(page_params), db: Session = Depends(get_db),
+                  user: User = Depends(require_roles("admin", "developer"))):
+    """发布版本历史（分页，按版本号倒序，含快照、发布人、说明、是否线上、节点数）。"""
+    return workflow_service.list_versions(db, workflow_id, params)
+
+
+@router.post("/{workflow_id}/rollback/{version_id}")
+def rollback_workflow(workflow_id: int, version_id: int, db: Session = Depends(get_db),
+                      user: User = Depends(require_roles("admin", "developer"))):
+    """回滚上线：用该版本快照生成一个新版本并置为线上，**草稿不动**（与智能体 rollback 同一语义）。
+
+    线上出事时一键止血，又不丢掉正在改的草稿；与线上一致时 publish_result=unchanged。
+    """
+    return workflow_service.rollback_workflow(db, workflow_id, version_id, user)
+
+
+@router.post("/{workflow_id}/versions/{version_id}/restore")
+def restore_version(workflow_id: int, version_id: int, db: Session = Depends(get_db),
+                    user: User = Depends(require_roles("admin", "developer"))):
+    """恢复到草稿：草稿 = 该版本快照，线上不变。用于"在旧版本基础上继续改"。"""
+    return workflow_service.restore_version(db, workflow_id, version_id, user)
 
 
 @router.post("/{workflow_id}/duplicate")

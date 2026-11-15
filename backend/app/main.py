@@ -17,6 +17,7 @@ from app.config import settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.rag.embeddings import embedding_status
+from app.workflow import checkpointer
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,14 @@ def _init_db() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """应用启动/关闭钩子：初始化数据库 → 检查向量后端是否降级（降级则告警）→ 启动定时调度器。"""
+    """应用启动/关闭钩子：初始化数据库 → 检查向量后端降级 → 启动定时调度器 → 工作流 checkpointer。
+
+    checkpointer 的连接池必须在这里开、在这里关（docs/15 WF-12）：它是进程级资源，
+    不像原来的 MemorySaver 那样 import 时建一个全局常量就完事，关闭时要还连接。
+    """
     _init_db()
+    # 建池 + 探活（不建表：生产不在启动路径做 DDL，表由 scripts/migrations 下的迁移脚本负责）
+    checkpointer.open_checkpointer()
     status = embedding_status()
     if status["mode"] != "model":
         # 启动即暴露降级：否则"检索不准"要排查很久才发现根本没在用向量模型
@@ -70,6 +77,13 @@ async def lifespan(_app: FastAPI):
         from app.rag.pipeline import process_document, resume_stalled_documents
         resume_stalled_documents(lambda doc_id: threading.Thread(target=process_document, args=(doc_id, True), name=f"resume-{doc_id}", daemon=True).start())
     yield
+    # 先停调度器再关 checkpointer：调度线程可能正在跑工作流，池先被关掉的话它会拿到"池已关闭"的报错。
+    # 用 peek（只读入口）判断它是否真的起来过：没起来过就别去 start 一个再关掉。
+    from app.core.scheduler import peek_scheduler
+    sched = peek_scheduler()
+    if sched is not None:
+        sched.shutdown(wait=False)
+    checkpointer.close_checkpointer()
 
 
 def _configure_logging() -> None:

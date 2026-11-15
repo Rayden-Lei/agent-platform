@@ -3,10 +3,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
-from sqlalchemy.orm import defer
 
+from app.core.exceptions import BizError
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
+from app.rag import embedding_dims
 from app.rag.embeddings import embed_query
 from app.rag.rerank import MODE_MODEL, extract_keywords, rerank, rerank_status
 from app.services.settings_service import runtime_value
@@ -39,19 +40,33 @@ def kb_allows(role: str | None, kb: KnowledgeBase | None, kb_scope: list | None 
     return bool(kb.is_public) or (bool(role) and role in (kb.visible_roles or []))
 
 
-def _kb_spec(db, kb: KnowledgeBase):
-    """知识库绑定的向量模型配置。库的模型被删 / 停用时返回 None，检索退到全局 .env 配置。
+class KBUnsearchable(Exception):
+    """知识库当前无法检索：绑定的向量模型缺失 / 停用 / 维度不受支持。
 
-    为什么不直接抛错：检索是对话主链路，库的向量已经存在，能用旧模型查就不该整条断掉；
-    真正的硬失败（配置错到无法向量化）会在 hash 兜底时体现为降级提示。
+    为什么是异常而不是"退回全局配置"（2026-11-15 改）：切片向量是**库绑定的那个模型**产的，
+    查询向量必须来自同一个模型，余弦距离才有意义。以前退回全局 .env 配置在"全局维度恰好等于
+    库维度"时是碰巧对的，支持多维度之后这种巧合不再成立 —— 1024 维的库拿 768 维的查询向量去比，
+    pgvector 直接报维度不匹配；更糟的是维度相同但模型不同时，会安静地返回一堆垃圾结果。
+    检索是对话主链路，所以这里仍不抛到用户面前：由调用方捕获后把该库当"无结果"处理并记日志，
+    与其他库的结果互不影响（chat_service._retrieve_all 是按 (库, 查询) 并发调用的）。
+    """
+
+
+def _kb_vector(db, kb: KnowledgeBase) -> tuple:
+    """知识库当前该用的 (向量模型配置, 维度列)；不满足检索条件时抛 KBUnsearchable。
+
+    三个前置条件缺一不可：模型行还在、模型是启用的、维度在支持集合里。
+    维度不在支持集合里意味着切片表没有对应的列，任何查询都无从下手。
     """
     from app.services import embedding_model_service
 
     try:
-        return embedding_model_service.spec_for_kb(db, kb)
-    except Exception as e:  # noqa: BLE001 配置缺失只降级，不阻断检索
-        logger.warning("知识库 %s 的向量模型不可用，检索退回全局配置：%s", kb.id, e)
-        return None
+        spec = embedding_model_service.spec_for_kb(db, kb)
+    except BizError as e:
+        raise KBUnsearchable(f"知识库 {kb.id} 绑定的向量模型不可用：{e}") from e
+    if not embedding_dims.is_supported(spec.dim):
+        raise KBUnsearchable(f"知识库 {kb.id} 的向量模型维度 {spec.dim} 不受支持（可选 {list(embedding_dims.SUPPORTED_DIMS)}）")
+    return spec, embedding_dims.orm_column(spec.dim)
 
 
 def _authorize(role: str | None, kb: KnowledgeBase, chunk, kb_scope: list | None = None) -> bool:
@@ -73,12 +88,13 @@ def _rrf_fuse(candidates: dict) -> None:
         c["score"] = round(rrf, 6)
 
 
-def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, spec,
+def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, spec, column,
                         timings: dict | None = None) -> list:
     """召回候选池：向量 + 关键词两路召回，保留各自排名，RRF 倒排融合。
 
-    spec 是知识库绑定的向量模型配置：查询向量必须与切片向量同一个模型产出，
-    否则余弦距离没有意义（不同模型的向量空间不可比）。
+    spec 是知识库绑定的向量模型配置，column 是它维度对应的切片列（embedding_dims.orm_column）：
+    查询向量必须与切片向量同一个模型、同一个维度列产出，否则余弦距离没有意义
+    （不同模型的向量空间不可比；不同维度的列在 pgvector 里根本算不了距离）。
 
     mode="vector" 时跳过关键词召回，只走向量一路；其余取值（hybrid）两路都走。
     调用前必须已过 kb_allows：无权的库根本不进这里，连查询向量化都不做。
@@ -90,9 +106,13 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, spec,
     candidates: dict = {}
 
     # 1. 向量召回（保留排名）
-    dist = DocumentChunk.embedding.cosine_distance(vec)
-    # 候选行不加载 embedding 列：每条 1024 维 4KB，一次检索上百条候选全拉回来毫无用处（远程库上占大头）；排序由数据库完成
-    stmt = select(DocumentChunk, dist).options(defer(DocumentChunk.embedding)).where(DocumentChunk.kb_id == kb_id).order_by(dist).limit(top_k * 3)
+    # 只在库自己维度那一列上算距离，并要求该列非空：一行只有一列有值，别的维度列是 NULL，
+    # 不过滤会把这些"没有本维度向量"的行按 NULL 距离排进来，变成一堆与查询无关的垃圾结果。
+    dist = column.cosine_distance(vec)
+    stmt = (select(DocumentChunk, dist)
+            .options(*embedding_dims.defer_options())
+            .where(DocumentChunk.kb_id == kb_id, column.is_not(None))
+            .order_by(dist).limit(top_k * 3))
     started = time.perf_counter()
     vector_rows = db.execute(stmt).all()
     timings["vector_ms"] = int((time.perf_counter() - started) * 1000)
@@ -114,8 +134,14 @@ def _collect_candidates(db, kb_id: int, query: str, top_k: int, mode: str, spec,
         def _search(kw: str):
             db2 = SessionLocal()
             try:
-                conds = [DocumentChunk.kb_id == kb_id, DocumentChunk.content.ilike(f"%{kw}%")]
-                stmt = select(DocumentChunk).options(defer(DocumentChunk.embedding)).where(*conds).limit(top_k * 2)
+                # 关键词召回也要按维度列过滤：一行只有"入库时那个维度"的列有值，
+                # 本库维度列是 NULL 的切片说明它不是用本库当前的模型向量化的（存量迁移遗留 /
+                # 换过模型还没重建），不属于本库的检索空间。只过滤向量一路的话，
+                # 这类切片会从关键词一路混进结果，用户看到的是"向量分 0 却排在结果里"的垃圾命中。
+                conds = [DocumentChunk.kb_id == kb_id, column.is_not(None),
+                         DocumentChunk.content.ilike(f"%{kw}%")]
+                # 候选只用来拼关键词命中，向量列一条都不加载（一条 1536 维 6KB，上百条候选在远程库上是纯浪费）
+                stmt = select(DocumentChunk).options(*embedding_dims.defer_options()).where(*conds).limit(top_k * 2)
                 return [(chunk.id, chunk, kw) for chunk in db2.execute(stmt).scalars()]
             finally:
                 db2.close()
@@ -239,8 +265,13 @@ def retrieve(kb_id: int, query: str, top_k: int | None = None, mode: str = "hybr
         kb = db.get(KnowledgeBase, kb_id)
         if not kb_allows(role, kb, kb_scope):
             return []
-        spec = _kb_spec(db, kb)
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec)
+        try:
+            spec, column = _kb_vector(db, kb)
+        except KBUnsearchable as e:
+            # 该库不参与本次检索：返回空而不是拿错向量空间的模型硬查（见 KBUnsearchable）
+            logger.warning("跳过检索：%s", e)
+            return []
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec, column)
         ranked, _ = _rank_and_authorize(query, candidates, role, kb, kb_scope=kb_scope)
         return _format_items(db, ranked, top_k, enriched=False)
     finally:
@@ -259,9 +290,18 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int | None = None, mode: 
                 "query": query, "keywords": [], "candidate_count": 0, "acl_rejected": 0, "returned": 0,
                 "top_score": 0.0, "mean_score": 0.0, "lexical_hit_count": 0, "rerank_mode": None, "timings": {}, "kb_denied": True,
             }}
+        try:
+            spec, column = _kb_vector(db, kb)
+        except KBUnsearchable as e:
+            # 与 retrieve 同口径，但要额外告诉调用方原因：评测页要能区分"没命中"与"库配置坏了"
+            logger.warning("跳过检索：%s", e)
+            return {"items": [], "stats": {
+                "query": query, "keywords": [], "candidate_count": 0, "acl_rejected": 0, "returned": 0,
+                "top_score": 0.0, "mean_score": 0.0, "lexical_hit_count": 0, "rerank_mode": None, "timings": {},
+                "kb_denied": False, "kb_unsearchable": str(e),
+            }}
         timings: dict = {}
-        spec = _kb_spec(db, kb)
-        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec, timings=timings)
+        candidates = _collect_candidates(db, kb_id, query, top_k, mode, spec, column, timings=timings)
         keywords = extract_keywords(query)
         started = time.perf_counter()
         ranked, rejected = _rank_and_authorize(query, candidates, role, kb, keywords=keywords, kb_scope=kb_scope)
@@ -282,6 +322,7 @@ def retrieve_with_stats(kb_id: int, query: str, top_k: int | None = None, mode: 
             # 各阶段耗时（毫秒）：评测页据此看慢在哪一段
             "timings": timings,
             "kb_denied": False,
+            "kb_unsearchable": None,
         }
         return {"items": items, "stats": stats}
     finally:

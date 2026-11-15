@@ -35,6 +35,8 @@ export default function RunDetail() {
     // 归属按实际填了哪个归属列判断：模型对话的 run_type 也是 chat，但没有智能体（docs/17 §3.1）
     { label: '归属', value: <RunOwner run={run} /> },
     { label: '触发', value: <span className="inline-flex items-center gap-1.5"><StatusTag domain="runSource" value={run.source} /> {run.username}</span> },
+    // 工作流运行能看出跑的是哪一版（FR-075）；本特性之前的运行与试跑没有版本概念，显示 -
+    ...(run.run_type === 'workflow' ? [{ label: '工作流版本', value: run.workflow_version ? `v${run.workflow_version}` : '-' }] : []),
     { label: '开始', value: formatDateTime(run.started_at) },
     { label: '耗时', value: run.finished_at ? formatDuration(run.latency_ms) : (live ? '进行中' : '-') },
   ] : []

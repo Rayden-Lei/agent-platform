@@ -10,6 +10,7 @@ import pytest
 
 from app.core.security import encrypt_secret
 from app.db.session import SessionLocal
+from tests.conftest import publish_workflow
 from app.model_gateway import gateway
 from app.model_gateway.gateway import build_llm, reset_llm_cache
 from app.services import chat_service, conversation_service
@@ -117,6 +118,7 @@ def test_chat_and_workflow_agent_node_use_agent_params(client, auth_headers, mod
             "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}],
         }
         wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-params-wf", "description": "", "graph": graph}).json()
+        publish_workflow(client, auth_headers, wf["id"])  # 运行读线上版本（FR-075）
         r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}})
         assert r.status_code == 200 and r.json()["status"] == "success", r.text
         cached = [llm for llm in gateway._LLM_CACHE.values() if llm.kwargs.get("temperature") == 0.9]

@@ -15,6 +15,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.db.models import Document, DocumentChunk, Run
 from app.db.session import SessionLocal, engine
+from tests.conftest import publish_workflow
 from app.rag import retriever
 from app.services import chat_service
 from tests.fakes import AnswerModel
@@ -96,7 +97,7 @@ def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles
         doc = Document(kb_id=kb_id, name="pytest-scope.txt", file_path="pytest/unused.txt", file_type="txt", status="ready")
         db.add(doc)
         db.commit()
-        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, embedding=[0.1] * settings.EMBEDDING_DIM, meta={}, token_count=len(CONTENT)))
+        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, embedding_1024=[0.1] * settings.EMBEDDING_DIM, meta={}, token_count=len(CONTENT)))
         db.commit()
     finally:
         db.close()
@@ -205,6 +206,7 @@ def test_key_can_only_chat_with_agents_in_scope(client, auth_headers, made, stub
 def test_key_without_workflow_scope_cannot_run_it(client, auth_headers, made):
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-scope-wf-" + _uid(), "description": "", "graph": REVIEW_GRAPH}).json()
     made["workflows"].append(wf["id"])
+    publish_workflow(client, auth_headers, wf["id"])  # 运行读线上版本（FR-075）
     model_id = _model(client, auth_headers, made)
     key = _key(client, auth_headers, made, agent_ids=[_published_agent(client, auth_headers, made, model_id)])
     r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=_bearer(key), json={"inputs": {"input": "x"}})
@@ -215,6 +217,7 @@ def test_key_without_workflow_scope_cannot_run_it(client, auth_headers, made):
 def test_key_can_only_resume_runs_it_started(client, auth_headers, made):
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-scope-review-" + _uid(), "description": "", "graph": REVIEW_GRAPH}).json()
     made["workflows"].append(wf["id"])
+    publish_workflow(client, auth_headers, wf["id"])  # 运行读线上版本（FR-075）
     mine, other = _key(client, auth_headers, made, workflow_ids=[wf["id"]]), _key(client, auth_headers, made, workflow_ids=[wf["id"]])
     run_url = f"/api/v1/workflows/{wf['id']}/run"
     by_key = client.post(run_url, headers=_bearer(mine), json={"inputs": {"input": "x"}}).json()

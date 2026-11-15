@@ -37,11 +37,20 @@ def _make_kb(client, auth_headers, model_id: int, name: str = "pytest-kb-emb") -
 # ===== 维度校验 =====
 
 def test_dim_mismatch_is_rejected(client, auth_headers):
-    """维度与切片表列宽不一致必须 422：pgvector 是定长列，存进去会等到入库时才炸。"""
-    other = settings.EMBEDDING_DIM + 256
+    """不在支持集合里的维度必须 422。
+
+    2026-11-15 前这里的判据是"必须等于切片表列宽"（单个定长列）；切片向量按维度分列之后，
+    判据变成"必须是受支持维度之一"。两种情况下不支持的维度都不能存进去 ——
+    切片表没有那一列，错误会拖到入库的后台线程里才炸，用户只看得到文档 failed。
+    """
+    other = 512  # 明确不在 SUPPORTED_DIMS 里
     r = client.post("/api/v1/embedding-models", headers=auth_headers, json=_model_body(dim=other))
     assert r.status_code == 422, r.text
-    assert str(settings.EMBEDDING_DIM) in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert "512" in detail
+    # 报错要列出可选维度，否则用户不知道能填什么
+    for dim in (768, 1024, 1536, 3072):
+        assert str(dim) in detail
 
 
 def test_dim_matching_column_is_accepted(client, auth_headers):

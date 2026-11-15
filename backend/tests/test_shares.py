@@ -142,7 +142,7 @@ def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles
         doc = Document(kb_id=kb_id, name="pytest-share.txt", file_path="pytest/unused.txt", file_type="txt", status="ready")
         db.add(doc)
         db.commit()
-        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, embedding=[0.1] * settings.EMBEDDING_DIM, meta={}, token_count=len(CONTENT)))
+        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, embedding_1024=[0.1] * settings.EMBEDDING_DIM, meta={}, token_count=len(CONTENT)))
         db.commit()
     finally:
         db.close()

@@ -40,7 +40,7 @@ class ReplayChat(NamedTuple):
 
 @dataclass(frozen=True)
 class PreparedTurn:
-    """一轮对话写库的结果：会话、运行记录、这轮回答要用的配置版本号（只有智能体对话有），
+    """一轮对话写库的结果：会话、运行记录、这轮回答/执行要用的配置版本号（智能体与工作流对话各一个），
     以及各类型自己的执行参数（extra：工作流对话放已经算好的 inputs，执行时不再重算，
     避免"准备阶段算出的入参"和"实际传下去的入参"在两次计算之间产生分歧）。"""
 
@@ -102,7 +102,7 @@ def _replay_of(db: Session, conversation_id: int, client_message_id: str):
 def open_turn(db: Session, caller: Caller, kind: str, target_id: int, message: str,
               conversation_id: int | None = None, client_message_id: str | None = None, *, missing_detail: str,
               run_type: str, input_data: dict, model_id: int | None = None, agent_version: int | None = None,
-              extra: dict | None = None, api_key: ApiKey | None = None):
+              workflow_version: int | None = None, extra: dict | None = None, api_key: ApiKey | None = None):
     """取/建会话、落用户消息与运行记录，返回 (PreparedTurn, None) 或 (None, ReplayChat)。
 
     调用前各类型已经做完自己的校验（智能体的发布状态、模型是否可用、工作流的图与入参），
@@ -147,7 +147,7 @@ def open_turn(db: Session, caller: Caller, kind: str, target_id: int, message: s
         db, run_type, caller.user_id, agent_id=target_id if kind == KIND_AGENT else None,
         workflow_id=target_id if kind == KIND_WORKFLOW else None, model_id=model_id, conversation_id=conversation.id,
         input_data=input_data, source=RUN_SOURCE_OF[caller.channel], api_key_id=caller.api_key_id,
-        share_id=caller.share_id, agent_version=agent_version, commit=False,
+        share_id=caller.share_id, agent_version=agent_version, workflow_version=workflow_version, commit=False,
     )
     user_message.run_id = run.id
     db.commit()

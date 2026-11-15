@@ -8,7 +8,7 @@ from typing import Annotated, Any, Callable, TypedDict
 
 import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -24,6 +24,7 @@ from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
 from app.core import outbound
+from app.workflow.checkpointer import new_saver
 from app.workflow.io_contract import end_outputs
 from app.workflow.safe_eval import ConditionSyntaxError, evaluate
 from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
@@ -56,9 +57,12 @@ class WorkflowState(TypedDict, total=False):
     steps: Annotated[list, operator.add]
 
 
-# 进程内共享 checkpointer：run 与 resume 用同一个，才能恢复被 interrupt 的图。
-# 内部使用场景下审核间隔通常不跨进程重启；如需跨进程请换 SqliteSaver。
-_checkpointer = MemorySaver()
+# checkpointer 用 Postgres（docs/15 WF-12、docs/09 第二梯队）。2026-11-15 前这里是模块级 MemorySaver()：
+# 每个 thread 的完整 state 快照永久留在进程内存里（steps 还在追加，并行/循环更大），
+# 且进程重启后 awaiting_review 的运行再也续不上（docs/02 第 5 节）。
+# 现在由 app/workflow/checkpointer 提供进程级连接池，每次编译绑一个新 saver 实例：
+# run 与 resume 靠 thread_id（运行记录 id）在库里对上，跨进程/重启都能续；
+# 终态清理与连接池生命周期见 checkpointer 模块。
 
 
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
@@ -602,11 +606,16 @@ NODE_BUILDERS = {
 }
 
 
-def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None = None):
+def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None = None,
+                   checkpointer: BaseCheckpointSaver | None = None):
     """把数据库 graph JSON（nodes/edges）编译成 LangGraph 可执行图。
 
     图校验（并行 / 汇聚结构）在这里兜底：服务层保存与运行前已显式校验并返回 400，
     这里抛出的 BizError 只会被 execute_workflow 吞成 failed（定时任务等无调用方的路径）。
+
+    checkpointer 默认每次新建一个 Postgres saver（共用进程级连接池，各自一把锁）。不共用同一个 saver 的理由：
+    saver 的读写都在自己的 threading.Lock 里串行，多图共用一个实例会让同时跑的工作流在检查点读写上互相排队。
+    显式传入的用法只有测试（要塞一个内存实现或记录调用）。
     """
     errors = validate_graph(graph_data)
     if errors:
@@ -696,4 +705,4 @@ def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None
     for eid in end_ids:
         g.add_edge(eid, END)
 
-    return g.compile(checkpointer=_checkpointer)
+    return g.compile(checkpointer=checkpointer if checkpointer is not None else new_saver())

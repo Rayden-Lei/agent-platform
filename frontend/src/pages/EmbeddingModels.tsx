@@ -1,16 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Binary, Plus } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import {
-  batchEmbeddingModels, deleteEmbeddingModel, listEmbeddingModels, testEmbeddingModel,
-  toggleEmbeddingModel, type EmbeddingModelRow,
+  batchEmbeddingModels, deleteEmbeddingModel, getEmbeddingDimOptions, listEmbeddingModels, testEmbeddingModel,
+  toggleEmbeddingModel, type EmbeddingDimOptions, type EmbeddingModelRow,
 } from '../api'
 import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
-import { useSystemStatus } from '../hooks/useSystemStatus'
 import ListPage from '../components/layout/ListPage'
 import PageHeader from '../components/layout/PageHeader'
 import FilterBar from '../components/layout/FilterBar'
@@ -37,9 +36,14 @@ export default function EmbeddingModels() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<EmbeddingModelRow | null>(null)
   const [testingId, setTestingId] = useState<number | null>(null)
-  // 切片表列宽从系统状态取：它是维度校验的唯一依据，页面不自己硬编码 1024
-  const { status } = useSystemStatus()
-  const requiredDim = status?.embedding?.dim ?? 1024
+  // 受支持的维度由服务端下发（GET /embedding-models/dims）：页面不硬编码维度集合，
+  // 也不硬编码 pgvector 的索引上限 —— 这两个数都在后端一处定义，服务端才是校验权威。
+  // 取不到时（还在加载 / 接口失败）下拉为空但不阻塞列表：表单里的维度是现成值，仍可编辑其他字段。
+  const [dimOptions, setDimOptions] = useState<EmbeddingDimOptions | null>(null)
+  useEffect(() => {
+    getEmbeddingDimOptions().then(setDimOptions).catch(() => setDimOptions(null))
+  }, [])
+  const indexedDims = dimOptions?.indexed_dims ?? []
 
   const list = usePagedList<EmbeddingModelRow>(listEmbeddingModels, {
     filters, selectable: canManage,
@@ -70,10 +74,10 @@ export default function EmbeddingModels() {
   const columns = useMemo(
     () => buildEmbeddingColumns({
       onOpen: (m) => { setEditing(m); setFormOpen(true) },
-      onToggle, onTest, onEdit: (m) => { setEditing(m); setFormOpen(true) }, onDelete, testingId, canManage, requiredDim,
+      onToggle, onTest, onEdit: (m) => { setEditing(m); setFormOpen(true) }, onDelete, testingId, canManage, indexedDims,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [testingId, canManage, requiredDim],
+    [testingId, canManage, dimOptions],
   )
 
   return (
@@ -82,7 +86,7 @@ export default function EmbeddingModels() {
         <PageHeader
           icon={<Binary />}
           title="向量模型"
-          description={`知识库入库与检索用的 embedding 模型；维度必须等于切片表列宽（${requiredDim}）。`}
+          description={`知识库入库与检索用的 embedding 模型；不同知识库可以绑定不同维度的模型（支持 ${(dimOptions?.dims ?? []).join(' / ')} 维）。`}
           extra={canManage && <Button variant="primary" size="md" icon={<Plus />} onClick={() => { setEditing(null); setFormOpen(true) }}>新增向量模型</Button>}
         />
       }
@@ -145,7 +149,7 @@ export default function EmbeddingModels() {
       <EmbeddingModelForm
         open={formOpen}
         editing={editing}
-        requiredDim={requiredDim}
+        dimOptions={dimOptions}
         onClose={() => setFormOpen(false)}
         onSaved={list.reload}
       />

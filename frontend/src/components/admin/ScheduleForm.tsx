@@ -26,7 +26,9 @@ export default function ScheduleForm({ open, editing, onClose, onSaved }: Props)
   const [error, setError] = useState<string | null>(null)
   const [variables, setVariables] = useState<WorkflowVariableDecl[]>([])
   const [variablesError, setVariablesError] = useState<string | null>(null)
-  const workflows = useAsyncData(() => listWorkflows(OPTIONS_PAGE), [], { auto: open, errorText: '加载工作流失败' })
+  // 只列已发布的工作流（FR-075）：定时任务只能绑线上版本，未发布的选进去保存就会被 403 拒绝。
+  // 已发布但改了草稿的照常可选 —— 任务跑的是线上版本，不受正在改的草稿影响。
+  const workflows = useAsyncData(() => listWorkflows({ ...OPTIONS_PAGE, status: 'published' }), [], { auto: open, errorText: '加载工作流失败' })
 
   useEffect(() => {
     if (!open) return

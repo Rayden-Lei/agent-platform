@@ -8,6 +8,7 @@ import pytest
 
 from app.config import settings
 from app.db.session import SessionLocal
+from tests.conftest import publish_workflow
 from app.services import run_service
 
 SIMPLE_GRAPH = {
@@ -20,6 +21,8 @@ SIMPLE_GRAPH = {
 def workflow(client, auth_headers):
     r = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-stats-wf-" + uuid.uuid4().hex[:6], "description": "", "graph": SIMPLE_GRAPH})
     assert r.status_code == 200, r.text
+    # 运行读线上版本（FR-075）：统计页看的是真实运行，所以必须先发布
+    publish_workflow(client, auth_headers, r.json()["id"])
     yield r.json()
     client.delete(f"/api/v1/workflows/{r.json()['id']}", headers=auth_headers)
 

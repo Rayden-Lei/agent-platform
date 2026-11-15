@@ -37,7 +37,8 @@ export default function Schedules() {
   const { status } = useSystemStatus()
   const scheduler = status?.scheduler
   const schedulerRunning = scheduler?.running ?? true // 状态未知时不误报
-  const workflows = useAsyncData(() => listWorkflows(OPTIONS_PAGE), [])
+  // 筛选下拉只列已发布的工作流（FR-075）：定时任务只能绑线上版本
+  const workflows = useAsyncData(() => listWorkflows({ ...OPTIONS_PAGE, status: 'published' }), [])
   const list = usePagedList<ScheduleRow>(listSchedules, { filters, selectable: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => {

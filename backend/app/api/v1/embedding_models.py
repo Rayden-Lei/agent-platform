@@ -24,8 +24,9 @@ router = APIRouter(prefix="/embedding-models", tags=["embedding-models"])
 class EmbeddingModelIn(BaseModel):
     """创建 / 更新请求体（整体覆盖）。
 
-    dim 会被服务端与切片表列宽比对（不一致 422）：pgvector 是定长列，维度对不上入库必失败，
-    因此不让它悄悄存进去。api_key 更新时留空表示沿用已有密钥。
+    dim 必须是受支持的维度之一（2026-11-15 起：切片表按维度分列，见 app/rag/embedding_dims），
+    不在集合内 422 —— 没有对应列时入库才失败，而入库在后台线程，用户只看到文档 failed。
+    api_key 更新时留空表示沿用已有密钥。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -65,9 +66,19 @@ def list_options(db: Session = Depends(get_db), user: User = Depends(require_rol
     return {"items": embedding_model_service.options(db)}
 
 
+@router.get("/dims")
+def list_dims(user: User = Depends(require_roles("admin", "developer"))):
+    """受支持的向量维度（2026-11-15）：表单维度下拉与"是否可建索引"的唯一依据。
+
+    支持集合定义在后端 app/rag/embedding_dims（保存模型时按它校验，是权威），
+    这里把它下发给前端做下拉与提示，前端不再硬编码维度或 pgvector 的索引上限。
+    """
+    return embedding_model_service.dim_options()
+
+
 @router.post("")
 def create_model(data: EmbeddingModelIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
-    """新建向量模型。维度必须与切片表列宽一致。仅 admin。"""
+    """新建向量模型。维度必须是受支持维度之一（取值范围见 GET /embedding-models/dims）。仅 admin。"""
     return embedding_model_service.create_model(db, data, user)
 
 

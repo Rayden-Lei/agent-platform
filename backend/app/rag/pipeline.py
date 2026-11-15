@@ -18,6 +18,7 @@ from sqlalchemy import func
 from app.config import settings
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.session import SessionLocal
+from app.rag import embedding_dims
 from app.rag.embeddings import embed_texts_detailed
 from app.rag.minio_client import download_file
 from app.rag.parser import parse_document
@@ -259,15 +260,29 @@ def _resume_start(db, doc: Document, chunks: list, resume: bool) -> int:
 
 
 def _write_batch(db, doc: Document, kb: KnowledgeBase, start: int, batch: list, embedded, degraded_models: set) -> None:
-    """把一批已向量化的切片写库并提交，chunk_count / heartbeat_at 随批推进（列表页据此显示进度）。"""
+    """把一批已向量化的切片写库并提交，chunk_count / heartbeat_at 随批推进（列表页据此显示进度）。
+
+    向量写进与 `embedded.dim` 对应的那一列，其余维度列留 NULL：pgvector 一列一个定长维度，
+    同一行只可能有一个维度有意义（见 app/rag/embedding_dims 的选型说明）。
+    这里再核一次维度与切片数：向量服务返回的维度与声明的 spec 不一致时，
+    直接写会撞在 pgvector 的列宽上（错误发生在后台线程里，用户只看到文档 failed），
+    所以在写库前给一条带上下文的异常。
+    """
     if embedded.mode != "model":
         degraded_models.add(embedded.model)
+    if not embedding_dims.is_supported(embedded.dim):
+        raise ValueError(f"向量维度 {embedded.dim} 不受支持，无法入库：可选 {list(embedding_dims.SUPPORTED_DIMS)}")
+    if len(embedded.vectors) != len(batch):
+        raise ValueError(f"向量化结果条数 {len(embedded.vectors)} 与切片数 {len(batch)} 不一致，拒绝写库")
+    column = embedding_dims.column_name(embedded.dim)
     for offset, (chunk, emb) in enumerate(zip(batch, embedded.vectors)):
+        if len(emb) != embedded.dim:
+            raise ValueError(f"第 {start + offset} 片的向量维度是 {len(emb)}，与知识库模型声明的 {embedded.dim} 不一致")
         db.add(DocumentChunk(
             doc_id=doc.id,
             kb_id=doc.kb_id,
             content=chunk["content"],
-            embedding=emb,
+            **{column: emb},
             meta={
                 **chunk["meta"],
                 "index": start + offset,

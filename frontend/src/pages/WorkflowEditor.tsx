@@ -3,9 +3,9 @@ import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, 
 import type { XYPosition } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { toast } from 'sonner'
-import { ArrowLeft, Blocks, Save } from 'lucide-react'
+import { ArrowLeft, Blocks } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow, OPTIONS_PAGE } from '../api'
+import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow, publishWorkflow, OPTIONS_PAGE } from '../api'
 import { PaletteList, buildDetail, degreeOf, paletteOf, toGraph } from './workflow/palette'
 import { nodeTypes } from './workflow/FlowNode'
 import { collectNodeConfig, configToFormValues, type NodeFormValues } from './workflow/NodeConfigForm'
@@ -17,6 +17,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/shadc
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import ErrorState from '../components/common/ErrorState'
+import EditorPublishBar from '../components/workflows/EditorPublishBar'
+import WorkflowPublishModal from '../components/workflows/WorkflowPublishModal'
 import { errorText } from '../utils/errors'
 
 // 工作流画布编辑器（基于 @xyflow/react）：左侧节点库拖拽或点击建节点，中间画布连线编排，
@@ -53,6 +55,14 @@ function EditorInner() {
   // 保存中的标记：与「测试运行」互斥。新建模式下每点一次 save 就是一次 POST，
   // 网络稍慢时连点会建出多个同名工作流，用户以为只存了一次（docs/07 第 7 节：请求进行中必须禁用）。
   const [saving, setSaving] = useState(false)
+  // 发布状态（FR-075）：编辑的是草稿，保存≠发布。从详情读出来的线上版本号与"有没有未发布改动"，
+  // 用来在头部给出「有未发布改动」提示 —— 否则用户以为保存完就对外生效了（这个特性之前确实如此）。
+  const [publishState, setPublishState] = useState<{ publishedVersion: number | null; hasUnpublished: boolean; draftVersion: number }>(
+    { publishedVersion: null, hasUnpublished: false, draftVersion: 0 },
+  )
+  const [publishing, setPublishing] = useState(false)
+  const [showPublish, setShowPublish] = useState(false)
+  // 连线分支值（条件 true/false、循环 loop/exit）的输入框内容，与选中连线的 label 同步
   const [edgeLabel, setEdgeLabel] = useState('')
   const [showPalette, setShowPalette] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -92,6 +102,7 @@ function EditorInner() {
         setNodes(ns)
         setEdges(es)
         baseline.current = JSON.stringify({ name: wf.name, description: wf.description || '', graph: toGraph(ns, es) })
+        setPublishState({ publishedVersion: wf.published_version, hasUnpublished: wf.has_unpublished_changes, draftVersion: wf.version })
       }).catch((e) => { setLoadError(errorText(e, '加载工作流失败')) })
     } else {
       baseline.current = JSON.stringify({ name: '未命名工作流', description: '', graph: toGraph([], []) })
@@ -236,9 +247,33 @@ function EditorInner() {
       const saved = isNew ? await createWorkflow({ name, description, graph }) : await updateWorkflow(Number(id), { name, description, graph })
       baseline.current = JSON.stringify({ name, description, graph })
       setDirty(false)
-      toast.success('保存成功')
+      // 新建出来的是草稿，还没发布；编辑保存后草稿与线上多半已不同 —— 提示词里说清楚，别让人以为已经生效
+      if (isNew) toast.success('已保存为草稿。要让定时任务与 API 调用用上它，还需要发布')
+      else if ((saved as any).has_unpublished_changes) toast.success('已保存草稿。线上仍是 v' + (saved as any).published_version + '，发布后才生效')
+      else toast.success('保存成功')
       navigate(`/workflows/${saved.id}`)
     } catch (e) { toast.error(errorText(e, '保存失败')) } finally { setSaving(false) }
+  }
+
+  // 发布：先把未保存的画布存进草稿（不存的话发布会把画布上的改动漏掉，用户以为发的是眼前这张图），
+  // 再用草稿发布。新建模式还没有工作流可发，直接提示先保存。
+  const doPublish = async (note?: string) => {
+    if (saving || publishing) return
+    if (isNew) { toast.error('请先保存，再发布'); return }
+    if (!name.trim()) { toast.error('请输入工作流名称'); return }
+    if (blockedByInvalidNode()) return
+    const graph = toGraph(nodes, edges)
+    setPublishing(true)
+    try {
+      const saved = await updateWorkflow(Number(id), { name, description, graph })
+      baseline.current = JSON.stringify({ name, description, graph })
+      setDirty(false)
+      const r = await publishWorkflow(Number(id), note)
+      setShowPublish(false)
+      setPublishState({ publishedVersion: r.published_version, hasUnpublished: r.has_unpublished_changes, draftVersion: r.version })
+      toast.success(r.publish_result === 'unchanged' ? '草稿与线上一致，无需发布' : `已发布，线上为 v${r.published_version}`)
+      void saved
+    } catch (e) { toast.error(errorText(e, '发布失败')); throw e } finally { setPublishing(false) }
   }
 
   // 当前选中节点绑定的工具的参数声明：工具节点按声明逐字段渲染参数（docs/17 §3），
@@ -348,9 +383,16 @@ function EditorInner() {
             />
           )}
         </div>
-        <Button variant="primary" size="md" icon={<Save />} disabled={saving || testing} onClick={onSave}>
-          {saving ? '保存中…' : '保存'}
-        </Button>
+        <EditorPublishBar
+          isNew={isNew}
+          publishedVersion={publishState.publishedVersion}
+          hasUnpublished={publishState.hasUnpublished}
+          saving={saving}
+          publishing={publishing}
+          testing={testing}
+          onPublish={() => setShowPublish(true)}
+          onSave={onSave}
+        />
       </div>
 
       {isMobile ? (
@@ -384,6 +426,14 @@ function EditorInner() {
           <div className="mt-3 overflow-auto">{configContent}</div>
         </SheetContent>
       </Sheet>
+
+      <WorkflowPublishModal
+        target={showPublish ? {
+          name, draftVersion: publishState.draftVersion, publishedVersion: publishState.publishedVersion, nodeCount: nodes.length,
+        } : null}
+        onClose={() => setShowPublish(false)}
+        onPublish={doPublish}
+      />
 
       <Modal
         open={!!pendingDelete}

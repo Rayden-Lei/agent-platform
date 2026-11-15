@@ -58,9 +58,16 @@ export function buildKbColumns({ onEdit, onDelete }: Options): DataColumn<Knowle
     { key: 'chunks', header: '切片 / Token', width: 140, align: 'right', hideOnMobile: true, cell: (r) => `${formatNumber(r.chunk_count)} / ${formatNumber(r.token_count)}` },
     { key: 'chunk', header: '切片参数', width: 110, hideOnMobile: true, cell: (r) => `${r.chunk_size} / ${r.chunk_overlap}` },
     {
-      key: 'embedding_model', header: '向量模型', width: 170, hideOnMobile: true,
+      key: 'embedding_model', header: '向量模型 / 维度', width: 200, hideOnMobile: true,
+      // 不同知识库可以绑定不同维度的模型（2026-11-15 切片向量按维度分列），
+      // 维度要直接显示出来：它决定检索走哪一列、以及是否走索引
       cell: (r) => (r.embedding_model
-        ? <span className="truncate" title={`${r.embedding_model.model_name}（${r.embedding_model.dim} 维）`}>{r.embedding_model.name}</span>
+        ? (
+          <span className="inline-flex items-center gap-1.5 truncate" title={`${r.embedding_model.model_name}（${r.embedding_model.dim} 维）`}>
+            <span className="truncate">{r.embedding_model.name}</span>
+            <Badge tone="neutral">{r.embedding_model.dim} 维</Badge>
+          </span>
+        )
         : <Badge tone="danger" title="绑定的向量模型已被删除，这个库无法入库与检索">模型已删除</Badge>),
     },
     { key: 'created_by_username', header: '创建人', width: 100, hideOnMobile: true, cell: (r) => r.created_by_username || <span style={{ color: 'var(--fg-subtle)' }}>-</span> },

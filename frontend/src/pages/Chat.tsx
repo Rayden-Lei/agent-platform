@@ -227,7 +227,7 @@ export default function Chat() {
   }
 
   const emptyPickerText = kind === 'model' ? '还没有启用的模型，先去模型页添加并启用一个'
-    : kind === 'workflow' ? '还没有工作流，先去工作流页创建一个'
+    : kind === 'workflow' ? '还没有已发布的工作流；工作流要先发布才能作为对话目标'
       : canManageAgents ? '没有已发布的智能体，先去智能体页发布一个' : '还没有可用的智能体，请联系管理员发布'
   const emptyChatText = currentName ? `向「${currentName}」发送第一条消息开始对话` : `先在左侧选择一个${kindLabel}`
 

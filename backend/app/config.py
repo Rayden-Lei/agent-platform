@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     RERANK_MIN_SCORE: float = 0.02
     RERANK_GAP_RATIO: float = 0.02
     CHAT_TITLE_MAX_LEN: int = 30
+    # 工作流 checkpointer 的连接池（docs/15 WF-12）。psycopg3 直连，与 SQLAlchemy 的 psycopg2 池分开：
+    # 工作流执行线程最坏情况是"每个同时运行的工作流各占一个连接"，上限要挡住这个并发，不能按请求量拍。
+    # 15 是折中：连云端共享库时一个进程多开 15 个连接会挤占 max_connections；超时给 10 秒，pool 耗尽要尽快暴露成失败，
+    # 而不是让工作流排队等到前端超时（与 app/db/session.py 的 pool_timeout 同口径）。
+    CHECKPOINT_POOL_MAX_SIZE: int = 15
+    CHECKPOINT_POOL_TIMEOUT: int = 10
     # 单条对话消息的字符上限：挡住超长输入刷 token 与成本；超出 422，在写消息、建运行记录之前拒绝
     CHAT_MESSAGE_MAX_CHARS: int = 8000
     # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉

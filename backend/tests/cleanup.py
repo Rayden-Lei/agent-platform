@@ -122,6 +122,13 @@ def purge_test_rows(db: Session, since: datetime) -> dict[str, int]:
     if calls:
         deleted["llm_calls"] = calls
 
+    # 工作流 checkpoint（2026-11-15 换成 Postgres checkpointer 之后）：引擎直接跑图的用例
+    # （test_workflow_engine / test_workflow_parallel / test_outbound_security）用 engine-test-*、
+    # par-test-* 这类 thread_id，它们不对应任何运行记录，会永久堆在 checkpoints 表里。
+    threads = purge_checkpoint_threads(db)
+    if threads:
+        deleted["checkpoint_threads"] = threads
+
     if skipped:
         deleted["_skipped"] = skipped
     return deleted
@@ -161,6 +168,30 @@ def purge_mcp_orphans(db: Session, since: datetime) -> int:
             continue
         savepoint.commit()
     return removed
+
+
+def purge_checkpoint_threads(db: Session) -> int:
+    """回收"运行记录已不存在"的 checkpoint thread，返回删掉的 thread 数。
+
+    判据不是名字前缀或时间窗：checkpoint 表没有 name / created_at 列，而且真正决定它该不该留的是
+    "还对应得上一份运行记录吗"—— 工作流在线程里跑的时候 runs 行一定已存在（create_run 在 execute 之前），
+    所以 runs 里查不到的 thread 只可能是：用例直接编译图跑（thread_id 是 engine-test-* 这类）、
+    运行记录被清理掉了（按前缀回收 / 工作流被删级联）。两类都该删。
+
+    不按时间窗限制：这些行如果不删就是永久泄漏，而"runs 里没有"这个判据本身不会命中真实运行。
+    """
+    from sqlalchemy import text as _text
+
+    rows = db.execute(_text(
+        "SELECT DISTINCT thread_id FROM checkpoints "
+        "WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.id::text = checkpoints.thread_id)"
+    )).all()
+    threads = [r[0] for r in rows]
+    if not threads:
+        return 0
+    for table in ("checkpoints", "checkpoint_blobs", "checkpoint_writes"):
+        db.execute(_text(f"DELETE FROM {table} WHERE thread_id = ANY(:threads)"), {"threads": threads})
+    return len(threads)
 
 
 def purge_since(since: datetime) -> dict[str, int]:

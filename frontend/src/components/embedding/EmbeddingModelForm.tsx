@@ -6,18 +6,22 @@ import { Switch } from '@/components/shadcn/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
-import { createEmbeddingModel, updateEmbeddingModel, type EmbeddingModelInput, type EmbeddingModelRow } from '../../api'
+import {
+  createEmbeddingModel, updateEmbeddingModel,
+  type EmbeddingDimOptions, type EmbeddingModelInput, type EmbeddingModelRow,
+} from '../../api'
 import { statusOptions } from '../../constants/status'
 import { errorText } from '../../utils/errors'
 
 // 向量模型新增 / 编辑：字段比对话模型少（地址、密钥、模型名、维度、单请求条数），但仍用抽屉保持一致。
-// 维度必须与切片表向量列宽一致（服务端 422）：pgvector 是定长列，维度对不上入库必失败，
-// 所以这里把要求值直接写进提示，别让人存完才知道。
+// 维度从"必须等于切片表列宽"改成"受支持维度之一"（2026-11-15 切片向量按维度分列）：
+// 下拉候选与"是否可建索引"都来自服务端 GET /embedding-models/dims，前端不复制维度列表，
+// 也不复制 pgvector 的索引上限 —— 服务端才是校验的权威。
 interface Props {
   open: boolean
   editing: EmbeddingModelRow | null
-  /** 切片表当前的向量列宽（来自系统状态里的 embedding.dim），用于表单预填与提示 */
-  requiredDim: number
+  /** 受支持的维度（来自 /embedding-models/dims）；为 null 表示还没取到，此时下拉只显示当前值 */
+  dimOptions: EmbeddingDimOptions | null
   onClose: () => void
   onSaved: () => void
 }
@@ -40,7 +44,7 @@ const EMPTY: FormValues = {
   dim: '', request_size: '20', is_enabled: true,
 }
 
-export default function EmbeddingModelForm({ open, editing, requiredDim, onClose, onSaved }: Props) {
+export default function EmbeddingModelForm({ open, editing, dimOptions, onClose, onSaved }: Props) {
   const [values, setValues] = useState<FormValues>(EMPTY)
   const [errors, setErrors] = useState<Errors>({})
   const [submitting, setSubmitting] = useState(false)
@@ -49,7 +53,8 @@ export default function EmbeddingModelForm({ open, editing, requiredDim, onClose
     if (!open) return
     setErrors({})
     if (!editing) {
-      setValues({ ...EMPTY, dim: String(requiredDim) })
+      // 预填服务端给的默认维度（.env 全局配置的维度，不在支持集合时退回存量维度）
+      setValues({ ...EMPTY, dim: String(dimOptions?.default_dim ?? '') })
       return
     }
     setValues({
@@ -62,7 +67,7 @@ export default function EmbeddingModelForm({ open, editing, requiredDim, onClose
       request_size: String(editing.request_size),
       is_enabled: editing.is_enabled,
     })
-  }, [open, editing, requiredDim])
+  }, [open, editing, dimOptions])
 
   const set = <K extends keyof FormValues>(key: K, v: FormValues[K]) => {
     setValues((s) => ({ ...s, [key]: v }))
@@ -77,8 +82,9 @@ export default function EmbeddingModelForm({ open, editing, requiredDim, onClose
     if (!values.model_name.trim()) next.model_name = '请输入模型名'
     if (!editing && !values.api_key.trim()) next.api_key = '请输入 API Key'
     const dim = Number(values.dim)
-    if (!values.dim.trim() || Number.isNaN(dim)) next.dim = '请输入数字'
-    else if (dim !== requiredDim) next.dim = `必须是 ${requiredDim}：切片表向量列宽是定长的，维度不一致无法入库`
+    if (!values.dim.trim() || Number.isNaN(dim)) next.dim = '请选择维度'
+    // 服务端按同一份集合校验；这里提前提示，避免白转一圈
+    else if (dimOptions && !dimOptions.dims.includes(dim)) next.dim = `必须是受支持的维度之一：${dimOptions.dims.join(' / ')}`
     const size = Number(values.request_size)
     if (!values.request_size.trim() || Number.isNaN(size) || size < 1 || size > 500) next.request_size = '取值 1～500'
     if (Object.keys(next).length) { setErrors(next); return }
@@ -171,10 +177,23 @@ export default function EmbeddingModelForm({ open, editing, requiredDim, onClose
         <div className="flex gap-3">
           <div className="flex flex-1 flex-col gap-1.5">
             <Label htmlFor="emb-dim">向量维度</Label>
-            <Input id="emb-dim" type="number" min={1} max={4096} value={values.dim} onChange={(e) => set('dim', e.target.value)} aria-invalid={!!errors.dim} />
+            <Select value={values.dim} onValueChange={(v) => set('dim', v)}>
+              <SelectTrigger id="emb-dim" className="h-9 w-full text-[13px]" aria-invalid={!!errors.dim}>
+                <SelectValue placeholder="选择维度" />
+              </SelectTrigger>
+              <SelectContent>
+                {(dimOptions?.dims ?? []).map((d) => (
+                  <SelectItem key={d} value={String(d)}>
+                    {d} 维{dimOptions && !dimOptions.indexed_dims.includes(d) ? '（检索为顺序扫描）' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {errors.dim
               ? <p className="m-0 text-[12.5px] text-destructive">{errors.dim}</p>
-              : <p className="m-0 text-[12px] text-muted-foreground">必须等于切片表列宽 {requiredDim}（定长列，装不下别的维度）</p>}
+              : <p className="m-0 text-[12px] text-muted-foreground">
+                  必须与模型实际产出的维度一致。超过 {dimOptions?.index_max_dim ?? 2000} 维的维度建不了向量索引，检索会走顺序扫描（功能正常，代价是慢）
+                </p>}
           </div>
           <div className="flex flex-1 flex-col gap-1.5">
             <Label htmlFor="emb-size">单次请求条数</Label>

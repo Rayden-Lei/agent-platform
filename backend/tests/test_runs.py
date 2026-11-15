@@ -7,6 +7,7 @@ import pytest
 
 from app.core.scheduler import _run_scheduled_job
 from app.db.models import Conversation, Message, Run
+from tests.conftest import publish_workflow
 from tests.fakes import seed_conversation
 from app.db.session import SessionLocal
 from app.services import chat_service, run_service
@@ -31,8 +32,10 @@ NEVER_SOON_CRON = "0 0 1 1 *"
 
 
 def _create_workflow(client, auth_headers, graph, name):
+    """建工作流并**发布**（FR-075：保存是草稿，运行/定时任务只读线上版本，未发布一律 403）。"""
     res = client.post("/api/v1/workflows", headers=auth_headers, json={"name": name, "description": "", "graph": graph})
     assert res.status_code == 200, res.text
+    publish_workflow(client, auth_headers, res.json()["id"])
     return res.json()["id"]
 
 

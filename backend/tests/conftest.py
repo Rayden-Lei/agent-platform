@@ -21,6 +21,37 @@ from tests import cleanup  # noqa: E402
 def pytest_sessionstart(session):  # noqa: ARG001
     """记下会话开始时间：结束时只回收这之后造的数据，不碰别人之前留下的行。"""
     session.config._test_started_at = cleanup.session_start()
+    # 建表失败不能拦死整轮：绝大多数用例不碰工作流，它们没有理由因为 checkpoint 表建不上而全红。
+    # 真正需要这张表的用例会在第一次写检查点时拿到明确的 UndefinedTable/连接错误。
+    try:
+        _ensure_checkpoint_schema()
+    except Exception:  # noqa: BLE001 会话初始化是前置动作，失败只报告
+        import logging
+
+        logging.getLogger(__name__).exception("checkpoint 表初始化失败，跑图的用例可能失败")
+
+
+def _ensure_checkpoint_schema() -> None:
+    """确保 checkpoint 表存在（工作流 checkpointer 换成 Postgres 之后，图一跑就要写这几张表）。
+
+    为什么在测试里建、而不是让应用启动时建：生产不在启动路径做 DDL（表由
+    backend/scripts/migrations 下的迁移脚本负责）。但 CI 是空库，_init_db 里的
+    Base.metadata.create_all 只建 ORM 表，建不到 saver 自己的 4 张表 —— 不在这里补，
+    CI 上所有跑图的用例都会 UndefinedTable。用同一个幂等入口 checkpointer.apply_migrations，
+    与迁移脚本不产生第二份 DDL。
+    """
+    from psycopg import connect
+    from psycopg.rows import dict_row
+
+    from app.config import settings
+    from app.workflow.checkpointer import apply_migrations, libpq_dsn
+
+    # 连接超时给足 30 秒：本机经 SSH 隧道连云端库，实测往返 p50≈95ms，但偶发 1.4 秒级尖刺
+    # （2026-11-15 实测 200 次采样里 7 次超过 1 秒）。用 10 秒这种紧值会让"隧道喘一下"
+    # 直接升级成 INTERNALERROR —— 收集阶段硬失败时整轮测试都跑不起来，排查方向还会被带偏到代码上。
+    with connect(libpq_dsn(settings.DATABASE_URL), autocommit=True, row_factory=dict_row, connect_timeout=30) as conn:
+        conn.execute("SET lock_timeout = '5s'")
+        apply_migrations(conn)
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
@@ -43,6 +74,10 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     if deleted:
         detail = "、".join(f"{t} {n}" for t, n in deleted.items())
         print(f"\n[清理] 回收测试残留：{detail}")
+    # checkpointer 的连接池是进程级资源：直接编译图的用例不走 lifespan，是懒打开的，
+    # 会话结束统一关掉，别把连接留在共享开发库上（与 lifespan 的关闭语义一致）
+    from app.workflow import checkpointer
+    checkpointer.close_checkpointer()
 
 
 @pytest.fixture(scope="session")
@@ -131,6 +166,18 @@ def embedding_model(client, auth_headers) -> dict:
         yield row
     finally:
         client.delete(f"/api/v1/embedding-models/{row['id']}", headers=auth_headers)
+
+
+def publish_workflow(client, headers, workflow_id: int) -> dict:
+    """把工作流发布成线上版本（FR-075）。
+
+    2026-11-15 起工作流是"保存草稿 → 发布上线"两段：run / 对话 / 定时任务 / API Key 一律读线上版本，
+    未发布一律 403。因此凡是要真的跑一次工作流的用例，建完工作流必须先发布 —— 这一行就是那个前提，
+    抽成函数是为了让用例里"为什么多这一步"有地方写清楚，不要各文件各写一遍。
+    """
+    r = client.post(f"/api/v1/workflows/{workflow_id}/publish", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
 @pytest.fixture

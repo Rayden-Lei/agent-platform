@@ -4,6 +4,7 @@ import uuid
 import pytest
 
 from app.db.models import Agent, Conversation, Message
+from tests.conftest import publish_workflow
 from tests.fakes import seed_conversation
 from app.db.session import SessionLocal
 from app.tools.langchain_tools import build_tools
@@ -122,6 +123,8 @@ def test_agents_list_filters_and_detail_reports_missing_references(client, auth_
 def test_schedules_validate_cron_and_expose_next_run(client, auth_headers):
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-depth-wf-" + uuid.uuid4().hex[:4], "description": "", "graph": {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}}).json()
     try:
+        # 定时任务只能绑已发布的工作流（FR-075）；cron 校验在 schema 层，先于发布校验，所以这两条不受影响
+        publish_workflow(client, auth_headers, wf["id"])
         bad = client.post("/api/v1/schedules", headers=auth_headers, json={"name": "pytest-sched", "workflow_id": wf["id"], "cron": "every 5 minutes", "input": {}})
         assert bad.status_code == 422 and "cron 表达式非法" in bad.json()["detail"][0]["msg"]
         missing = client.post("/api/v1/schedules", headers=auth_headers, json={"name": "pytest-sched", "workflow_id": 999999999, "cron": "0 3 * * *", "input": {}})

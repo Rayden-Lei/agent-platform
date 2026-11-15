@@ -86,6 +86,9 @@ export interface SearchStats {
   rerank_mode?: 'model' | 'lexical' | null
   timings?: Record<string, number> // 各阶段耗时（毫秒）：embed_ms / vector_ms / keyword_ms / rerank_ms，另有 keyword_count
   kb_denied: boolean // 当前角色无权检索这个库（按知识库当前权限判定），此时不召回、各项统计为 0
+  // 这个库当前检索不了：绑定的向量模型被删 / 停用 / 维度不受支持。此时该库不出结果（不退回全局配置，
+  // 那会拿错向量空间去比，维度不同直接报错、维度相同则安静地返回垃圾结果），reason 是具体原因
+  kb_unsearchable?: string | null
 }
 
 export const listKBs = (params?: PageQuery) => get<Page<KnowledgeBaseRow>>('/knowledge-bases', params)

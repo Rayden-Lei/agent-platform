@@ -6,6 +6,7 @@
 import uuid
 
 from app.workflow.io_contract import build_initial_state, main_input, normalize_inputs, start_variables
+from tests.conftest import publish_workflow
 
 
 def _graph(variables=None, outputs=None, extra_node=None) -> dict:
@@ -107,6 +108,8 @@ def test_run_uses_declared_inputs_and_reports_missing(client, auth_headers):
     assert wf.status_code == 200, wf.text
     wid = wf.json()["id"]
     try:
+        # 运行读线上版本（FR-075）：先发布，否则 403「工作流未发布」而不是入参校验的 400
+        publish_workflow(client, auth_headers, wid)
         missing = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"inputs": {"question": "hi"}})
         assert missing.status_code == 400 and "缺少必填输入" in missing.json()["detail"]
         ok = client.post(f"/api/v1/workflows/{wid}/run", headers=auth_headers, json={"inputs": {"question": "hi", "count": "3"}})
@@ -120,9 +123,14 @@ def test_parameters_endpoint_lists_declarations(client, auth_headers):
     graph = _graph(DECLARED, outputs=[{"name": "answer", "ref": "{{s}}"}])
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-io-params-" + uuid.uuid4().hex[:4], "description": "", "graph": graph}).json()
     try:
+        # 未发布时读不到声明（403）：这个接口的契约是"线上版本会接受什么参数"
+        unpublished = client.get(f"/api/v1/workflows/{wf['id']}/parameters", headers=auth_headers)
+        assert unpublished.status_code == 403 and unpublished.json()["detail"] == "工作流未发布", unpublished.text
+        publish_workflow(client, auth_headers, wf["id"])
         r = client.get(f"/api/v1/workflows/{wf['id']}/parameters", headers=auth_headers)
         assert r.status_code == 200, r.text
         body = r.json()
+        assert body["version"] == 1
         assert [v["name"] for v in body["variables"]] == ["question", "count", "days"]
         required = {v["name"]: v["required"] for v in body["variables"]}
         assert required == {"question": True, "count": True, "days": False}

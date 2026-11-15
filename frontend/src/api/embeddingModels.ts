@@ -26,7 +26,8 @@ export interface EmbeddingModelInput {
   api_base: string
   api_key?: string // 编辑时留空表示沿用已有密钥
   model_name: string
-  // 必须与切片表向量列宽一致（服务端校验，不一致 422）：pgvector 是定长列
+  // 必须是受支持维度之一（服务端按 app/rag/embedding_dims 校验，不一致 422）：
+  // 切片表按维度分了列，没有列的维度写不进去
   dim: number
   request_size: number
   is_enabled: boolean
@@ -35,12 +36,23 @@ export interface EmbeddingModelDetail extends EmbeddingModelRow {
   knowledge_bases: { id: number; name: string }[]
 }
 // 建库下拉的候选项：只列启用的
+// indexed：该维度能否建 ANN 索引。pgvector 0.6 的 HNSW 上限是 2000 维，3072 维只能顺序扫描
 export interface EmbeddingModelOption {
   id: number
   name: string
   provider: string
   model_name: string
   dim: number
+  indexed: boolean
+}
+
+// 受支持的向量维度（GET /embedding-models/dims）：唯一的权威在服务端，这里只用于下拉与提示，
+// 不在前端复制维度列表与 pgvector 的索引上限
+export interface EmbeddingDimOptions {
+  dims: number[]
+  indexed_dims: number[]
+  default_dim: number
+  index_max_dim: number
 }
 
 export const listEmbeddingModels = (params?: PageQuery) => get<Page<EmbeddingModelRow>>('/embedding-models', params)
@@ -52,6 +64,8 @@ export const toggleEmbeddingModel = (id: number) => post<{ id: number; is_enable
 export const batchEmbeddingModels = (ids: number[], action: 'enable' | 'disable' | 'delete') => batchAction('/embedding-models', ids, action)
 // 建库下拉用：只取启用中的候选，一次拿全（数量很少，不分页）
 export const listEmbeddingModelOptions = () => get<{ items: EmbeddingModelOption[] }>('/embedding-models/options')
+// 受支持的维度：表单维度下拉与"检索为顺序扫描"提示的唯一依据
+export const getEmbeddingDimOptions = () => get<EmbeddingDimOptions>('/embedding-models/dims')
 // 连通测试：成功返回 ok=true 与返回维度；失败 ok=false 带 error，不抛错（要能显示原因）
 export const testEmbeddingModel = (id: number) =>
   post<{ ok: boolean; dim?: number | null; reply?: string; error?: string }>(`/embedding-models/${id}/test`)

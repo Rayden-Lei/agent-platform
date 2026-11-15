@@ -124,6 +124,8 @@ def test_disabled_creators_schedule_leaves_a_failed_run_instead_of_running(clien
     graph = {"nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}], "edges": [{"from": "s", "to": "e"}]}
     wf = client.post("/api/v1/workflows", headers=dev, json={"name": "pytest-acct-wf-" + _uid(), "description": "", "graph": graph}).json()
     account["workflows"].append(wf["id"])
+    # 定时任务只能绑已发布的工作流（FR-075）：先发布，这里要验的是"停用的创建人"而不是发布状态
+    assert client.post(f"/api/v1/workflows/{wf['id']}/publish", headers=dev).status_code == 200
     job = client.post("/api/v1/schedules", headers=dev, json={"name": "pytest-acct-job-" + _uid(), "workflow_id": wf["id"], "cron": "0 3 1 1 *"}).json()
     try:
         client.put(f"/api/v1/users/{account['id']}", headers=auth_headers, json={"is_active": False})

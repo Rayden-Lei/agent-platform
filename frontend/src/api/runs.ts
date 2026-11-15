@@ -21,6 +21,7 @@ export interface RunRow {
   api_key_id: number | null // 经 API Key 触发时的 Key
   share_id: number | null // 分享访客的运行（source=share）所属的分享链接
   agent_version: number | null // 回答用的智能体线上版本；调试运行为空
+  workflow_version: number | null // 本次执行的工作流线上版本；试跑与 2026-11-15 之前的运行不记录（为空）
   status: RunStatus | string
   error: string | null
   output: Record<string, unknown> | null

@@ -11,6 +11,7 @@ import pytest
 from app.db.models import AgentVersion, AuditLog, Run, User
 from app.db.session import SessionLocal
 from app.services import agent_service, chat_service, conversation_service
+from tests.conftest import publish_workflow
 from tests.fakes import AnswerModel, use_llm
 
 
@@ -218,6 +219,8 @@ def test_workflow_agent_node_refuses_unpublished_agent(client, auth_headers, mak
              "edges": [{"from": "s", "to": "a"}, {"from": "a", "to": "e"}]}
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-pub-wf", "description": "", "graph": graph}).json()
     try:
+        # 工作流也要先发布才能运行（FR-075）；这里要验的是"节点里的智能体未发布"，不是工作流本身
+        publish_workflow(client, auth_headers, wf["id"])
         r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}}).json()
         assert r["status"] == "failed" and "智能体未发布" in r["error"]
     finally:

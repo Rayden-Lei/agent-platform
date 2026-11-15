@@ -16,6 +16,7 @@ from app.core.security import encrypt_secret
 from app.db.models import ModelConfig
 from app.model_gateway import breaker, gateway
 from app.services import chat_service
+from tests.conftest import publish_workflow
 
 MID, NAME = 999001, "pytest-breaker"
 STUB = SimpleNamespace(id=MID, name=NAME)
@@ -246,6 +247,7 @@ def test_agent_node_fails_fast_after_threshold(client, auth_headers, monkeypatch
     }
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-breaker-wf", "description": "", "graph": graph}).json()
     try:
+        publish_workflow(client, auth_headers, wf["id"])  # 运行读线上版本（FR-075）
         for i in range(5):
             r = client.post(f"/api/v1/workflows/{wf['id']}/run", headers=auth_headers, json={"inputs": {"input": "hi"}})
             assert r.status_code == 200 and r.json()["status"] == "failed", r.text

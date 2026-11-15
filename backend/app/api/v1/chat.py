@@ -192,12 +192,13 @@ async def workflow_chat(workflow_id: int, data: ChatIn, request: Request, db: Se
     # 同上：回放这条分支已经返回，走到这里的 prepared 必定有值。
     assert prepared is not None
     # 执行参数由 prepare_workflow_chat 一次算好放在 extra 里（run 记录的 input_data 也是同一份 inputs），
-    # 这里只取出来用，不再重算；它在 prepare_workflow_chat 里必然是 {"inputs": ...}。
+    # 这里只取出来用，不再重算；它在 prepare_workflow_chat 里必然是 {"inputs": ..., "version": ...}。
+    # version 是准备阶段定下的线上版本号，已写进 runs.workflow_version，执行时按同一个版本取图（FR-075）。
     extra = prepared.extra
     assert extra is not None
     turn = chat_runner.WorkflowTurn(workflow_id=workflow_id, user_id=user.id, role=user.role, message=data.message,
                                     conversation_id=prepared.conversation_id, run_id=prepared.run_id,
-                                    inputs=extra["inputs"])
+                                    inputs=extra["inputs"], version=extra["version"])
     return StreamingResponse(sse_stream(chat_runner.stream_workflow(turn)), media_type="text/event-stream")
 
 

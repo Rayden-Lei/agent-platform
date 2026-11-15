@@ -95,7 +95,14 @@ export default function SearchEval({ kbId }: Props) {
       )}
 
       {searched && results.length === 0 ? (
-        <EmptyState description={stats?.kb_denied ? '当前角色无权检索这个知识库：按知识库当前的访问权限判定，调用者用绑定它的智能体对话时同样拿不到引用' : '没有命中片段：可能是文档尚未就绪、权限过滤剔除了全部候选，或检索词与文档内容差距较大'} />
+        <EmptyState description={
+          stats?.kb_denied
+            ? '当前角色无权检索这个知识库：按知识库当前的访问权限判定，调用者用绑定它的智能体对话时同样拿不到引用'
+            // 库自己检索不了（模型被删/停用）与"没命中"是两回事：排查方向完全不同，必须分开说
+            : stats?.kb_unsearchable
+              ? `这个知识库当前无法检索：${stats.kb_unsearchable}。绑定的向量模型不可用时不会退回全局配置（那会用错向量空间），请先修好模型再检索`
+              : '没有命中片段：可能是文档尚未就绪、权限过滤剔除了全部候选，或检索词与文档内容差距较大'
+        } />
       ) : (
         <div className="flex flex-col gap-2">
           {results.map((r, idx) => (

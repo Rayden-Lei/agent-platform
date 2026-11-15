@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.models import AuditLog, LlmCall
 from app.db.session import SessionLocal
 from app.services import retention_service
+from tests.conftest import publish_workflow
 
 
 def _uid() -> str:
@@ -44,6 +45,7 @@ def test_schedule_lifecycle_is_audited(client, auth_headers):
     })
     assert wf.status_code == 200, wf.text
     wf_id = wf.json()["id"]
+    publish_workflow(client, auth_headers, wf_id)  # 定时任务只能绑已发布的工作流（FR-075）
     sch = None
     try:
         sch = client.post("/api/v1/schedules", headers=auth_headers, json={
@@ -82,6 +84,7 @@ def test_schedule_unchanged_toggle_does_not_duplicate_audit(client, auth_headers
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={
         "name": "pytest-audit-wf2-" + _uid(), "description": "", "graph": _graph(),
     }).json()
+    publish_workflow(client, auth_headers, wf["id"])  # 定时任务只能绑已发布的工作流（FR-075）
     sch = client.post("/api/v1/schedules", headers=auth_headers, json={
         "name": "pytest-audit-sch2-" + _uid(), "workflow_id": wf["id"], "cron": "0 3 * * *", "input": {},
     }).json()

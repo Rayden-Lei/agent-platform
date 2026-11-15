@@ -9,6 +9,7 @@ import uuid
 
 from app.db.models import Conversation
 from app.db.session import SessionLocal
+from tests.conftest import publish_workflow
 
 
 def _uid() -> str:
@@ -80,6 +81,9 @@ def test_workflow_parameters_requires_scope_for_api_key(client, auth_headers):
             })
             assert wf.status_code == 200, wf.text
             made[key] = wf.json()["id"]
+            # 参数声明读线上版本（FR-075）：未发布 403「工作流未发布」，
+            # 那样就分不清 403 是"未发布"还是"不在作用域"了，所以先发布
+            publish_workflow(client, auth_headers, made[key])
 
         # 只授权给 A 的 Key
         created = client.post("/api/v1/api-keys", headers=auth_headers, json={

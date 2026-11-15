@@ -11,7 +11,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.exceptions import BizError
-from app.db.models import ScheduledJob, User, Workflow
+from app.db.models import ScheduledJob, User
+from app.runtime.workflow_config import resolve_live_config
 from app.workflow.io_contract import build_initial_state
 from app.db.session import SessionLocal
 from app.services import run_service, workflow_service
@@ -36,10 +37,6 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
         if sj is None or (not sj.is_enabled and not force):
             logger.info("定时任务 %s 不存在或已停用，跳过", job_id)
             return
-        wf = db.get(Workflow, sj.workflow_id)
-        if wf is None:
-            logger.warning("定时任务 %s 引用的工作流 %s 不存在，跳过", job_id, sj.workflow_id)
-            return
         user = db.get(User, sj.user_id) if sj.user_id else None
         if user is None:
             # runs.user_id 非空；没有有效创建者的任务无法记账，跳过并提示
@@ -48,8 +45,25 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
 
         # 定时任务保存的就是"运行入参字典"本身（{变量名: 值}），与 POST /run 的 inputs 同一份结构
         scheduled_inputs = sj.input or {}
+        # **读线上发布版本，不读草稿**（FR-075）：定时任务保存时已校验过"工作流已发布"，
+        # 但之后工作流可能被删除或从未发布（迁移漏了），这里按线上版本执行，改草稿不影响已有任务。
+        # 取不到线上版本时留一条 failed 运行：任务列表与运行记录里看得到"为什么这次没跑"，
+        # 而不是只在服务端日志里留一行没人看的 warning。
+        try:
+            live = resolve_live_config(db, sj.workflow_id)
+        except BizError as e:
+            run = run_service.create_run(
+                db, "workflow", user.id, workflow_id=sj.workflow_id, input_data={"inputs": scheduled_inputs},
+                source="schedule", schedule_id=sj.id,
+            )
+            run_service.finalize_run(db, run, "failed", error=f"工作流不可运行：{e.detail}")
+            sj.last_run_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning("定时任务 %s 的%s，未执行", job_id, e.detail)
+            return
         run = run_service.create_run(
-            db, "workflow", user.id, workflow_id=wf.id, input_data={"inputs": scheduled_inputs}, source="schedule", schedule_id=sj.id,
+            db, "workflow", user.id, workflow_id=sj.workflow_id, input_data={"inputs": scheduled_inputs},
+            source="schedule", schedule_id=sj.id, workflow_version=live.version,
         )
         if not user.is_active:
             # 停用账号的任务不再以其身份执行（API Key 路径同样拒绝停用账号，2026-10-05 前这里只判存在）；
@@ -62,14 +76,14 @@ def _run_scheduled_job(job_id: int, force: bool = False) -> None:
         # 定时任务的固定输入按开始节点声明校验（docs/15 WF-04）：声明改了而任务里还填着旧变量时，
         # 这里抛 400，运行记录被置 failed 并带上原因——不静默按"没有输入"跑
         try:
-            initial = build_initial_state(wf.graph, scheduled_inputs)
+            initial = build_initial_state(live.graph, scheduled_inputs)
         except BizError as e:
             run_service.finalize_run(db, run, "failed", error=f"定时任务的固定输入与工作流声明不符：{e.detail}")
             sj.last_run_at = datetime.now(timezone.utc)
             db.commit()
             logger.warning("定时任务 %s 的固定输入不合法，未执行：%s", job_id, e.detail)
             return
-        result = workflow_service.execute_workflow(db, wf, run, initial, role=user.role)
+        result = workflow_service.execute_workflow(db, sj.workflow_id, live.version, initial, run, role=user.role)
         sj.last_run_at = datetime.now(timezone.utc)
         db.commit()
         logger.info("定时任务 %s 执行完成 run_id=%s status=%s", job_id, run.id, result.get("status"))

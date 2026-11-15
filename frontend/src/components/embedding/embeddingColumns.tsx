@@ -15,13 +15,13 @@ interface Options {
   /** 正在测试的模型 id：连通测试要真的发一次请求，慢的时候按钮要能看出在跑 */
   testingId: number | null
   canManage: boolean
-  /** 切片表的向量列宽：维度与它不一致的模型存不进去，列表要能一眼看出来 */
-  requiredDim: number
+  /** 可建 ANN 索引的维度（来自 /embedding-models/dims）：不在里面的维度检索走顺序扫描，列表要能看出来 */
+  indexedDims: number[]
 }
 
 // 向量模型列表列定义。
-// 三件事必须在列表上看得见：维度是否与切片表一致、被几个知识库绑着（绑着就不能删/停）、连通是否测过。
-export function buildEmbeddingColumns({ onOpen, onToggle, onTest, onEdit, onDelete, testingId, canManage, requiredDim }: Options): DataColumn<EmbeddingModelRow>[] {
+// 三件事必须在列表上看得见：维度是否可索引、被几个知识库绑着（绑着就不能删/停）、连通是否测过。
+export function buildEmbeddingColumns({ onOpen, onToggle, onTest, onEdit, onDelete, testingId, canManage, indexedDims }: Options): DataColumn<EmbeddingModelRow>[] {
   return [
     { key: 'id', header: 'ID', width: 64, sortable: true, cell: (r) => <span style={{ color: 'var(--fg-muted)' }}>{r.id}</span> },
     {
@@ -47,11 +47,15 @@ export function buildEmbeddingColumns({ onOpen, onToggle, onTest, onEdit, onDele
       ),
     },
     {
-      key: 'dim', header: '维度', width: 90, align: 'right',
-      // 与切片表列宽不一致时插入会直接报错，必须在列表上标出来而不是等入库失败才发现
-      cell: (r) => (r.dim === requiredDim
+      key: 'dim', header: '维度', width: 132, align: 'right',
+      // 每种受支持维度都有自己的列（2026-11-15），所以不再有"维度不匹配"；
+      // 但超过 pgvector 索引上限的维度（3072）检索是顺序扫描，必须在列表上标出来，
+      // 否则"这个库检索怎么这么慢"要从代码翻到 pgvector 版本才能解释
+      cell: (r) => (indexedDims.includes(r.dim)
         ? <span style={{ fontVariantNumeric: 'tabular-nums' }}>{r.dim}</span>
-        : <span title={`切片表向量列宽是 ${requiredDim} 维，维度不一致将无法入库`}><Badge tone="danger">{r.dim} 维 不匹配</Badge></span>),
+        : <span title={`${r.dim} 维超过向量索引上限，该维度的检索走顺序扫描（功能正常，代价是慢）`}>
+            <Badge tone="warning">{r.dim} 维 无索引</Badge>
+          </span>),
     },
     {
       key: 'kbs_count', header: '知识库', width: 88, align: 'right',

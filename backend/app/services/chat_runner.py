@@ -28,6 +28,7 @@ from app.model_gateway.gateway import guarded_astream
 from app.services import chat_service
 from app.services.chat_events import EventStream, StreamState, apply_event
 from app.services.middleware import RoundGuardMiddleware, ToolRoundsExceeded, TraceMiddleware, apply_system_prompt, chain_hooks
+from app.workflow.checkpointer import delete_thread_safely
 
 warnings.filterwarnings("ignore", message=".*create_react_agent.*")
 logger = logging.getLogger(__name__)
@@ -369,6 +370,9 @@ class WorkflowTurn:
     conversation_id: int
     run_id: int
     inputs: dict  # 消息已按声明填进对应变量，其余变量取默认值（workflow_chat.build_inputs）
+    # 这一轮要执行的线上版本号（FR-075）：准备阶段就定好并写进 runs.workflow_version，
+    # 按它取快照执行 —— 与运行记录上的版本号必须是同一个，中途发布不会让两者对不上
+    version: int
 
 
 async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
@@ -381,6 +385,12 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
 
     首版不做对话内审批（docs/17 §3.6）：遇到人工审核节点按"已暂停"收尾，
     回答里给出去运行详情页审批的指引，resume 仍在运行记录页完成。
+
+    检查点清理（docs/15 WF-12）：thread_id 就是 turn.run_id，**三个终态（success / failed / cancelled）
+    各清一次**，与 workflow_service.execute_workflow 同一口径；awaiting_review 分支绝不清理 ——
+    那一轮的检查点是运行记录页审批后 resume 的唯一依据，清掉之后审批一提交就会从空 state 重跑。
+    清理走 delete_thread_safely（失败只记日志）：对话流里抛出收尾错误会直接变成用户看到的事件错误，
+    拿"回收失败"污染"这轮对话的结果"是不可接受的。
     """
     from app.services import workflow_chat  # 局部导入：workflow_chat 依赖会话与 io_contract，避免顶层循环
     from app.workflow.engine import WorkflowState, build_workflow
@@ -395,7 +405,8 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
         apply_event(state, citations_event)
         yield citations_event
         try:
-            workflow = await run_in_threadpool(workflow_chat.load_workflow, db, turn.workflow_id)
+            # 读线上发布的快照（不是草稿），版本号取这一轮运行记录上记的那个
+            workflow = await run_in_threadpool(workflow_chat.load_workflow, db, turn.workflow_id, turn.version)
             # initial_state 按 io_contract 造出首跑 state，这里收窄成图声明的 WorkflowState 交给 astream
             initial = WorkflowState(**await run_in_threadpool(workflow_chat.initial_state, workflow.graph, turn.inputs))
             graph = build_workflow(workflow.graph, run_id=turn.run_id, role=turn.role)
@@ -442,6 +453,7 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
                 yield done
                 return
             await run_in_threadpool(chat_service.finalize_run, db, turn.run_id, "success", content=state.content, usage=usage)
+            delete_thread_safely(str(turn.run_id))
             finished = True
             done = events.emit("done", message_id=assistant_msg.id, run_id=turn.run_id, conversation_id=turn.conversation_id,
                                usage=usage, finished_reason="completed")
@@ -450,6 +462,7 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
         except Exception as e:
             _log_failure(e, turn.run_id, f"workflow={turn.workflow_id}")
             chat_service.finalize_run(db, turn.run_id, "failed", error=e.detail if isinstance(e, BizError) else str(e))
+            delete_thread_safely(str(turn.run_id))
             finished = True
             error = events.emit("error", message=public_error(e), finished_reason=_finished_reason(e))
             apply_event(state, error)
@@ -460,6 +473,9 @@ async def stream_workflow(turn: WorkflowTurn) -> AsyncGenerator[dict, None]:
                 chat_service.finalize_cancelled_chat(db, turn.run_id, turn.conversation_id, state.content, [], state.usage(), state.tool_calls)
             except Exception:
                 logger.exception("工作流对话中断收尾失败 run_id=%s", turn.run_id)
+            # 客户端断开 / 生成器被关闭：这一轮同样是终态（cancelled），检查点要清。
+            # 放在 finished 判定之内：awaiting_review 那条路径已置 finished=True 后 return，走不到这里。
+            delete_thread_safely(str(turn.run_id))
         db.close()
 
 

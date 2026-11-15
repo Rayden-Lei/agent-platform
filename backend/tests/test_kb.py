@@ -116,7 +116,8 @@ def _kb_with_one_chunk(client, auth_headers, *, is_public: bool, visible_roles: 
         doc = Document(kb_id=created.json()["id"], name="pytest-acl.txt", file_path="pytest/unused.txt", file_type="txt", status="ready")
         db.add(doc)
         db.commit()
-        db.add(DocumentChunk(doc_id=doc.id, kb_id=doc.kb_id, content=ACL_CONTENT, embedding=[0.1] * settings.EMBEDDING_DIM,
+        # 向量按维度分列（2026-11-15）：手插切片要写进与库绑定模型维度对应的那一列
+        db.add(DocumentChunk(doc_id=doc.id, kb_id=doc.kb_id, content=ACL_CONTENT, embedding_1024=[0.1] * settings.EMBEDDING_DIM,
                              meta={"is_public": is_public, "visible_roles": visible_roles, "policy_version": 1}, token_count=len(ACL_CONTENT)))
         db.commit()
     finally:

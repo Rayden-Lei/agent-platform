@@ -7,10 +7,11 @@ import uuid
 
 import pytest
 
-from app.db.models import Run, RunNode, Workflow
+from app.db.models import Run, RunNode, Workflow, WorkflowVersion
 from app.db.session import SessionLocal
 from app.workflow.engine import build_workflow
 from app.workflow.validation import branch_predecessors, validate_graph
+from tests.conftest import publish_workflow
 from tests.sandbox_steps import code_step
 
 
@@ -167,12 +168,19 @@ def test_test_run_with_invalid_graph_returns_400(client, auth_headers):
 
 
 def test_running_invalid_graph_returns_400_without_creating_run(client, auth_headers):
-    """校验上线前保存的非法图（直接写库绕过校验）：运行返回 400，runs 表不新增记录。"""
+    """校验上线前保存的非法图（直接写库绕过校验）：运行返回 400，runs 表不新增记录。
+
+    发布时会拦下图校验，所以这里直接往 workflow_versions 里塞一份非法快照并把指针指过去，
+    模拟"线上版本是坏图"（历史回填 / 迁移补发的图没有经过发布校验）。"""
     me = client.get("/api/v1/auth/me", headers=auth_headers).json()["id"]
     db = SessionLocal()
     try:
         w = Workflow(name="pytest-parallel-legacy", description="", graph=_single_branch(), created_by=me)
         db.add(w)
+        db.commit()
+        w.published_version = 1
+        w.status = "published"
+        db.add(WorkflowVersion(workflow_id=w.id, version=1, snapshot={"name": w.name, "description": "", "graph": _single_branch()}))
         db.commit()
         wid = w.id
     finally:
@@ -205,6 +213,7 @@ def test_graph_without_parallel_is_unaffected_by_validation(client, auth_headers
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-parallel-plain", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
+        publish_workflow(client, auth_headers, wf.json()["id"])
         r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "go"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "success" and r.json()["steps"] == ["condition:True", "loop:1", code_step(), "loop:2"]
@@ -222,6 +231,7 @@ def test_one_branch_failure_fails_run_while_other_branch_node_logs_success(clien
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-parallel-fail", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
+        publish_workflow(client, auth_headers, wf.json()["id"])
         r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
         assert r.status_code == 200, r.text
         body = r.json()

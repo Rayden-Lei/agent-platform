@@ -21,7 +21,12 @@ langchain-openai==1.6.0
 langchain-text-splitters==1.1.2
 langgraph==1.2.11
 langgraph-prebuilt==1.1.0
-langgraph-checkpoint==4.2.0
+# 4.3.2 是 langgraph-checkpoint-postgres 3.2.1 的下限（>=4.3.0）；langgraph 1.2.11 本身允许 <5.0.0
+langgraph-checkpoint==4.3.2
+# 工作流 checkpointer 的 Postgres 实现（docs/15 WF-12）。它依赖 psycopg 3，与 SQLAlchemy 用的
+# psycopg2-binary 并存：SQLAlchemy 继续走 psycopg2，saver 用 psycopg3 直连（两套驱动互不影响）
+langgraph-checkpoint-postgres==3.2.1
+psycopg[binary]==3.3.9
 
 # MCP 客户端（docs/17 §5 RS-08）：接外部 MCP server 的 tools，只用 HTTP / SSE 传输，不接 stdio。
 # 锁 2.3.0：1.20.0 与 pydantic 2.14 不兼容（import 时找不到 _typing_extra.eval_type_backport），

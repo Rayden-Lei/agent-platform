@@ -4,9 +4,10 @@
 （chat/completions vs embeddings），字段、校验、探活方式都不同；混在一起会让人在
 "模型"页面选一个只能对话的模型去建知识库，然后入库时报 400。
 
-**维度校验是这里最要紧的一条**：document_chunks.embedding 是定长的 pgvector 列，
-向量维度与列宽不一致时 PostgreSQL 直接报错（入库在后台线程里，用户只看到文档 failed）。
-所以保存模型时就比对 settings.EMBEDDING_DIM，不一致立即 422 —— 让错误停在表单上。
+**维度校验是这里最要紧的一条**：document_chunks 的向量按维度分了列（embedding_768 / _1024 /
+_1536 / _3072，见 app/rag/embedding_dims），没有对应列的维度写不进去，而入库在后台线程里、
+用户只看到文档 failed。所以保存模型时就校验维度在支持集合内，不满足立即 422 ——
+让错误停在表单上。支持集合只在 embedding_dims 定义一处，这里与 /embedding-models/dims 共用。
 
 密钥与 models.api_key_enc 同一口径：AES 加密落库，任何接口只回 has_key。
 """
@@ -27,7 +28,7 @@ from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models import EmbeddingModel, KnowledgeBase, User
 from app.db.session import rows_to_dict
-from app.rag import embeddings
+from app.rag import embedding_dims, embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +67,20 @@ def _kbs_count(db: Session, ids: set[int]) -> dict[int, int]:
 
 
 def _check_dim(dim: int) -> None:
-    """维度必须与 document_chunks.embedding 的列宽一致：定长列装不下别的维度，只能在这里拦住。"""
+    """维度必须是受支持的维度之一（切片表按维度分了列，见 app/rag/embedding_dims）。
+
+    2026-11-15 前这里是"必须等于 settings.EMBEDDING_DIM"：切片表只有一个定长向量列，
+    存不下别的维度，只能把模型挡在表单上。现在每个支持维度都有自己的列，校验从
+    "等于某个固定值"放宽到"在支持集合内"。仍然不放开到任意维度 —— 没有对应列的维度
+    会在入库写切片时失败，而那是后台线程，用户只看到文档 failed。
+    """
     if not DIM_MIN <= dim <= DIM_MAX:
         raise BizError(422, f"维度必须在 {DIM_MIN}～{DIM_MAX} 之间")
-    if dim != settings.EMBEDDING_DIM:
+    if not embedding_dims.is_supported(dim):
         raise BizError(
             422,
-            f"向量维度 {dim} 与切片表列宽 {settings.EMBEDDING_DIM} 不一致："
-            f"pgvector 是定长列，装不下别的维度。请用产出 {settings.EMBEDDING_DIM} 维的模型；"
-            "要用其他维度需要先做迁移（改列宽并重建全部切片）",
+            f"不支持的向量维度 {dim}：切片表按维度分列，只支持 {list(embedding_dims.SUPPORTED_DIMS)} 之一。"
+            "其他维度需要先在切片表加列并建索引（见 scripts/migrations 里的按维度分列迁移）",
         )
 
 
@@ -116,7 +122,7 @@ def get_model(db: Session, model_id: int) -> dict:
 
 
 def create_model(db: Session, data, user: User) -> dict:
-    """新建向量模型。维度必须与列宽一致；密钥必填（新建时没有可沿用的）。"""
+    """新建向量模型。维度必须是受支持维度之一；密钥必填（新建时没有可沿用的）。"""
     if not data.api_key or not data.api_key.strip():
         raise BizError(422, "请填写 API Key")
     _check_dim(data.dim)
@@ -228,10 +234,22 @@ def test_model(db: Session, model_id: int) -> dict:
 def options(db: Session) -> list:
     """建库下拉的候选：只列启用的，带维度与描述性标签。
 
+    indexed 表示该维度能否建 ANN 索引（pgvector 0.6 上限 2000 维）：False 时前端标注
+    "检索为顺序扫描"。放在候选里而不是让前端复制常数，判断依据只有 embedding_dims 一处。
+
     没有候选时返回空数组而不是抛错：前端据此提示"先去配一个向量模型"。
     """
     rows = db.query(EmbeddingModel).filter(EmbeddingModel.is_enabled.is_(True)).order_by(EmbeddingModel.id).all()
-    return [{"id": m.id, "name": m.name, "provider": m.provider, "model_name": m.model_name, "dim": m.dim} for m in rows]
+    return [{"id": m.id, "name": m.name, "provider": m.provider, "model_name": m.model_name, "dim": m.dim,
+             "indexed": embedding_dims.is_indexed(m.dim)} for m in rows]
+
+
+def dim_options() -> dict:
+    """受支持维度的下发形态（GET /embedding-models/dims）：前端维度下拉的唯一依据。
+
+    服务端仍是权威（保存时按 embedding_dims 校验），这里只是把同一份数据给前端做体验。
+    """
+    return embedding_dims.describe()
 
 
 def spec_for_kb(db: Session, kb: KnowledgeBase) -> embeddings.EmbeddingSpec:

@@ -9,6 +9,7 @@ from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.scheduler import add_schedule_job, is_valid_cron, next_run_times, remove_schedule_job, trigger_now
 from app.db.session import rows_to_dict
 from app.db.models import Run, ScheduledJob, User, Workflow
+from app.runtime.workflow_config import resolve_live_config
 
 SORTABLE = {"id": ScheduledJob.id, "name": ScheduledJob.name, "last_run_at": ScheduledJob.last_run_at, "created_at": ScheduledJob.created_at}
 
@@ -65,12 +66,19 @@ def list_schedules(db: Session, params: PageParams, q: str | None = None, workfl
 
 
 def _check_workflow(db: Session, workflow_id: int) -> None:
+    """定时任务只能绑已发布的工作流（FR-075）。
+
+    为什么在保存时拦而不是等到点再失败：任务建出来之后是无人值守的，到点才发现"工作流没发布"
+    意味着这段时间的调度全部空跑，而用户以为自己配好了。报错口径与运行时一致（403 工作流未发布）。
+    改草稿不影响已建的任务 —— 任务跑的是线上版本。
+    """
     if db.get(Workflow, workflow_id) is None:
         raise BizError(404, "工作流不存在")
+    resolve_live_config(db, workflow_id)
 
 
 def create_schedule(db: Session, data, user: User) -> dict:
-    """新建定时任务：工作流必须存在（404）；落库后立即注册到调度器。cron 合法性在 schema 层已校验（422）。
+    """新建定时任务：工作流必须存在（404）且已发布（403）；落库后立即注册到调度器。cron 合法性在 schema 层已校验（422）。
 
     写审计：定时任务会按 cron 反复触发工作流、消耗模型额度，属于"能造成资金损失"的操作，
     必须留痕（2026-11-15 补，此前 schedule_service 全模块 0 处审计）。

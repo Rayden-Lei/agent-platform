@@ -20,6 +20,7 @@ from app.db.models import Conversation, Message, Run
 from app.db.session import SessionLocal
 from app.services import model_chat, workflow_chat
 from app.services.chat_service import ChatContext
+from tests.conftest import publish_workflow
 from tests.fakes import FAKE_MODEL, AnswerModel, use_llm
 
 
@@ -82,6 +83,8 @@ def make_workflow(client, auth_headers):
             "name": "pytest-kind-wf-" + uuid.uuid4().hex[:6], "description": "", "graph": graph})
         assert w.status_code == 200, w.text
         created.append(w.json()["id"])
+        # 工作流对话读线上版本（FR-075）：未发布 403，先发布
+        publish_workflow(client, auth_headers, w.json()["id"])
         return w.json()
 
     yield _make
@@ -259,6 +262,7 @@ def test_workflow_chat_stops_at_human_review_without_finalizing(client, auth_hea
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={
         "name": "pytest-kind-review-" + uuid.uuid4().hex[:6], "description": "", "graph": graph}).json()
     try:
+        publish_workflow(client, auth_headers, wf["id"])  # 工作流对话读线上版本（FR-075）
         events = _events(_workflow_chat(client, auth_headers, wf["id"], "走一遍"))
         assert events[-1]["type"] == "done" and events[-1]["finished_reason"] == "interrupted"
         assert "人工审核" in _delta(events)

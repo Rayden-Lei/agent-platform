@@ -132,7 +132,11 @@ export default function KbForm({ open, editing, onClose, onSaved }: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   {models.map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name}（{m.dim} 维）</SelectItem>
+                    // 维度直接显示：不同库可以绑不同维度的模型（2026-11-15 切片向量按维度分列），
+                    // 没有索引的维度要提前说清，否则"这个库检索怎么这么慢"无从排查
+                    <SelectItem key={m.id} value={String(m.id)}>
+                      {m.name}（{m.dim} 维{m.indexed === false ? '，检索为顺序扫描' : ''}）
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>

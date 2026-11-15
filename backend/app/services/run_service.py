@@ -34,10 +34,10 @@ def operational_only():
 
 def create_run(db: Session, run_type: str, user_id: int, agent_id: int | None = None, workflow_id: int | None = None,
                input_data: dict | None = None, model_id: int | None = None, conversation_id: int | None = None, *,
-               source: str, agent_version: int | None = None, api_key_id: int | None = None, schedule_id: int | None = None, share_id: int | None = None,
-               commit: bool = True) -> Run:
+               source: str, agent_version: int | None = None, workflow_version: int | None = None, api_key_id: int | None = None,
+               schedule_id: int | None = None, share_id: int | None = None, commit: bool = True) -> Run:
     """创建运行记录并写入 started_at。所有产生 Run 的入口（对话/工作流/定时任务/调试）都必须走这里，
-    否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version 是统计与追溯用的快照。
+    否则 latency_ms 无法计算、监控页耗时永远是 0。model_id / conversation_id / agent_version / workflow_version 是统计与追溯用的快照。
 
     source 必须显式传（没有默认值）：漏传会被当成界面触发，调试流量就混进运营指标。input 只放本次的业务输入，
     来源等元数据走列（2026-09-25 前写在 input.source / input.scheduled）。
@@ -48,7 +48,7 @@ def create_run(db: Session, run_type: str, user_id: int, agent_id: int | None = 
     run = Run(
         run_type=run_type, agent_id=agent_id, workflow_id=workflow_id, user_id=user_id,
         model_id=model_id, conversation_id=conversation_id, source=source, agent_version=agent_version,
-        api_key_id=api_key_id, schedule_id=schedule_id, share_id=share_id,
+        workflow_version=workflow_version, api_key_id=api_key_id, schedule_id=schedule_id, share_id=share_id,
         status="running", input=input_data or {}, started_at=_now(),
     )
     db.add(run)
@@ -132,7 +132,8 @@ def _run_dict(r: Run) -> dict:
     return {
         "id": r.id, "run_type": r.run_type, "agent_id": r.agent_id, "workflow_id": r.workflow_id, "user_id": r.user_id,
         "model_id": r.model_id, "conversation_id": r.conversation_id,
-        "source": r.source, "schedule_id": r.schedule_id, "api_key_id": r.api_key_id, "share_id": r.share_id, "agent_version": r.agent_version,
+        "source": r.source, "schedule_id": r.schedule_id, "api_key_id": r.api_key_id, "share_id": r.share_id,
+        "agent_version": r.agent_version, "workflow_version": r.workflow_version,
         "status": r.status, "error": r.error, "output": r.output, "latency_ms": r.latency_ms,
         "token_usage": r.token_usage, "cost": r.cost,
         "started_at": _iso(r.started_at), "finished_at": _iso(r.finished_at),

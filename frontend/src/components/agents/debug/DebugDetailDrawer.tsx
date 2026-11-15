@@ -40,6 +40,8 @@ function Recall({ steps, contents }: { steps: TraceStep[]; contents: Map<number,
               </span>
               {step.meta?.acl_rejected > 0 && <Badge tone="warning">鉴权剔除 {step.meta.acl_rejected}</Badge>}
               {step.meta?.kb_denied && <Badge tone="warning">当前角色无权检索这个库</Badge>}
+              {/* 与"无权"分开：库自己检索不了（绑定的向量模型被删/停用），排查方向完全不同 */}
+              {step.meta?.kb_unsearchable && <Badge tone="danger" title={String(step.meta.kb_unsearchable)}>这个库当前无法检索</Badge>}
               {step.meta?.rerank_mode && <Badge tone="neutral">{step.meta.rerank_mode === 'model' ? '重排模型' : '词法重排'}</Badge>}
             </div>
             {hits.length ? (

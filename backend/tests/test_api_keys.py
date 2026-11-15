@@ -8,6 +8,7 @@ from app.config import settings
 from app.core import rate_limiter, redis_client
 from app.db.models import AuditLog
 from app.db.session import SessionLocal
+from tests.conftest import publish_workflow
 
 START_END_GRAPH = {
     "nodes": [{"id": "s", "type": "start", "config": {"variables": [{"name": "input", "type": "text", "description": ""}]}}, {"id": "e", "type": "end", "config": {}}],
@@ -65,6 +66,8 @@ def test_api_key_can_run_workflow(client, auth_headers):
     w = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-apikey-wf", "description": "", "graph": START_END_GRAPH})
     assert w.status_code == 200, w.text
     wid = w.json()["id"]
+    # 运行读线上版本（FR-075）：没发布的工作流对 Key 一律 403「工作流未发布」
+    publish_workflow(client, auth_headers, wid)
     k = _create_key(client, auth_headers, {"workflow_ids": [wid]})
     try:
         r = client.post(f"/api/v1/workflows/{wid}/run", headers=_bearer(k["key"]), json={"inputs": {"input": "hello"}})

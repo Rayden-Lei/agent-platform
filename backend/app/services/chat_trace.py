@@ -50,6 +50,8 @@ def retrieve_step(kb_name: str, query: str, result: dict, clock: Clock) -> dict:
         "vector_score": item.get("vector_score"), "keyword_score": item.get("keyword_score"), "rerank_score": item.get("rerank_score"),
         "location": {k: (item.get("meta") or {})[k] for k in HIT_LOCATION_KEYS if k in (item.get("meta") or {})},
     } for item in result.get("items", [])]
-    meta = {key: stats.get(key) for key in ("candidate_count", "returned", "acl_rejected", "kb_denied", "rerank_mode", "timings")}
+    # kb_unsearchable 单独下发：它是"这个库自己检索不了"（模型被删/停用），与"当前角色无权"是两回事，
+    # 排查方向完全不同，前端不能都显示成"无权检索"
+    meta = {key: stats.get(key) for key in ("candidate_count", "returned", "acl_rejected", "kb_denied", "kb_unsearchable", "rerank_mode", "timings")}
     status = "denied" if stats.get("kb_denied") else "success"
     return make_step("retrieve", kb_name, clock, input={"query": query}, output=hits, meta=meta, status=status)

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.tools import executor
 from app.tools.langchain_tools import build_tools
+from tests.conftest import publish_workflow
 from app.tools.schema import ToolParameters, build_args_model, validate_args
 
 WEATHER = {
@@ -190,6 +191,7 @@ def test_workflow_tool_node_with_invalid_fixed_args_fails(client, auth_headers, 
     wf = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-schema-wf", "description": "", "graph": graph})
     assert wf.status_code == 200, wf.text
     try:
+        publish_workflow(client, auth_headers, wf.json()["id"])  # 运行读线上版本（FR-075）
         r = client.post(f"/api/v1/workflows/{wf.json()['id']}/run", headers=auth_headers, json={"inputs": {"input": "x"}})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "failed"

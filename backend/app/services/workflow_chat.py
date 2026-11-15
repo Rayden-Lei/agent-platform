@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
 from app.core.limits import TOOL_RESULT_PREVIEW_CHARS
-from app.db.models import Workflow
+from app.runtime.workflow_config import load_version_config, resolve_live_config
 from app.services import chat_turn, workflow_service
 from app.services.conversation_service import KIND_WORKFLOW, Caller
 from app.workflow.io_contract import build_initial_state, start_variables
@@ -93,13 +93,18 @@ def prepare_workflow_chat(db: Session, caller: Caller, workflow_id: int, message
     事后能从运行记录回答"这句话被填到了哪个变量"。
     """
     chat_turn.validate_message(message)
-    workflow = workflow_service.get_workflow(db, workflow_id)
-    workflow_service.check_graph(workflow.graph)
-    inputs = build_inputs(workflow.graph, message)
+    # **读线上发布版本，不读草稿**（FR-075）：对话是"对外使用"的入口，与界面运行、定时任务、API Key 同口径。
+    # 未发布 403「工作流未发布」、已发布的图在这里也再校验一次（线上版本本应发布时已校验过，
+    # 但历史回填与迁移补发的快照要防一手）。入参按线上版本的开始节点声明计算 ——
+    # 草稿里改了变量声明不会让正在对话的人下一句就 400，发布之后才切换。
+    live = resolve_live_config(db, workflow_id)
+    workflow_service.check_graph(live.graph)
+    inputs = build_inputs(live.graph, message)
     return chat_turn.open_turn(
         db, caller, KIND_WORKFLOW, workflow_id, message, conversation_id, client_message_id,
         missing_detail="会话不存在或不属于该工作流", run_type="workflow",
-        input_data={"message": message, "inputs": inputs}, extra={"inputs": inputs},
+        input_data={"message": message, "inputs": inputs}, workflow_version=live.version,
+        extra={"inputs": inputs, "version": live.version},
     )
 
 
@@ -117,9 +122,13 @@ def mark_awaiting_review(db: Session, run_id: int, content: str, outputs: list) 
     db.commit()
 
 
-def load_workflow(db: Session, workflow_id: int) -> Workflow:
-    """执行时再取一次工作流行：准备阶段到执行阶段之间图可能被改过，按最新的跑。"""
-    return workflow_service.get_workflow(db, workflow_id)
+def load_workflow(db: Session, workflow_id: int, version: int):
+    """执行时按**运行记录上的版本号**取图（FR-075）。
+
+    准备阶段已经把 published_version 写进 extra["version"]（并落了 runs.workflow_version），
+    这里按同一个版本取，不是"再取一次最新草稿/最新线上"——准备到执行之间有人发布或改草稿，
+    都不会让这轮对话用上与运行记录不一致的图。"""
+    return load_version_config(db, workflow_id, version)
 
 
 def initial_state(graph: dict, inputs: dict) -> dict:

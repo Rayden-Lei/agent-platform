@@ -51,7 +51,9 @@ export default function WorkflowOverview({ workflow: wf }: Props) {
         </Row>
         <div className="mt-1 grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
           <Row label="连线">{wf.graph?.edges?.length ?? 0}</Row>
-          <Row label="版本">v{wf.version}</Row>
+          {/* 两个版本号含义不同（FR-075）：线上版本是执行用的那一版，草稿修订号只表示改动过几次 */}
+          <Row label="线上版本">{wf.published_version ? `v${wf.published_version}` : <span className="text-muted-foreground">未发布</span>}</Row>
+          <Row label="草稿修订">v{wf.version}</Row>
           <Row label="创建人">{wf.created_by_username || '-'}</Row>
           <Row label="创建时间"><TimeCell value={wf.created_at} /></Row>
           <Row label="更新时间"><TimeCell value={wf.updated_at} /></Row>
