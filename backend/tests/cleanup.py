@@ -194,6 +194,35 @@ def purge_checkpoint_threads(db: Session) -> int:
     return len(threads)
 
 
+def purge_all_history() -> dict[str, int]:
+    """清掉库里所有 pytest- 前缀的历史残留（不限时间窗）。
+
+    给 pytest_sessionstart 用。为什么需要它：sessionfinish 只在会话正常结束时执行，
+    进程被 kill 时完全不跑；即使跑了，它也只覆盖"本次会话开始之后"的行，
+    上一轮漏下的永远清不到 —— 于是越积越多，最后出现在知识库/工具/模型列表页上
+    （2026-11-15 现场：2 个 pytest-share-kb-*、17 个 pytest-embed-*、110 个 pytest-mcp-bulk-*）。
+
+    安全性：判据仍是 pytest- 前缀（真实业务数据不带），被非测试数据以 RESTRICT 引用的行
+    会逐个 skip 而不是整批失败；行数超过 ROW_LIMIT 时抛 CleanupAborted 交人决定。
+    """
+    from datetime import timezone as _tz
+
+    from app.db.session import SessionLocal
+
+    # 起点取"不早于任何行"的值：1970 年，于是 created_at >= since 命中全部历史
+    epoch = datetime(1970, 1, 1, tzinfo=_tz.utc)
+    db = SessionLocal()
+    try:
+        deleted = purge_test_rows(db, epoch)
+        db.commit()
+        return deleted
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def purge_since(since: datetime) -> dict[str, int]:
     """独立开一个会话跑一次回收并提交。给 pytest_sessionfinish 用（那时没有现成的 session）。"""
     from app.db.session import SessionLocal

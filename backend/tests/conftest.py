@@ -19,8 +19,29 @@ from tests import cleanup  # noqa: E402
 
 
 def pytest_sessionstart(session):  # noqa: ARG001
-    """记下会话开始时间：结束时只回收这之后造的数据，不碰别人之前留下的行。"""
+    """记下会话开始时间：结束时只回收这之后造的数据，不碰别人之前留下的行。
+
+    **开跑前先清一次历史残留**：sessionfinish 只有在会话正常结束时才执行，
+    进程被 kill（Ctrl-C、OOM、超时）时完全不跑，上一轮的行就永久留在库里，
+    而且下一轮的 sessionfinish 只覆盖自己的时间窗，清不到它 —— 越积越多。
+    2026-11-15 就是这么漏出 2 个 pytest-share-kb-* 知识库 + 17 个 pytest-embed-* 模型 +
+    110 个 11-08 的 pytest-mcp-bulk-* 工具，知识库列表页直接把它们显示给了使用者。
+
+    这里补上前置回收：清掉所有 pytest- 前缀的历史行（不受本次时间窗限制）。
+    判据仍是 pytest- 前缀，真实数据碰不到；被真实数据以 RESTRICT 引用的行会跳过。
+    失败只报告不拦测试 —— 前置清理是收尾性质，不该让整轮跑不起来。
+    """
     session.config._test_started_at = cleanup.session_start()
+    try:
+        stale = cleanup.purge_all_history()
+        if stale:
+            detail = "、".join(f"{t} {n}" for t, n in stale.items())
+            print(f"\n[清理] 开跑前回收历史残留：{detail}")
+    except cleanup.CleanupAborted as exc:
+        print(f"\n[清理跳过] 历史残留回收被中止：{exc}")
+    except Exception as exc:  # noqa: BLE001 前置清理失败不拦测试
+        print(f"\n[清理失败] 历史残留回收：{type(exc).__name__}: {exc}")
+
     # 建表失败不能拦死整轮：绝大多数用例不碰工作流，它们没有理由因为 checkpoint 表建不上而全红。
     # 真正需要这张表的用例会在第一次写检查点时拿到明确的 UndefinedTable/连接错误。
     try:
