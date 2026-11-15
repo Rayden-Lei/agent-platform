@@ -11,16 +11,48 @@ from app.config import settings
 from app.core.exceptions import BizError
 
 ALGORITHM = "HS256"  # JWT 签名算法，密钥取自 settings.SECRET_KEY
+# bcrypt 5 对超过 72 字节的口令直接抛 ValueError（不再是旧版的静默截断）。
+# 中文一个字占 3 字节，所以「不超过 72 个字符」的字段校验挡不住：43 个汉字就超了。
+# 这里按**字节**兜住，抛 ValueError 让 Pydantic 转成 422 而不是 500。
+BCRYPT_MAX_BYTES = 72
+
+
+def _password_bytes(password: str) -> bytes:
+    """口令 → UTF-8 字节，并校验 bcrypt 的 72 字节上限。
+
+    校验放在这一层而不是每个请求模型里：hash_password / verify_password 是口令进出的唯一入口，
+    用户创建、重置密码、登录三条路都经过它，一处收口就不会漏。
+    （登录路径尤其要紧：bcrypt 抛异常会让 auth_service 跳过失败计数，
+    超长口令的暴力尝试就不会触发锁定。）
+    """
+    if not isinstance(password, str):
+        raise ValueError("口令必须是字符串")
+    raw = password.encode("utf-8")
+    if len(raw) > BCRYPT_MAX_BYTES:
+        raise ValueError(f"口令过长（UTF-8 编码后 {len(raw)} 字节，上限 {BCRYPT_MAX_BYTES} 字节，一个汉字算 3 字节）")
+    return raw
 
 
 def hash_password(password: str) -> str:
-    """bcrypt 加盐哈希密码。盐随机生成，同一密码每次结果不同，比较必须用 verify_password。"""
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    """bcrypt 加盐哈希密码。盐随机生成，同一密码每次结果不同，比较必须用 verify_password。
+
+    Raises:
+        ValueError: 口令超过 bcrypt 的 72 字节上限（由请求模型转成 422）。
+    """
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """校验明文密码与存储哈希是否匹配（bcrypt.checkpw 内置恒定时间比较，抗时序侧信道）。"""
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    """校验明文密码与存储哈希是否匹配（bcrypt.checkpw 内置恒定时间比较，抗时序侧信道）。
+
+    明文超长时返回 False 而不是抛错：登录接口面对的是外部输入，
+    抛异常会被上层当成服务故障（500）且绕过失败计数，返回 False 才能正常累加并触发锁定。
+    """
+    try:
+        raw = _password_bytes(plain)
+    except ValueError:
+        return False
+    return bcrypt.checkpw(raw, hashed.encode("utf-8"))
 
 
 def create_access_token(user_id: int, role: str, token_version: int) -> str:

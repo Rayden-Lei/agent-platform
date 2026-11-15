@@ -13,6 +13,8 @@ export function configToFormValues(config: any) {
     agent_id: c.agent_id, tool_name: c.tool_name, expression: c.expression, prompt: c.prompt,
     argsStr: c.args ? JSON.stringify(c.args) : '', kb_id: c.kb_id, top_k: c.top_k || 4, code: c.code,
     url: c.url, method: c.method || 'POST', count: c.count || 1, instruction: c.instruction,
+    // 出站白名单：逗号分隔文本 ↔ 数组。空表示不允许访问任何地址（服务端同样拒绝）
+    allowedHosts: Array.isArray(c.allowed_hosts) ? c.allowed_hosts.join(', ') : '',
     input_ref: c.input_ref, output_field: c.output_field,
     // 开始节点：输入变量声明（docs/15 WF-04）；结束节点：输出声明。未声明时为空数组，行为同存量图
     variables: Array.isArray(c.variables) ? c.variables : [],
@@ -57,7 +59,9 @@ export function collectNodeConfig(nodeType: string, vals: any, toolParams?: any)
   if (nodeType === 'condition') config = { expression: vals.expression }
   if (nodeType === 'kb_retrieval') config = { kb_id: vals.kb_id, top_k: vals.top_k || 4 }
   if (nodeType === 'code') config = { code: vals.code || '' }
-  if (nodeType === 'http') config = { url: vals.url, method: vals.method || 'POST' }
+  if (nodeType === 'http') {
+    config = { url: vals.url, method: vals.method || 'POST', allowed_hosts: splitHosts(vals.allowedHosts) }
+  }
   if (nodeType === 'loop') { config = { count: vals.count || 1 }; if (vals.expression) config.expression = vals.expression }
   if (nodeType === 'human_review') { config = { instruction: vals.instruction || '请审核' } }
   if (REF_CONFIGURABLE.includes(nodeType)) {
@@ -97,6 +101,14 @@ interface Props {
 }
 
 // 字段壳：标签 + 控件 + 错误（错误时标红边框）
+/** 逗号/换行分隔的白名单文本 → 数组。空项丢掉，避免 ["", ""] 这种脏数据进 config。 */
+function splitHosts(text?: string): string[] {
+  return (text ?? '')
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 function Field({ label, children, error }: { label: string; children: React.ReactNode; error?: boolean }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -291,6 +303,18 @@ export default function NodeConfigForm({ nodeType, values, onChange, errorField,
         <Field label="请求 URL"><Input value={values.url ?? ''} onChange={(e) => onChange({ url: e.target.value })} placeholder="https://api.example.com/xxx" className="h-8 text-[12.5px]" /></Field>
         <Field label="方法">
           <Choices value={values.method} options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} placeholder="选择方法" onChange={(v) => onChange({ method: v })} />
+        </Field>
+        {/* 出站白名单与工具行同一规则：空 = 拒绝。内网地址（含云元数据）一律拒绝，填了白名单也只放行名单内的域名 */}
+        <Field label="允许访问的域名（必填）">
+          <Input
+            value={values.allowedHosts ?? ''}
+            onChange={(e) => onChange({ allowedHosts: e.target.value })}
+            placeholder="api.example.com, *.openai.com"
+            className="h-8 text-[12.5px]"
+          />
+          <p className="m-0 mt-1 text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
+            逗号分隔，支持 *.example.com 通配。不填这个节点会被拒绝执行；内网与云元数据地址始终禁止。
+          </p>
         </Field>
       </>)}
       {nodeType === 'loop' && (<>

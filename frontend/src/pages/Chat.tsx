@@ -154,15 +154,33 @@ export default function Chat() {
     return () => { cancelled = true }
   }, [kind, targetId])
 
-  const loadConversations = useCallback(async (page = 1) => {
+  // page 用一个独立状态记，不从已加载条数反推：反推（floor(loaded / PAGE) + 1）只在「每页都满」时才成立，
+  // 第 1 页不满 50 条时会算出 1，点「加载更多」重新拉第 1 页并整段追加 —— 同一会话出现两次。
+  // 接口已经回传 page，直接采用它作为权威（前端不重复算分页）。
+  const [convPage, setConvPage] = useState(1)
+  const [convError, setConvError] = useState<string | null>(null)
+  const [convLoading, setConvLoading] = useState(false)
+  const loadConversations = useCallback(async (page = 1, append = false) => {
     if (!kind || !targetId) return
+    setConvLoading(true)
     try {
       const res = await listConversations({ kind, target_id: targetId, q, page, page_size: PAGE })
-      setConversations((prev) => (page === 1 ? res.items : [...prev, ...res.items]))
+      // 按 id 去重：分页数据在两次请求之间发生变化（新建 / 删除会话）时，上一页的末几条可能被推到下一页
+      setConversations((prev) => {
+        if (!append) return res.items
+        const seen = new Set(prev.map((c) => c.id))
+        return [...prev, ...res.items.filter((c) => !seen.has(c.id))]
+      })
       setTotal(res.total)
-    } catch (e) { toast.error(errorText(e, '加载会话失败')) }
+      setConvPage(res.page)
+      setConvError(null)
+    } catch (e) {
+      // 错误状态留在侧栏里（带重试），不能只弹 3 秒 toast —— 否则接口挂了用户看到的
+      // 是"还没有会话"，会以为历史被清空（docs/07 第 3 节：三态互斥、不许静默）
+      setConvError(errorText(e, '加载会话失败'))
+    } finally { setConvLoading(false) }
   }, [kind, targetId, q])
-  useEffect(() => { loadConversations(1) }, [loadConversations])
+  useEffect(() => { setConvPage(1); loadConversations(1) }, [loadConversations])
 
   // 切换会话：拉取历史并归一化成对话面板的消息结构；切走时先清空避免露出旧内容
   useEffect(() => {
@@ -265,9 +283,10 @@ export default function Chat() {
     <div className="h-full min-h-0 shrink-0 rounded-xl border border-border bg-card p-3" style={{ width: isMobile ? '100%' : 240 }}>
       <ConversationList
         conversations={conversations} total={total} currentId={conversationId} q={q} onSearch={setQ}
+        error={convError} loading={convLoading} onRetry={() => loadConversations(1)}
         onSelect={(id) => { setQuery({ conversation: String(id) }); setShowList(false) }}
         onNew={newConversation}
-        onLoadMore={() => loadConversations(Math.floor(conversations.length / PAGE) + 1)}
+        onLoadMore={() => loadConversations(convPage + 1, true)}
         onDelete={removeConversation}
         agentSelector={agentSelector}
       />

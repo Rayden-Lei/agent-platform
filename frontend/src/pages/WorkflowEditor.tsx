@@ -50,6 +50,9 @@ function EditorInner() {
   const [testInputs, setTestInputs] = useState<Record<string, unknown>>({})
   const [testResult, setTestResult] = useState<any>(null)
   const [testing, setTesting] = useState(false)
+  // 保存中的标记：与「测试运行」互斥。新建模式下每点一次 save 就是一次 POST，
+  // 网络稍慢时连点会建出多个同名工作流，用户以为只存了一次（docs/07 第 7 节：请求进行中必须禁用）。
+  const [saving, setSaving] = useState(false)
   const [edgeLabel, setEdgeLabel] = useState('')
   const [showPalette, setShowPalette] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -224,16 +227,18 @@ function EditorInner() {
 
   // 保存：同样序列化 graph；新建走 create，编辑走 update，成功后进详情页；图校验失败的 400 直接提示 detail
   const onSave = async () => {
+    if (saving || testing) return  // 请求还在飞：忽略重复点击，避免新建模式建出多个工作流
     if (!name.trim()) { toast.error('请输入工作流名称'); return }
     if (blockedByInvalidNode()) return
     const graph = toGraph(nodes, edges)
+    setSaving(true)
     try {
       const saved = isNew ? await createWorkflow({ name, description, graph }) : await updateWorkflow(Number(id), { name, description, graph })
       baseline.current = JSON.stringify({ name, description, graph })
       setDirty(false)
       toast.success('保存成功')
       navigate(`/workflows/${saved.id}`)
-    } catch (e) { toast.error(errorText(e, '保存失败')) }
+    } catch (e) { toast.error(errorText(e, '保存失败')) } finally { setSaving(false) }
   }
 
   // 当前选中节点绑定的工具的参数声明：工具节点按声明逐字段渲染参数（docs/17 §3），
@@ -343,7 +348,9 @@ function EditorInner() {
             />
           )}
         </div>
-        <Button variant="primary" size="md" icon={<Save />} onClick={onSave}>保存</Button>
+        <Button variant="primary" size="md" icon={<Save />} disabled={saving || testing} onClick={onSave}>
+          {saving ? '保存中…' : '保存'}
+        </Button>
       </div>
 
       {isMobile ? (

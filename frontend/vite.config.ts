@@ -66,8 +66,16 @@ export default defineConfig({
   },
   build: {
     // 大依赖单独分块：图表库只在挂了图表的页面下载，画布库只在工作流编辑器 / 详情页下载；页面按路由懒加载。
-    // 其余第三方包合成一个 vendor：之前把 react 与 antd 拆成两个块，rc-* 等共享依赖被分到两边形成环，
-    // 生产包里 antd 块先于 react 块执行、读 React.version 报 undefined，整站白屏（2026-09-06 线上踩坑）。
+    // 其余第三方包合成一个 vendor。
+    //
+    // **只拆自带依赖、不与别人共享的库**（图表、画布都是这种）。手写正则把某一片生态
+    // （react-markdown / remark / unified 那一族）单独切出去是错的：它的共享依赖（react-jsx-runtime、
+    // devlop 等）落在 vendor 里，vendor 又要 import 它的导出，于是 Rollup 报循环分块，
+    // 把 markdown 块提升成入口的静态依赖 —— 未登录页也会先下那 165 KB。
+    // 这正是 2026-09-06 白屏事故的同型结构（当时是 react 与 antd 互依）。
+    //
+    // 结论：markdown 那一族退回 vendor，由 Rollup 按真实依赖图自行切分；markdown 只在对话/分享页用到，
+    // 页面已按路由懒加载，跟着页面走即可。
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
@@ -75,7 +83,11 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined
           if (id.includes('@ant-design/plots') || id.includes('@antv')) return 'charts'
           if (id.includes('@xyflow')) return 'flow'
-          if (/node_modules\/(react-markdown|remark-|micromark|mdast-|unified|unist-|hast-|vfile|bail|trough|zwitch|comma-separated-tokens|space-separated-tokens|property-information|html-url-attributes|estree-util|devlop|decode-named-character-reference|character-entities|ccount|longest-streak|markdown-table|trim-lines|is-plain-obj|style-to-object|style-to-js|inline-style-parser|extend)/.test(id)) return 'markdown'
+          // React 运行时单独一块：它是所有页面的公共底座，体积稳定、升级频率低，
+          // 单独成块后浏览器能长期缓存，改业务代码不必让它失效重下。
+          // 注意只认 react / react-dom / scheduler 本身 —— 把 rc-*、@radix-ui 这类
+          // 「依赖 React 的库」也塞进来就会与 vendor 互依成环（2026-09-06 白屏的成因）。
+          if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react'
           return 'vendor'
         },
       },

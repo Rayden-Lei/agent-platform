@@ -63,11 +63,36 @@ def test_condition_false_branch():
     assert result["output"] == "B" and result["condition_result"] is False
 
 
-def test_condition_expression_error_takes_false_branch():
+def test_condition_runtime_type_error_takes_false_branch():
+    """求值期出错（类型对不上）按 false 走，不让运行失败。
+
+    2026-11-14 起语法错的表达式在保存阶段就被 validate_graph 拦下（见下一个用例），
+    所以「运行期出错」只剩变量值类型不符合预期这一类。原来这个用例用的是 input.undefined_attr，
+    那是属性访问 —— 现在是明确禁止的语法（属性访问是对象图逃逸的入口）。
+    """
     graph = _condition_graph()
-    graph["nodes"][1]["config"]["expression"] = "input.undefined_attr > 1"
+    # 字符串和数字比大小：语法合法，求值时抛 TypeError
+    graph["nodes"][1]["config"]["expression"] = "input > 1"
     result = _run(graph, "yes")
     assert result["steps"] == ["condition:False", code_step()] and result["node_outputs"] == {"code_b": "B"}
+
+
+def test_condition_expression_with_attribute_access_is_rejected_at_save():
+    """属性访问必须在校验阶段就拒绝 —— 这是 eval 沙箱逃逸的唯一入口（2026-11-14 审计的 P0）。
+
+    ().__class__.__base__.__subclasses__() 能拿到任意类，进而起子进程；
+    白名单求值器不认 Attribute，所以这段表达式连编译都过不去。
+    """
+    from app.workflow.validation import validate_graph
+
+    graph = _condition_graph()
+    graph["nodes"][1]["config"]["expression"] = "().__class__.__base__.__subclasses__()"
+    errors = validate_graph(graph)
+    assert errors and "条件表达式不合法" in errors[0]
+
+    # 正常的比较表达式不受影响
+    graph["nodes"][1]["config"]["expression"] = "input == 'yes'"
+    assert validate_graph(graph) == []
 
 
 # ---------- 循环节点 ----------
@@ -211,3 +236,24 @@ def test_code_step_marker_degraded(monkeypatch):
     monkeypatch.setattr(sandbox, "run_python", lambda code, payload=None, limits=None: fake)
     assert code_step() == "code"
     assert _run(_condition_graph(), "yes")["steps"] == ["condition:True", "code"]
+
+
+def test_loop_count_is_validated_server_side():
+    """循环次数必须有服务端上限：前端只是把输入框限成 1～100，直接调接口能写进任意值。
+
+    无上限的循环会把工作流跑成死循环占住执行线程（docs/06 第 9 条：服务端是唯一权威）。
+    """
+    from app.config import settings
+    from app.workflow.validation import validate_graph
+
+    # 上限内：通过
+    assert validate_graph(_loop_graph(count=1)) == []
+    assert validate_graph(_loop_graph(count=settings.LOOP_MAX_ITERATIONS)) == []
+
+    # 超过上限：拒绝
+    errors = validate_graph(_loop_graph(count=settings.LOOP_MAX_ITERATIONS + 1))
+    assert errors and "循环次数" in errors[0]
+
+    # 小于 1 与非整数：拒绝
+    assert validate_graph(_loop_graph(count=0))
+    assert validate_graph(_loop_graph(count="abc"))

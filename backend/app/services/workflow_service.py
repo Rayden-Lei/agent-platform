@@ -7,6 +7,7 @@ from langgraph.types import Command, GraphOutput
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.session import rows_to_dict
@@ -81,13 +82,15 @@ def list_workflows(db: Session, params: PageParams, q: str | None = None, status
 
 
 def create_workflow(db: Session, data, user) -> dict:
-    """新建工作流（graph 为图定义 JSON），记录创建人。图结构不合法 400。"""
+    """新建工作流（graph 为图定义 JSON），记录创建人。图结构不合法 400。写审计 create。"""
     check_graph(data.graph)
     w = Workflow(name=data.name, description=data.description, graph=data.graph, created_by=user.id)
     db.add(w)
     db.commit()
     db.refresh(w)
-    return {"id": w.id, "name": w.name, "description": w.description, "status": w.status, "version": w.version}
+    result = {"id": w.id, "name": w.name, "description": w.description, "status": w.status, "version": w.version}
+    record_audit(db, user, "create", "workflow", w.id, detail={"name": w.name})
+    return result
 
 
 def get_workflow(db: Session, workflow_id: int) -> Workflow:
@@ -107,12 +110,17 @@ def get_workflow_detail(db: Session, workflow_id: int) -> dict:
     return {**_serialize(db, [w], with_graph=True)[0], "agents": agents, "schedules": schedules}
 
 
-def workflow_parameters(db: Session, workflow_id: int) -> dict:
+def workflow_parameters(db: Session, workflow_id: int, api_key: ApiKey | None = None) -> dict:
     """开始 / 结束节点的声明（docs/15 WF-04）：运行弹窗、定时任务表单与 API 访问页签按它生成表单项。
 
     返回变量列表（含是否必填：没有默认值即必填）与输出声明；声明本身不合法时 400，
     与运行时的报错口径一致，不让前端拿到一半能用的表单。
+
+    api_key：API Key 调用时校验作用域。这个接口开放给了 Key（外部系统据此知道该传什么参数），
+    就必须和 run / resume 同一口径 —— 否则只有 A 作用域的 Key 能枚举出全部工作流的接口契约，
+    既是横向越权也是信息泄露（2026-11-14 审计的 IDOR）。
     """
+    api_key_service.check_workflow_scope(api_key, workflow_id)
     w = get_workflow(db, workflow_id)
     variables = [
         {"name": v.name, "type": v.type, "description": v.description, "default": v.default, "required": v.default is None}
@@ -132,13 +140,17 @@ def duplicate_workflow(db: Session, workflow_id: int, user) -> dict:
     return _serialize(db, [copy])[0]
 
 
-def apply_batch_action(db: Session, workflow_id: int, action: str) -> None:
+def apply_batch_action(db: Session, workflow_id: int, action: str, user: User | None = None) -> None:
     """批量操作的单条执行（delete）；被智能体引用的 409 进失败清单。"""
-    delete_workflow(db, workflow_id)
+    delete_workflow(db, workflow_id, user)
 
 
-def update_workflow(db: Session, workflow_id: int, data) -> dict:
-    """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。图结构不合法 400。"""
+def update_workflow(db: Session, workflow_id: int, data, user: User | None = None) -> dict:
+    """覆盖式更新工作流图，版本号 +1（草稿迭代，不生成历史快照）。图结构不合法 400。
+
+    写审计 update：工作流保存即生效（没有草稿/发布分离），改一次图会立刻影响已绑定的
+    定时任务与 API 调用方，出问题时"谁改的、改了哪一版"只能靠审计。
+    """
     check_graph(data.graph)
     w = get_workflow(db, workflow_id)
     w.name = data.name
@@ -147,12 +159,20 @@ def update_workflow(db: Session, workflow_id: int, data) -> dict:
     w.version = (w.version or 0) + 1
     db.commit()
     db.refresh(w)
-    return {"id": w.id, "name": w.name, "version": w.version}
+    result = {"id": w.id, "name": w.name, "version": w.version}
+    if user is not None:
+        record_audit(db, user, "update", "workflow", w.id, detail={"name": w.name, "version": w.version})
+    return result
 
 
-def delete_workflow(db: Session, workflow_id: int) -> None:
-    """删除工作流：先检查智能体引用（RESTRICT），其余关联数据由外键 CASCADE 级联删除。"""
+def delete_workflow(db: Session, workflow_id: int, user: User | None = None) -> None:
+    """删除工作流：先检查智能体引用（RESTRICT），其余关联数据由外键 CASCADE 级联删除。
+
+    写审计 delete：这个操作会连带删掉该工作流的全部运行记录与会话（CASCADE），
+    是最不该无声发生的一类删除。
+    """
     w = get_workflow(db, workflow_id)
+    name = w.name
     # agents.workflow_id 为 RESTRICT，删除前给出友好提示
     ref_count = db.query(Agent).filter(Agent.workflow_id == workflow_id).count()
     if ref_count:
@@ -160,6 +180,8 @@ def delete_workflow(db: Session, workflow_id: int) -> None:
     # runs / run_nodes / conversations / workflow_nodes / scheduled_jobs 由数据库外键 CASCADE 级联删除
     db.delete(w)
     db.commit()
+    if user is not None:
+        record_audit(db, user, "delete", "workflow", workflow_id, detail={"name": name})
 
 
 def _interrupt_value(result: GraphOutput[WorkflowState]):

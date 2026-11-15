@@ -23,7 +23,9 @@ from app.runtime.agent_config import resolve_live_config, usable_model
 from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
+from app.core import outbound
 from app.workflow.io_contract import end_outputs
+from app.workflow.safe_eval import ConditionSyntaxError, evaluate
 from app.workflow.validation import branch_predecessors, join_predecessors, validate_graph
 
 logger = logging.getLogger(__name__)
@@ -54,29 +56,32 @@ class WorkflowState(TypedDict, total=False):
     steps: Annotated[list, operator.add]
 
 
-# 条件表达式可用的内置函数白名单：收窄 eval 的能力面，杜绝 import/open 等危险内置
-_SAFE_BUILTINS = {
-    "str": str, "len": len, "int": int, "float": float, "bool": bool,
-    "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
-}
-
 # 进程内共享 checkpointer：run 与 resume 用同一个，才能恢复被 interrupt 的图。
 # 内部使用场景下审核间隔通常不跨进程重启；如需跨进程请换 SqliteSaver。
 _checkpointer = MemorySaver()
 
 
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
-    ns = {
+    """按表达式决定分支。走 safe_eval 的 AST 白名单求值器，不用 eval。
+
+    2026-11-14 前这里是 eval(expr, {"__builtins__": {}}, ns)。那个「受限命名空间」挡不住
+    对象图逃逸：().__class__.__base__.__subclasses__() 能拿到任意类，进而起子进程执行命令
+    （实测可跑），而同一张图里的 code 节点是有沙箱的 —— 条件节点就成了唯一越狱口。
+    白名单求值器只认比较 / 逻辑 / 算术 / 少量内置函数，语法上就拿不到对象引用。
+
+    求值失败（语法错、类型对不上、除以 0）按 false 走：图保存时 validate_graph 已挡下语法错，
+    走到这里多半是变量值类型不符合预期，不该让整个运行失败，但必须留日志否则无从排查。
+    """
+    env = {
         "input": state.get("input"),
         "output": state.get("output"),
         "loop_index": state.get("loop_index"),
         "review_result": state.get("review_result"),
-        **_SAFE_BUILTINS,
+        "vars": state.get("vars") or {},
     }
     try:
-        return bool(eval(expr, {"__builtins__": {}}, ns))  # noqa: S307 内部表达式，受限命名空间
-    except Exception as e:
-        # 表达式写错时按 false 走，但必须留日志：否则条件分支永远走 false 分支且无人知道原因
+        return bool(evaluate(expr, env))
+    except ConditionSyntaxError as e:
         logger.warning("条件表达式求值失败，按 false 处理：expr=%r error=%s", expr, e)
         return False
 
@@ -440,18 +445,20 @@ def _make_http_node(config: dict, run_id: int, node_id: str, default_ref: str | 
     """
     url = _require_str(config, "url")
     method = config.get("method", "POST")
+    # 出站白名单：与工具行同一套规则（空名单 = 拒绝）。地址由有编辑权限的人填，
+    # 不给白名单就等于平台代他访问任意内网地址（2026-11-14 审计的 SSRF）
+    allowed_hosts = config.get("allowed_hosts") or []
 
     def run(state: WorkflowState) -> dict:
         input_val = _get_node_input(state, config, default_ref)
         rn_id = _start_node(run_id, node_id, "http", input_val)
         try:
-            with httpx.Client(timeout=30) as client:
-                if str(method).upper() == "GET":
-                    resp = client.get(url, params={"input": input_val})
-                else:
-                    resp = client.post(url, json={"input": input_val})
-                resp.raise_for_status()
-                raw = resp.text
+            # 走公共出站闸门：先校验主机（拒内网、查白名单），再手工跟重定向并逐跳复核。
+            # 不能直接 follow_redirects=True —— 对方 302 到 169.254.169.254 会绕过首跳检查。
+            payload = {"params": {"input": input_val}} if str(method).upper() == "GET" else {"json": {"input": input_val}}
+            resp = outbound.request_with_checked_redirects(url, allowed=allowed_hosts, method=method, timeout=30, **payload)
+            resp.raise_for_status()
+            raw = resp.text
             out = _finalize_node_output(node_id, raw, config)
             out["steps"] = ["http"]
             _finish_node(rn_id, "success", out["output"])

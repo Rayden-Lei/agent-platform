@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import settings
+from app.core import outbound
 
 logger = logging.getLogger(__name__)
 
@@ -241,12 +242,9 @@ def json_query(json_text: str, path: str) -> dict:
 
 # --------------------------------------------------------------------------- HTTP
 
-# 内网地址段：SSRF 防护。模型能构造任意 URL，不挡的话等于给它一个打内网的口子。
-_PRIVATE_NETS = [
-    ipaddress.ip_network(n)
-    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
-              "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10")
-]
+# 内网地址段与白名单匹配规则统一在 app.core.outbound（原先这里、permission.py、skill_github.py 各有一份，
+# 而工作流 HTTP 节点一份都没有 —— 那就是 2026-11-14 审计出来的 SSRF 洞）。
+_PRIVATE_NETS = outbound.PRIVATE_NETS
 
 
 def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
@@ -294,31 +292,14 @@ def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
 
 
 def _pattern_matches(host: str, pattern: str) -> bool:
-    """单个白名单项与主机的匹配，规则与 tools/permission._host_matches 完全一致。
+    """单个白名单项与主机的匹配。规则已统一到 app.core.outbound.pattern_matches。
 
-    **为什么要复用同一套规则**：allowed_hosts 在项目里有两种用法（工具行的执行闸门、
-    内置 http_request 的能力配置），同一个键名两处理解不同的话，管理员按文档填了
-    在 A 处生效、在 B 处不生效，而且都不报错 —— 这是典型的静默失效。
-
-    统一后三种写法：
-    - 精确：`api.example.com` 只放行它自己
-    - 隐式后缀：`api.example.com` 同时覆盖 `v2.api.example.com`（必须带点前缀，
-      否则 `notapi.example.com` 会被误放行）
-    - 显式通配：`*.openai.com` 匹配任意层级子域，但**不含** `openai.com` 本身
-      （与 TLS 通配证书语义一致；要连根域就再写一条 `openai.com`）
-
-    以前这里对 `*.openai.com` 还额外放行了根域，与 permission 那边不一致，已统一。
+    allowed_hosts 在项目里有两种用法（工具行的执行闸门、内置 http_request 的能力配置），
+    同一个键名两处理解不同就会静默失效：管理员按文档填了，在 A 处生效、B 处不生效且不报错。
+    三种写法：精确 `api.example.com`；隐式后缀（同时覆盖 `v2.api.example.com`）；
+    显式通配 `*.openai.com`（不含根域本身，与 TLS 通配证书语义一致）。
     """
-    pattern = pattern.strip().lower().lstrip(".")
-    host = host.lower()
-    if not pattern:
-        return False
-    if pattern.startswith("*"):
-        suffix = pattern[1:]
-        if not suffix.startswith("."):
-            return False
-        return host.endswith(suffix) and host != suffix[1:]
-    return host == pattern or host.endswith("." + pattern)
+    return outbound.pattern_matches(host, pattern)
 
 
 async def http_request(url: str, method: str = "GET", headers: str = "", body: str = "",

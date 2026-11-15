@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # 单条报文按字符数截断到这么多（默认 256KB）；0 表示不记录。凭据一律打码，其余全部保留
     LLM_LOG_ENABLED: bool = True
     LLM_LOG_MAX_CHARS: int = 262144
+    # 数据保留：llm_calls 与 audit_logs 只增不减，需要定期清超期行（retention_service，每日一次）。
+    # 单条调用日志可达 256KB×2，真实使用下几个月就到 GB 级；审计日志每次写操作一条。
+    # 关掉 DATA_RETENTION_ENABLED 则任务直接跳过（给需要长期留存的部署一个开关）。
+    DATA_RETENTION_ENABLED: bool = True
+    # 调用日志是排查依据，留久一点；审计日志要满足合规追溯，也更久
+    LLM_LOG_RETENTION_DAYS: int = 30
+    AUDIT_LOG_RETENTION_DAYS: int = 180
     RAG_TOP_K: int = 4
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入

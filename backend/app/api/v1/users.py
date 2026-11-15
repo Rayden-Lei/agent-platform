@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.core.batch import BatchIn, run_batch
@@ -18,8 +18,21 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 class ResetPasswordIn(BaseModel):
-    password: str = Field(min_length=6, max_length=128)
+    """管理员重置他人密码。
+
+    长度按 UTF-8 字节校验（bcrypt 硬上限 72 字节），与 UserCreate / ChangePasswordIn 同一口径 ——
+    三处都是同一个口令进 hash_password 的入口，任何一个按字符数限长都会在中文口令上 500。
+    """
+
+    password: str = Field(min_length=6)
     must_change_password: bool = True  # 默认要求该用户下次登录先改密；管理员可取消（如代用户设好最终密码）
+
+    @field_validator("password")
+    @classmethod
+    def _password_within_bcrypt_limit(cls, value: str) -> str:
+        from app.schemas import _check_password_bytes
+
+        return _check_password_bytes(value)
 
 
 class UserBatchIn(BatchIn[Literal["enable", "disable", "delete"]]):

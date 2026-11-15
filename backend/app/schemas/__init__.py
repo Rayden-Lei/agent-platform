@@ -91,16 +91,37 @@ class TokenOut(BaseModel):
 
 
 UserRole = Literal["admin", "developer", "caller"]
-PASSWORD_MIN, PASSWORD_MAX = 6, 128
+PASSWORD_MIN = 6
+# 口令长度按 **UTF-8 字节** 计，不是字符数：bcrypt 5 对超过 72 字节的口令直接抛 ValueError，
+# 而一个汉字占 3 字节 —— 按字符数限 128 的话，43 个汉字就超了，建用户 / 改密会 500（2026-11-14 审计）。
+# 上限取 bcrypt 的硬边界，下限按字符数（6 个汉字 = 18 字节，是合理的最短口令）。
+PASSWORD_MAX_BYTES = 72
+
+
+def _check_password_bytes(value: str) -> str:
+    """Pydantic 校验器：口令 UTF-8 字节数不超过 bcrypt 上限。
+
+    放在请求模型层而不是服务层：这是**格式校验**（长度），按分层规范属于入口层；
+    服务层的 core.security._password_bytes 是最后一道兜底（脚本直调服务时也拦得住），
+    两层语义一致，但用户看到的 422 由这里给出。
+    """
+    if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
+        raise ValueError(f"口令过长（UTF-8 编码后 {len(value.encode('utf-8'))} 字节，上限 {PASSWORD_MAX_BYTES} 字节，一个汉字算 3 字节）")
+    return value
 
 
 class UserCreate(BaseModel):
     """新建用户（2026-10-05 起校验，422；此前空密码、role=superadmin 都能落库，超长用户名走 500）。
-    用户名去掉首尾空白后 2～64 个字符且不含空白；密码 6～128。"""
+    用户名去掉首尾空白后 2～64 个字符且不含空白；密码至少 6 个字符，且 UTF-8 编码后不超过 72 字节。"""
 
     username: str = Field(min_length=2, max_length=64)
-    password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+    password: str = Field(min_length=PASSWORD_MIN)
     role: UserRole = "caller"
+
+    @field_validator("password")
+    @classmethod
+    def _password_within_bcrypt_limit(cls, value: str) -> str:
+        return _check_password_bytes(value)
 
     @field_validator("username", mode="before")
     @classmethod
@@ -117,10 +138,19 @@ class UserUpdate(BaseModel):
 
 
 class ChangePasswordIn(BaseModel):
-    """本人改密：旧密码错 400、新旧相同 400、新密码不满足长度 422。"""
+    """本人改密：旧密码错 400、新旧相同 400、新密码不满足长度 422。
 
-    old_password: str = Field(min_length=1, max_length=PASSWORD_MAX)
-    new_password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
+    长度按 UTF-8 字节校验（bcrypt 硬上限 72 字节）；旧密码不设上限 ——
+    它只需要能参与比对，超长时 verify_password 返回 False，按"旧密码不正确"处理。
+    """
+
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=PASSWORD_MIN)
+
+    @field_validator("new_password")
+    @classmethod
+    def _new_password_within_bcrypt_limit(cls, value: str) -> str:
+        return _check_password_bytes(value)
 
 
 class ModelParams(BaseModel):

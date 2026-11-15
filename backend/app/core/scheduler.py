@@ -129,7 +129,34 @@ def get_scheduler() -> BackgroundScheduler:
                 _add_job(_scheduler, sj)
         finally:
             db.close()
+        _register_retention_job(_scheduler)
     return _scheduler
+
+
+# 内置系统任务的 id 前缀：与业务定时任务（id 是数字字符串）区分开，
+# 这样 remove_schedule_job 之类按数字 id 操作的方法不会误删它。
+RETENTION_JOB_ID = "system:data-retention"
+
+
+def _register_retention_job(sched: BackgroundScheduler) -> None:
+    """注册数据保留清理任务（每天 03:10 跑一次）。
+
+    为什么挂在应用调度器里而不是系统 cron：清理逻辑要读应用配置（保留天数、开关）
+    并用应用的连接池，放系统 cron 里等于把配置与连接参数再维护一份。
+
+    为什么是 03:10：避开业务高峰，也避开整点 —— 整点是各种备份、日志轮转聚集的时刻，
+    同一时刻抢数据库锁的概率最高。
+    """
+    from app.services.retention_service import purge_expired
+
+    def _run() -> None:
+        try:
+            purge_expired()
+        except Exception:
+            # 清理失败必须留痕：静默失败会让 llm_calls 悄悄涨到撑爆磁盘
+            logger.exception("数据保留清理失败")
+
+    sched.add_job(_run, CronTrigger(hour=3, minute=10), id=RETENTION_JOB_ID, replace_existing=True)
 
 
 def add_schedule_job(sj: ScheduledJob) -> None:

@@ -3,6 +3,7 @@
 全部在数据库侧聚合，不拉明细行；时间窗按 REPORT_TIMEZONE 切天（库里存 UTC）。
 成本口径与 run_service 一致：读运行记录收尾时落库的 cost 快照（改单价不追溯）；workflow 运行没有模型，成本为 0 但计入运行数与 token。
 """
+import logging
 from datetime import datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -18,6 +19,8 @@ from app.db.models import (
 )
 from app.model_gateway import breaker
 from app.services import run_service, system_service
+
+logger = logging.getLogger(__name__)
 
 
 def _tz() -> ZoneInfo:

@@ -303,8 +303,14 @@ def test_conversation_list_filters_by_kind_and_target(client, auth_headers, make
     assert listed(kind="agent", target_id=agent["id"]) == {agent_conv}
     assert listed(kind="model", target_id=make_model["id"]) == {model_conv}
     assert listed(kind="workflow", target_id=wf["id"]) == {wf_conv}
-    # 只给 kind 不限对象：这一类对话全部列出
-    assert listed(kind="model") == {model_conv} and listed(kind="workflow") == {wf_conv}
+    # 只给 kind 不限对象：这一类对话全部列出。
+    # 断言"包含"而不是"等于"：共享库上还有别人/历史遗留的同类会话（实测有 11-08 的 4 条 model 会话），
+    # 用等号会让这个用例的成败取决于库里有几条无关数据（2026-11-15 修）。
+    # 要验证"确实按 kind 过滤掉了别的类型"，下面这条断言更精准。
+    assert model_conv in listed(kind="model")
+    assert wf_conv in listed(kind="workflow")
+    assert agent_conv not in listed(kind="model")
+    assert model_conv not in listed(kind="workflow")
     # 列表项的归属口径是 kind + target_id + target_name
     item = next(c for c in client.get("/api/v1/conversations", headers=auth_headers,
                                       params={"kind": "workflow", "target_id": wf["id"]}).json()["items"] if c["id"] == wf_conv)

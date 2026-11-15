@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from app.core import outbound
 from app.db.models import Tool
 
 logger = logging.getLogger(__name__)
@@ -84,20 +85,10 @@ def check(ctx: ToolCallContext) -> tuple[str, str | None]:
     return "deny", f"工具目标地址不在白名单内：{host or '（未配置 URL）'}"
 
 
-def _host_matches(host: str, pattern: str) -> bool:
-    """单个白名单项与目标主机的匹配。pattern 支持 `*` 前缀与裸域名两种写法。"""
-    pattern = pattern.strip().lower().lstrip(".")
-    host = host.lower()
-    if not pattern:
-        return False
-    if pattern.startswith("*"):
-        # *.openai.com：匹配任意层级子域，但**不含** openai.com 本身
-        # （与 TLS 通配证书语义一致；要连根域就再写一条 openai.com）
-        suffix = pattern[1:]
-        if not suffix.startswith("."):
-            return False
-        return host.endswith(suffix) and host != suffix[1:]
-    return host == pattern or host.endswith("." + pattern)
+# 白名单匹配规则统一到 app.core.outbound：这条规则原先在 general.py 与 permission.py 各写一份，
+# 注释互相声称"完全一致"，实际是抄的两份代码 —— 改一处忘一处就是静默失效。
+# 保留这个名字做转发，是因为已有测试与调用点按这个名字引用。
+_host_matches = outbound.pattern_matches
 
 
 def log_decision(ctx: ToolCallContext, decision: str, reason: str | None) -> None:

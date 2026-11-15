@@ -8,6 +8,7 @@
 续聊时既要校验归属，也要校验类型与目标一致——否则模型对话能接着写智能体会话。
 """
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import NamedTuple
 
 from sqlalchemy.exc import IntegrityError
@@ -124,6 +125,13 @@ def open_turn(db: Session, caller: Caller, kind: str, target_id: int, message: s
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
+
+    # 会话列表按 updated_at 倒序（"最近活跃在前"），而 TimestampMixin 的 onupdate 只在**会话行被 UPDATE**
+    # 时才刷新 —— 只插消息不会碰会话行，于是老会话继续聊也不会上浮，刷新后仍沉在列表底部。
+    # 这是三个对话渠道（智能体 / 模型 / 工作流）与分享访客的共同入口，收口在这里改一次即可；
+    # 显式写时间而不是依赖 onupdate，是因为同一次事务里会话行确实被 UPDATE 了，onupdate 也会跟着生效，
+    # 两者写同一个值，不冲突。
+    conversation.updated_at = datetime.now(timezone.utc)
 
     user_message = Message(conversation_id=conversation.id, role="user", content=message, client_message_id=client_message_id)
     db.add(user_message)

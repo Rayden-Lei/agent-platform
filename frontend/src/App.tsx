@@ -64,7 +64,6 @@ export default function App() {
         <Route path="skills" element={<Skills />} />
         <Route path="mcp-servers" element={<McpServers />} />
         <Route path="llm-logs" element={<LlmLogs />} />
-        <Route path="llm-logs" element={<LlmLogs />} />
         <Route path="knowledge-bases" element={<KnowledgeBases />} />
         <Route path="knowledge-bases/:id" element={<KbDetail />} />
         <Route path="workflows" element={<Workflows />} />

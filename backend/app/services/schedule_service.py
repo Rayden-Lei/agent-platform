@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.scheduler import add_schedule_job, is_valid_cron, next_run_times, remove_schedule_job, trigger_now
@@ -69,14 +70,21 @@ def _check_workflow(db: Session, workflow_id: int) -> None:
 
 
 def create_schedule(db: Session, data, user: User) -> dict:
-    """新建定时任务：工作流必须存在（404）；落库后立即注册到调度器。cron 合法性在 schema 层已校验（422）。"""
+    """新建定时任务：工作流必须存在（404）；落库后立即注册到调度器。cron 合法性在 schema 层已校验（422）。
+
+    写审计：定时任务会按 cron 反复触发工作流、消耗模型额度，属于"能造成资金损失"的操作，
+    必须留痕（2026-11-15 补，此前 schedule_service 全模块 0 处审计）。
+    """
     _check_workflow(db, data.workflow_id)
     sj = ScheduledJob(name=data.name, workflow_id=data.workflow_id, user_id=user.id, cron=data.cron, input=data.input)
     db.add(sj)
     db.commit()
     db.refresh(sj)
     add_schedule_job(sj)
-    return _serialize_page(db, [sj])[0]
+    result = _serialize_page(db, [sj])[0]
+    record_audit(db, user, "create", "schedule", sj.id,
+                 detail={"name": sj.name, "workflow_id": sj.workflow_id, "cron": sj.cron})
+    return result
 
 
 def get_schedule(db: Session, schedule_id: int) -> ScheduledJob:
@@ -90,35 +98,51 @@ def get_schedule_detail(db: Session, schedule_id: int) -> dict:
     return _serialize_page(db, [get_schedule(db, schedule_id)])[0]
 
 
-def update_schedule(db: Session, schedule_id: int, data) -> dict:
-    """整体覆盖名称 / 工作流 / cron / 输入；启用中的任务按新配置重新注册。"""
+def update_schedule(db: Session, schedule_id: int, data, user: User) -> dict:
+    """整体覆盖名称 / 工作流 / cron / 输入；启用中的任务按新配置重新注册。
+
+    写审计并记录改前改后：把 cron 从「每天一次」改成「每分钟一次」不会报错，
+    但账单会立刻变化；只有审计里能看出是谁在什么时候改的。
+    """
     s = get_schedule(db, schedule_id)
     _check_workflow(db, data.workflow_id)
+    before = {"name": s.name, "workflow_id": s.workflow_id, "cron": s.cron}
     s.name, s.workflow_id, s.cron, s.input = data.name, data.workflow_id, data.cron, data.input
     db.commit()
     db.refresh(s)
     remove_schedule_job(s.id)
     if s.is_enabled:
         add_schedule_job(s)
-    return _serialize_page(db, [s])[0]
+    result = _serialize_page(db, [s])[0]
+    after = {"name": s.name, "workflow_id": s.workflow_id, "cron": s.cron}
+    if before != after:
+        record_audit(db, user, "update", "schedule", s.id, detail={"before": before, "after": after})
+    return result
 
 
-def set_schedule_enabled(db: Session, schedule_id: int, enabled: bool) -> dict:
-    """设置启用状态并同步调度器注册 / 注销，保证库中状态与调度器一致；幂等。"""
+def set_schedule_enabled(db: Session, schedule_id: int, enabled: bool, user: User | None = None) -> dict:
+    """设置启用状态并同步调度器注册 / 注销，保证库中状态与调度器一致；幂等。
+
+    user 为空表示调度器内部调用（无操作者），此时不写审计；接口调用一定传。
+    状态没变化时不写审计，避免开关点两次留两条一样的记录。
+    """
     s = get_schedule(db, schedule_id)
+    changed = s.is_enabled != enabled
     s.is_enabled = enabled
     db.commit()
     if s.is_enabled:
         add_schedule_job(s)
     else:
         remove_schedule_job(s.id)
+    if user is not None and changed:
+        record_audit(db, user, "enable" if enabled else "disable", "schedule", s.id, detail={"name": s.name})
     return {"id": s.id, "is_enabled": s.is_enabled}
 
 
-def toggle_schedule(db: Session, schedule_id: int) -> dict:
+def toggle_schedule(db: Session, schedule_id: int, user: User) -> dict:
     """启用/停用定时任务（开关切换）。"""
     s = get_schedule(db, schedule_id)
-    return set_schedule_enabled(db, schedule_id, not s.is_enabled)
+    return set_schedule_enabled(db, schedule_id, not s.is_enabled, user)
 
 
 def run_now(db: Session, schedule_id: int) -> dict:
@@ -130,17 +154,20 @@ def run_now(db: Session, schedule_id: int) -> dict:
     return {"id": s.id, "triggered_at": datetime.now(timezone.utc).isoformat()}
 
 
-def delete_schedule(db: Session, schedule_id: int) -> None:
-    """删除定时任务：先从调度器移除，再删库记录。"""
+def delete_schedule(db: Session, schedule_id: int, user: User | None = None) -> None:
+    """删除定时任务：先从调度器移除，再删库记录。写审计（user 为空时跳过，见 set_schedule_enabled）。"""
     s = get_schedule(db, schedule_id)
+    name = s.name
     remove_schedule_job(s.id)
     db.delete(s)
     db.commit()
+    if user is not None:
+        record_audit(db, user, "delete", "schedule", schedule_id, detail={"name": name})
 
 
-def apply_batch_action(db: Session, schedule_id: int, action: str) -> None:
+def apply_batch_action(db: Session, schedule_id: int, action: str, user: User | None = None) -> None:
     """批量操作的单条执行（enable / disable / delete）。"""
     if action == "delete":
-        delete_schedule(db, schedule_id)
+        delete_schedule(db, schedule_id, user)
     else:
-        set_schedule_enabled(db, schedule_id, action == "enable")
+        set_schedule_enabled(db, schedule_id, action == "enable", user)

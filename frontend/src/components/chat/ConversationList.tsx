@@ -16,9 +16,14 @@ interface Props {
   onLoadMore: () => void
   onDelete: (id: number) => void
   agentSelector?: ReactNode
+  /** 列表加载失败的原因。非空时显示错误态与重试入口，而不是"还没有会话"——
+   *  接口 500 时显示空态会让用户以为历史会话被清空了（docs/07 第 3 节：三态互斥）。 */
+  error?: string | null
+  loading?: boolean
+  onRetry?: () => void
 }
 
-export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDelete, agentSelector }: Props) {
+export default function ConversationList({ conversations, total, currentId, q, onSearch, onSelect, onNew, onLoadMore, onDelete, agentSelector, error, loading, onRetry }: Props) {
   const [keyword, setKeyword] = useState(q ?? '')
 
   return (
@@ -47,9 +52,21 @@ export default function ConversationList({ conversations, total, currentId, q, o
       </div>
 
       <div className="flex-1 overflow-y-auto flex flex-col gap-0.5 min-h-0">
-        {conversations.length === 0 && (
+        {/* 三态互斥：错误 > 加载中 > 空。错误优先，否则接口挂了会被误读成"没有会话" */}
+        {error ? (
+          <div className="py-6 px-2 text-center">
+            <p className="m-0 text-[12.5px]" style={{ color: 'var(--danger, #d4380d)' }}>{error}</p>
+            {onRetry && (
+              <button type="button" onClick={onRetry} className="mt-1.5 text-[12px] underline" style={{ color: 'var(--accent)' }}>
+                重试
+              </button>
+            )}
+          </div>
+        ) : loading && conversations.length === 0 ? (
+          <div className="text-[12.5px] py-6 text-center" style={{ color: 'var(--fg-subtle)' }}>加载中…</div>
+        ) : conversations.length === 0 ? (
           <div className="text-[12.5px] py-6 text-center" style={{ color: 'var(--fg-subtle)' }}>还没有会话</div>
-        )}
+        ) : null}
         {conversations.map((c) => {
           const active = c.id === currentId
           return (

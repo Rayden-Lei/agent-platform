@@ -84,7 +84,7 @@ async def test_run_workflow(data: TestRunIn, db: Session = Depends(get_db), user
 @router.post("/batch")
 def batch_workflows(data: WorkflowBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量删除：逐条独立执行，被智能体引用的 409 进失败清单。"""
-    return run_batch(db, data.unique_ids(), lambda workflow_id: workflow_service.apply_batch_action(db, workflow_id, data.action))
+    return run_batch(db, data.unique_ids(), lambda workflow_id: workflow_service.apply_batch_action(db, workflow_id, data.action, user))
 
 
 @router.get("/{workflow_id}")
@@ -98,14 +98,16 @@ def get_workflow_parameters(workflow_id: int, request: Request, db: Session = De
     """开始 / 结束节点的输入输出声明（docs/15 WF-04）：运行弹窗、定时任务表单、API 访问页签按它生成表单项。
 
     开放 API Key 调用，外部系统可以据此知道该传哪些参数，不必读平台文档。
+    Key 调用必须校验作用域：这个接口本来就开放给 Key，不校验就等于任意 Key 能枚举全部工作流的契约
+    （2026-11-14 审计的横向越权）。
     """
-    return workflow_service.workflow_parameters(db, workflow_id)
+    return workflow_service.workflow_parameters(db, workflow_id, api_key=current_api_key(request))
 
 
 @router.put("/{workflow_id}")
 def update_workflow(workflow_id: int, data: WorkflowIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """按 ID 更新工作流（版本号 +1）。graph 不合法 400。"""
-    return workflow_service.update_workflow(db, workflow_id, data)
+    return workflow_service.update_workflow(db, workflow_id, data, user)
 
 
 @router.post("/{workflow_id}/duplicate")
@@ -117,7 +119,7 @@ def duplicate_workflow(workflow_id: int, db: Session = Depends(get_db), user: Us
 @router.delete("/{workflow_id}")
 def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """按 ID 删除工作流；被智能体引用时 409。"""
-    workflow_service.delete_workflow(db, workflow_id)
+    workflow_service.delete_workflow(db, workflow_id, user)
     return {"code": 0, "message": "ok"}
 
 

@@ -85,10 +85,42 @@ def _validate_io_declarations(graph: dict) -> list[str]:
     return errors
 
 
+def _validate_loop_and_condition_config(graph: dict) -> list[str]:
+    """校验循环次数与条件表达式（docs/06 第 9 条：服务端是唯一权威）。
+
+    循环次数：前端把「循环次数」输入框限成 1～100，但那只是体验层 —— 直接调接口或改旧图都能
+    写进任意值，无上限的循环会把工作流跑成死循环占住执行线程。这里按 LOOP_MAX_ITERATIONS 兜住。
+
+    条件表达式：保存时就按求值器同一套规则校验语法，写错的表达式不该等运行时才发现
+    （运行时会按 false 处理并记 WARN，用户只看到分支永远走另一边）。
+    """
+    from app.config import settings
+    from app.workflow.safe_eval import ConditionSyntaxError, validate_expression
+
+    errors: list[str] = []
+    for node in (graph or {}).get("nodes") or []:
+        node_type = node.get("type")
+        config = node.get("config") or {}
+        if node_type == "loop":
+            count = config.get("count", 1)
+            if not isinstance(count, int) or isinstance(count, bool):
+                errors.append(f"循环节点 {node.get('id')} 的循环次数必须是整数")
+            elif count < 1 or count > settings.LOOP_MAX_ITERATIONS:
+                errors.append(f"循环节点 {node.get('id')} 的循环次数须在 1～{settings.LOOP_MAX_ITERATIONS} 之间（当前 {count}）")
+        expr = config.get("expression")
+        if isinstance(expr, str) and expr.strip():
+            try:
+                validate_expression(expr)
+            except ConditionSyntaxError as e:
+                errors.append(f"节点 {node.get('id')} 的条件表达式不合法：{e}")
+    return errors
+
+
 def validate_graph(graph: dict) -> list[str]:
     """返回错误文本列表（空列表即通过），规则见 11-差距补齐PRD 4.5.3。"""
     errors: list[str] = []
     errors.extend(_validate_io_declarations(graph))
+    errors.extend(_validate_loop_and_condition_config(graph))
     nodes, in_edges, branches = _branches(graph)
     tail_owner: dict[str, str] = {}  # 分支末节点 id → 所属 parallel id，供汇聚节点入边校验
     for pid, chains in branches.items():

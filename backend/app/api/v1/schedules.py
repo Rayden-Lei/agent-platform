@@ -66,7 +66,7 @@ def create_schedule(data: ScheduleIn, db: Session = Depends(get_db), user: User 
 @router.post("/batch")
 def batch_schedules(data: ScheduleBatchIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """批量启用 / 停用 / 删除：逐条独立执行并返回成功与失败清单。"""
-    return run_batch(db, data.unique_ids(), lambda schedule_id: schedule_service.apply_batch_action(db, schedule_id, data.action))
+    return run_batch(db, data.unique_ids(), lambda schedule_id: schedule_service.apply_batch_action(db, schedule_id, data.action, user))
 
 
 @router.get("/{schedule_id}")
@@ -78,13 +78,13 @@ def get_schedule(schedule_id: int, db: Session = Depends(get_db), user: User = D
 @router.put("/{schedule_id}")
 def update_schedule(schedule_id: int, data: ScheduleIn, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """编辑定时任务（整体覆盖）；启用中的任务按新配置重新注册。"""
-    return schedule_service.update_schedule(db, schedule_id, data)
+    return schedule_service.update_schedule(db, schedule_id, data, user)
 
 
 @router.post("/{schedule_id}/toggle")
 def toggle_schedule(schedule_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """启用 / 停用定时任务（开关切换）。"""
-    return schedule_service.toggle_schedule(db, schedule_id)
+    return schedule_service.toggle_schedule(db, schedule_id, user)
 
 
 @router.post("/{schedule_id}/run")
@@ -96,5 +96,5 @@ def run_schedule_now(schedule_id: int, db: Session = Depends(get_db), user: User
 @router.delete("/{schedule_id}")
 def delete_schedule(schedule_id: int, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer"))):
     """删除定时任务。"""
-    schedule_service.delete_schedule(db, schedule_id)
+    schedule_service.delete_schedule(db, schedule_id, user)
     return {"code": 0, "message": "ok"}

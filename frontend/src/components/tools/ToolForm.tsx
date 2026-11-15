@@ -148,6 +148,9 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
       onClose={onClose}
       width={720}
       title={editing ? `编辑工具：${editing.name}` : '新增工具'}
+      // 表单级错误交给 Drawer 的固定错误区：这个表单展开请求配置后远超一屏，
+      // 错误原先渲染在正文末尾，点保存失败时文案在屏幕外，用户只看到按钮闪一下
+      error={error}
       footer={
         <>
           <Button variant="ghost" size="md" onClick={onClose}>取消</Button>
@@ -280,8 +283,6 @@ export default function ToolForm({ open, editing, onClose, onSaved }: Props) {
             </div>
           </>
         )}
-
-        {error && <p className="m-0 text-[12.5px] text-destructive">{error}</p>}
       </div>
     </Drawer>
   )

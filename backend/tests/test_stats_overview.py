@@ -105,3 +105,36 @@ def test_stuck_running_counts_only_old_running_runs(client, auth_headers):
             db.commit()
         finally:
             db.close()
+
+
+def test_resource_counts_fallback_survives_broken_aggregate(monkeypatch):
+    """聚合 SQL 挂掉时，兜底必须真的能用 —— 兜底里再抛异常比没有兜底更糟。
+
+    2026-11-14 审计：兜底分支里写了 logger.warning，但该文件从没 import logging，
+    于是「迁移没跑完」时兜底自己抛 NameError，工作台整页 500，真实原因（哪张表不存在）被盖掉。
+    这个用例把聚合路径打成必失败，断言兜底仍返回完整 12 个键。
+    """
+    from sqlalchemy.exc import ProgrammingError
+
+    db = SessionLocal()
+    try:
+        real_execute = db.execute
+
+        def _boom(statement, *args, **kwargs):
+            # 只让聚合那条 UNION ALL 失败，兜底里的单表 count 走真实查询
+            sql = str(getattr(statement, "text", statement))
+            if "union all" in sql.lower():
+                raise ProgrammingError("聚合查询失败（模拟）", None, Exception("simulated"))
+            return real_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "execute", _boom)
+        counts = stats_service._resource_counts(db)
+    finally:
+        db.close()
+
+    # 兜底路径下键集合必须与正常路径完全一致，值必须是 int
+    assert set(counts) == {
+        "agents", "published_agents", "models", "enabled_models", "workflows", "knowledge_bases",
+        "documents", "tools", "prompt_templates", "users", "api_keys", "schedules",
+    }
+    assert all(isinstance(v, int) for v in counts.values())
