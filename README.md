@@ -34,24 +34,24 @@
     <td><img src="docs/screenshots/workflow-editor.png" alt="工作流编辑器" /></td>
   </tr>
   <tr>
-    <td align="center">流式对话</td>
-    <td align="center">工作流编辑器</td>
+    <td align="center">流式对话：思考过程、工具调用与引用来源</td>
+    <td align="center">可视化工作流：拖拽节点、连线编排</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/kb-detail.png" alt="知识库详情" /></td>
     <td><img src="docs/screenshots/runs.png" alt="运行记录" /></td>
+    <td><img src="docs/screenshots/models.png" alt="模型管理" /></td>
   </tr>
   <tr>
-    <td align="center">知识库详情：文档、检索评测、统计</td>
-    <td align="center">运行记录：筛选、耗时分布、导出</td>
+    <td align="center">运行记录：成功率、P50 / P95 与耗时分布</td>
+    <td align="center">模型接入：OpenAI 兼容协议，多厂商与自建服务</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/agent-stats.png" alt="智能体运行统计" /></td>
-    <td><img src="docs/screenshots/run-detail.png" alt="运行详情" /></td>
+    <td><img src="docs/screenshots/agents.png" alt="智能体管理" /></td>
+    <td><img src="docs/screenshots/audit-logs.png" alt="审计日志" /></td>
   </tr>
   <tr>
-    <td align="center">智能体详情：运行统计与版本对比</td>
-    <td align="center">运行详情：节点日志、Token 与成本</td>
+    <td align="center">智能体管理：草稿 / 发布与版本回滚</td>
+    <td align="center">审计日志：多条件筛选与明细展开</td>
   </tr>
 </table>
 
