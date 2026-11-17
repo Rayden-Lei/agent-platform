@@ -103,16 +103,10 @@
 
 ### 线上环境
 
-当前部署在 **<REDACTED-IP>**（Ubuntu 24.04，裸进程 + systemd，不用 Docker）：
-
-| 用途 | 地址 |
-|---|---|
-| 生产前端 | http://<REDACTED-IP>:19080 |
-| 开发前端（HMR） | http://<REDACTED-IP>:19173 |
-
+线上部署在一台云服务器（Ubuntu 24.04，裸进程 + systemd，不用 Docker）。
 push 到 main 后服务器 30 秒内自动拉取并更新，不用手动发布。
-完整环境说明（服务、端口、内存限制、密钥、踩过的坑、换机器步骤）见
-[docs/local/云服务器部署存档.md](docs/local/云服务器部署存档.md)。
+
+> 具体的服务器地址、端口与部署细节属于内部运维信息，不随公开仓库提供。
 
 ### Docker Compose
 

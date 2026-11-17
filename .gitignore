@@ -32,3 +32,6 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+
+# 本地运维笔记（含服务器地址/凭据，不随公开仓库提交）
+docs/local/
