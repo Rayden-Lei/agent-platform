@@ -258,6 +258,21 @@ class Document(Base):
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    # 每个可索引维度一个「只收非空行」的部分 HNSW 索引（余弦距离）。同一行只有一列有值，用部分索引更小更快；
+    # 3072 维超过 pgvector 0.6 的 ANN 上限（2000），不建索引、检索走顺序扫描（见 app.rag.embedding_dims.is_indexed）。
+    # 这里声明索引是为了让 create_all 建出的新库（CI、全新部署）与已跑过 migrations 的存量库结构一致；
+    # 存量库/生产的索引由 scripts/migrations/20261115_120000_v3d1mx_embedding_per_dim_columns.py 建。
+    __table_args__ = (
+        Index("ix_document_chunks_embedding_768_hnsw", "embedding_768",
+              postgresql_using="hnsw", postgresql_ops={"embedding_768": "vector_cosine_ops"},
+              postgresql_where=text("embedding_768 IS NOT NULL")),
+        Index("ix_document_chunks_embedding_1024_hnsw", "embedding_1024",
+              postgresql_using="hnsw", postgresql_ops={"embedding_1024": "vector_cosine_ops"},
+              postgresql_where=text("embedding_1024 IS NOT NULL")),
+        Index("ix_document_chunks_embedding_1536_hnsw", "embedding_1536",
+              postgresql_using="hnsw", postgresql_ops={"embedding_1536": "vector_cosine_ops"},
+              postgresql_where=text("embedding_1536 IS NOT NULL")),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     doc_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     kb_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)

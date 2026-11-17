@@ -76,7 +76,7 @@ import pytest  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db.models import Document, DocumentChunk  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
-from app.rag import retriever  # noqa: E402
+from app.rag import embedding_dims, retriever  # noqa: E402
 
 ACL_CONTENT = "智枢请假流程：员工提交申请后由直属主管审批"
 ACL_QUERY = "请假流程"
@@ -117,7 +117,8 @@ def _kb_with_one_chunk(client, auth_headers, *, is_public: bool, visible_roles: 
         db.add(doc)
         db.commit()
         # 向量按维度分列（2026-11-15）：手插切片要写进与库绑定模型维度对应的那一列
-        db.add(DocumentChunk(doc_id=doc.id, kb_id=doc.kb_id, content=ACL_CONTENT, embedding_1024=[0.1] * settings.EMBEDDING_DIM,
+        db.add(DocumentChunk(doc_id=doc.id, kb_id=doc.kb_id, content=ACL_CONTENT,
+                             **{embedding_dims.column_name(settings.EMBEDDING_DIM): [0.1] * settings.EMBEDDING_DIM},
                              meta={"is_public": is_public, "visible_roles": visible_roles, "policy_version": 1}, token_count=len(ACL_CONTENT)))
         db.commit()
     finally:

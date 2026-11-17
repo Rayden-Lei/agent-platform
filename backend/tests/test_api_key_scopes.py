@@ -16,7 +16,7 @@ from app.config import settings
 from app.db.models import Document, DocumentChunk, Run
 from app.db.session import SessionLocal, engine
 from tests.conftest import publish_workflow
-from app.rag import retriever
+from app.rag import embedding_dims, retriever
 from app.services import chat_service
 from tests.fakes import AnswerModel
 
@@ -97,7 +97,7 @@ def _kb_with_chunk(client, auth_headers, made, *, is_public: bool, visible_roles
         doc = Document(kb_id=kb_id, name="pytest-scope.txt", file_path="pytest/unused.txt", file_type="txt", status="ready")
         db.add(doc)
         db.commit()
-        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, embedding_1024=[0.1] * settings.EMBEDDING_DIM, meta={}, token_count=len(CONTENT)))
+        db.add(DocumentChunk(doc_id=doc.id, kb_id=kb_id, content=CONTENT, **{embedding_dims.column_name(settings.EMBEDDING_DIM): [0.1] * settings.EMBEDDING_DIM}, meta={}, token_count=len(CONTENT)))
         db.commit()
     finally:
         db.close()
