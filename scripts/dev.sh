@@ -9,12 +9,12 @@
 #   ./scripts/dev.sh status     看状态（含云端地址）
 #
 # 环境：后端用 ENV_FILE=.env.local（本机这套），前端 Vite 把 ^/api/ 反代到 127.0.0.1:8000。
-# 依赖：PG / Redis / MinIO 都在云服务器 <REDACTED-IP> 上，本机经 SSH 隧道访问
+# 依赖：PG / Redis / MinIO 都在云服务器上，本机经 SSH 隧道访问
 #       （15432/16379/19000）。隧道由 launchd 常驻服务维护，不归这个脚本管；
 #       连不上先看 launchctl list | grep agent-platform-tunnel。
 # 外网：不再用 cloudflared 临时隧道。线上就是云服务器，push 后自动部署：
-#       生产 http://<REDACTED-IP>:19080（nginx 托管 dist）
-#       开发 http://<REDACTED-IP>:19173（vite dev + HMR）
+#       生产 http://<云服务器>:19080（nginx 托管 dist）
+#       开发 http://<云服务器>:19173（vite dev + HMR）
 # 日志：agent-platform/logs/{backend,frontend}.log（已进 .gitignore）
 set -uo pipefail
 
@@ -30,8 +30,8 @@ FE_LOG="$LOG_DIR/frontend.log"
 PID_DIR="$LOG_DIR/.pids"
 mkdir -p "$PID_DIR"
 
-# 云服务器上的对外地址，仅用于 status / 汇总提示
-CLOUD_HOST="<REDACTED-IP>"
+# 云服务器对外地址，仅用于 status / 汇总提示。地址不写进仓库：用前 export CLOUD_HOST=<服务器IP>
+CLOUD_HOST="${CLOUD_HOST:-}"
 CLOUD_PROD_PORT="19080"
 CLOUD_DEV_PORT="19173"
 
