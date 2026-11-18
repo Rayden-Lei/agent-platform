@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { ChevronDown, MessageSquare, Plus } from 'lucide-react'
+import { MessageSquare, Plus } from 'lucide-react'
 import Button from '../components/ui/Button'
 import {
   chatAgentStream, chatModelStream, chatWorkflowStream, deleteConversation, getConversation,

@@ -61,8 +61,11 @@ function Recall({ steps, contents }: { steps: TraceStep[]; contents: Map<number,
 
 export default function DebugDetailDrawer({ msg, onClose }: { msg: Msg | null; onClose: () => void }) {
   const steps = msg?.trace ?? []
-  // 检索步骤的命中不带正文，按 chunk_id 从这条回答的引用里补
-  const contents = new Map((msg?.citations ?? []).map((c) => [c.chunk_id, c.content ?? '']))
+  // 检索步骤的命中不带正文，按 chunk_id 从这条回答的引用里补。
+  // chunk_id 在 Citation 上是可选的（流式事件可能只带部分字段），没有 id 的引用对不上命中，直接丢掉
+  const contents = new Map<number, string>(
+    (msg?.citations ?? []).flatMap((c) => (typeof c.chunk_id === 'number' ? [[c.chunk_id, c.content ?? ''] as const] : [])),
+  )
   const m = msg?.metrics
   const retrieveSteps = steps.filter((s) => s.type === 'retrieve')
   return (

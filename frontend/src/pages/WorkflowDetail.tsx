@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { Copy, Pencil, Play, Rocket, Trash2 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { deleteWorkflow, duplicateWorkflow, getWorkflow, publishWorkflow } from '../api'
+import { deleteWorkflow, duplicateWorkflow, getWorkflow, getWorkflowParameters, publishWorkflow } from '../api'
 import { useAsyncData } from '../hooks/useAsyncData'
+import { usePublicBaseUrl } from '../hooks/usePublicBaseUrl'
 import DetailPage from '../components/layout/DetailPage'
 import StatusTag from '../components/common/StatusTag'
 import TimeCell from '../components/common/TimeCell'
@@ -15,15 +16,24 @@ import RunsTable from '../components/runs/RunsTable'
 import WorkflowOverview from '../components/workflows/WorkflowOverview'
 import WorkflowVersionsTab from '../components/workflows/WorkflowVersionsTab'
 import WorkflowPublishModal from '../components/workflows/WorkflowPublishModal'
+import WorkflowApiAccessPanel from '../components/workflows/WorkflowApiAccessPanel'
 import RunWorkflowModal from '../components/workflows/RunWorkflowModal'
 import { errorText } from '../utils/errors'
 
-// 工作流详情页：概览（流程图 / 定时任务 / 引用）、运行统计、运行记录；头部运行 / 编辑 / 复制 / 删除。
+// 工作流详情页：概览（流程图 / 定时任务 / 引用）、版本历史、运行统计、运行记录、API 访问；
+// 头部运行 / 发布 / 编辑 / 复制 / 删除。
 export default function WorkflowDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const wfId = Number(id)
   const { data: wf, loading, error, reload } = useAsyncData(() => getWorkflow(wfId), [wfId], { errorText: '加载工作流失败' })
+  // API 访问页签的入参声明读的是**线上版本**（WF-04 / FR-075）：草稿改了不影响对外契约，所以单独取一次，
+  // 并且只在有线上版本时取（未发布时面板只提示"先发布"，不显示示例）
+  const published = !!wf?.published_version
+  const { baseUrl, configured: baseUrlConfigured } = usePublicBaseUrl()
+  const { data: parameters, error: parametersError, reload: reloadParameters } = useAsyncData(
+    () => getWorkflowParameters(wfId), [wfId, published], { errorText: '加载入参声明失败', auto: published },
+  )
   const [running, setRunning] = useState(false)
   const [showPublish, setShowPublish] = useState(false)
 
@@ -93,6 +103,21 @@ export default function WorkflowDetail() {
           { key: 'versions', label: '版本历史', children: <WorkflowVersionsTab workflow={wf} onChanged={() => reload()} /> },
           { key: 'stats', label: '运行统计', children: <AgentStatsTab workflowId={wf.id} /> },
           { key: 'runs', label: '运行记录', children: <RunsTable filters={{ workflow_id: wf.id }} hideOwner={false} /> },
+          // API 访问（WF-06）：Base URL / 工作流 ID / 鉴权 + 同步、异步轮询、取消、续跑四段示例与错误码
+          {
+            key: 'api',
+            label: 'API 访问',
+            children: (
+              <WorkflowApiAccessPanel
+                workflow={wf}
+                baseUrl={baseUrl}
+                baseUrlConfigured={baseUrlConfigured}
+                parameters={published ? parameters : null}
+                parametersError={parametersError}
+                onRetryParameters={() => reloadParameters()}
+              />
+            ),
+          },
         ] : []}
       />
       {wf && <RunWorkflowModal workflow={running ? wf : null} onClose={() => setRunning(false)} onDone={() => reload(true)} />}

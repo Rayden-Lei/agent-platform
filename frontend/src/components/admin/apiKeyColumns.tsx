@@ -5,6 +5,7 @@ import Button from '../ui/Button'
 import InlineConfirm from '../ui/InlineConfirm'
 import EnableSwitch from '../common/EnableSwitch'
 import TimeCell from '../common/TimeCell'
+import { ExpiredBadge, QuotaCell, ScopeCell } from './apiKeyCells'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/shadcn/tooltip'
 
 interface Options {
@@ -13,53 +14,12 @@ interface Options {
   onToggle: (k: ApiKeyRow) => Promise<unknown>
   onEdit: (k: ApiKeyRow) => void
   onDelete: (k: ApiKeyRow) => void
-}
-
-// 配额进度：用量占比 ≥ 90% 标红提醒续配额
-export function QuotaCell({ used, quota }: { used: number; quota: number }) {
-  if (!quota) return <span className="text-muted-foreground">{used} / 不限</span>
-  const ratio = Math.min(used / quota, 1)
-  const danger = ratio >= 0.9
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="min-w-[120px] cursor-default">
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
-            <div className="h-full rounded-full" style={{ width: `${Math.round(ratio * 100)}%`, background: danger ? 'var(--danger)' : 'var(--accent)' }} />
-          </div>
-          <span className="mt-0.5 block text-[11.5px] text-muted-foreground">{used} / {quota}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent>已用 {used} / 配额 {quota}</TooltipContent>
-    </Tooltip>
-  )
-}
-
-// 授权范围（docs/15 3.7.1）：N 个智能体、M 个工作流…，悬停看名称，已删除的资源标"已删除"；三类都空的是迁移前建的，调用一律被拒
-const SCOPE_LABELS = [['agents', '智能体'], ['workflows', '工作流'], ['knowledge_bases', '知识库']] as const
-export function ScopeCell({ scope }: { scope: ApiKeyRow['scope'] }) {
-  const parts = SCOPE_LABELS.filter(([key]) => scope[key].length)
-  if (!parts.length) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild><span><Badge tone="warning">未授权</Badge></span></TooltipTrigger>
-        <TooltipContent>没有授权任何资源（迁移前建的 Key），调用一律被拒；编辑后授权即可</TooltipContent>
-      </Tooltip>
-    )
-  }
-  const names = parts.map(([key, label]) => `${label}：${scope[key].map((x) => x.name ?? `已删除 #${x.id}`).join('、')}`)
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-default">{parts.map(([key, label]) => `${scope[key].length} 个${label}`).join('、')}</span>
-      </TooltipTrigger>
-      <TooltipContent className="whitespace-pre-line">{names.join('\n')}</TooltipContent>
-    </Tooltip>
-  )
+  onRotate: (k: ApiKeyRow) => void
 }
 
 // API Key 列表列定义：Key 只显示前缀；配额用进度条；admin 视角多一列归属。
-export function buildApiKeyColumns({ isAdmin, onOpen, onToggle, onEdit, onDelete }: Options): DataColumn<ApiKeyRow>[] {
+// 配额、授权范围、过期徽章三件展示单元格在 ./apiKeyCells（详情抽屉、个人中心、发布渠道的小表也复用）。
+export function buildApiKeyColumns({ isAdmin, onOpen, onToggle, onEdit, onDelete, onRotate }: Options): DataColumn<ApiKeyRow>[] {
   const columns: DataColumn<ApiKeyRow>[] = [
     { key: 'id', header: 'ID', width: 64, sortable: true, cell: (r) => <span className="text-muted-foreground">{r.id}</span> },
     {
@@ -84,14 +44,29 @@ export function buildApiKeyColumns({ isAdmin, onOpen, onToggle, onEdit, onDelete
       )),
     },
     { key: 'rate_limit_per_minute', header: '限速 / 分钟', width: 110, align: 'right', hideOnMobile: true, cell: (r) => (r.rate_limit_per_minute === 0 ? <span className="text-muted-foreground">默认</span> : r.rate_limit_per_minute) },
-    { key: 'status', header: '状态', width: 80, cell: (r) => <EnableSwitch checked={r.is_enabled} onToggle={() => onToggle(r)} /> },
+    {
+      key: 'status', header: '状态', width: 130,
+      // 停用与过期是两件事，可以同时成立：开关表达 is_enabled，徽章表达 is_expired，并排显示不互相顶掉
+      cell: (r) => (
+        <span className="inline-flex items-center gap-1.5">
+          <EnableSwitch checked={r.is_enabled} onToggle={() => onToggle(r)} />
+          {r.is_expired && <ExpiredBadge expiresAt={r.expires_at} />}
+        </span>
+      ),
+    },
+    { key: 'expires_at', header: '有效期', width: 168, hideOnMobile: true, cell: (r) => (r.expires_at ? <TimeCell value={r.expires_at} /> : <span className="text-muted-foreground">永不过期</span>) },
     { key: 'last_used_at', header: '最后使用', width: 120, sortable: true, hideOnMobile: true, cell: (r) => <TimeCell value={r.last_used_at} mode="relative" /> },
     { key: 'created_at', header: '创建时间', width: 168, sortable: true, hideOnMobile: true, cell: (r) => <TimeCell value={r.created_at} /> },
     {
-      key: 'actions', header: '操作', width: 150, pinRight: true,
+      key: 'actions', header: '操作', width: 210, pinRight: true,
+      // 已过期的 Key 仍然给「编辑 / 轮换 / 删除」三件，而不是只留轮换：
+      // 轮换只换明文，服务端会原样保留 expires_at，所以对过期 Key 轮换完它还是过期的；
+      // 唯一能救活它的是编辑里的有效期（改到未来或清除）。把编辑藏掉等于把唯一的修复入口藏掉。
+      // 这里把按钮文案改成「改有效期」，让过期 Key 的修复路径一眼可见。
       cell: (r) => (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>编辑</Button>
+          <Button size="sm" variant="secondary" onClick={() => onEdit(r)}>{r.is_expired ? '改有效期' : '编辑'}</Button>
+          <Button size="sm" variant="secondary" onClick={() => onRotate(r)}>轮换</Button>
           <InlineConfirm message="确定删除？使用该 Key 的调用会立即失效" danger onConfirm={() => onDelete(r)}>
             <Button size="sm" variant="danger">删除</Button>
           </InlineConfirm>

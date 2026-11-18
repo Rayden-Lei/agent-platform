@@ -38,7 +38,8 @@ export interface ApiKeyRow {
   id: number
   name: string
   key_prefix: string
-  quota: number
+  // null = 不限次数；0 = 一次都不许调（docs/15 PB-11）。此前 0 被当成"不限"，与后端恒 429 相反
+  quota: number | null
   used: number
   is_enabled: boolean
   allowed_ips: string[]          // 来源白名单（IP 或 CIDR），空 = 不限制
@@ -50,6 +51,8 @@ export interface ApiKeyRow {
   scope: { agents: ApiKeyScopeItem[]; workflows: ApiKeyScopeItem[]; knowledge_bases: ApiKeyScopeItem[] }
   user_id: number
   username: string | null        // 创建人，admin 视角区分归属
+  expires_at: string | null      // 有效期（带时区 ISO 8601）；null = 永不过期
+  is_expired: boolean            // 是否已过期：服务端按 expires_at 算好下发，前端只展示、不自己判
   last_used_at: string | null
   created_at: string | null
 }
@@ -57,7 +60,10 @@ export interface ApiKeyRow {
 export interface ApiKeyScopeItem { id: number; name: string | null }
 export interface ApiKeyInput {
   name: string
-  quota: number
+  // null = 不限次数（显式 null 是有效取值，不是"未提供"）；0 = 一次都不许调
+  quota: number | null
+  // 有效期：null = 永不过期（更新时显式 null = 清除）；须带时区且是未来时间（服务端 422）
+  expires_at: string | null
   allowed_ips: string[]
   rate_limit_per_minute: number
   agent_ids: number[]   // 三类作用域至少一个非空（服务端 400）
@@ -70,6 +76,9 @@ export const listApiKeys = (params?: PageQuery) => get<Page<ApiKeyRow>>('/api-ke
 export const createApiKey = (data: ApiKeyInput) => post<ApiKeyRow & { key: string }>('/api-keys', data)
 export const updateApiKey = (id: number, data: Partial<ApiKeyInput>) => put<ApiKeyRow>(`/api-keys/${id}`, data)
 export const toggleApiKey = (id: number) => post<{ id: number; is_enabled: boolean }>(`/api-keys/${id}/toggle`)
+// 轮换密钥（docs/15 PB-11）：原地换一把新明文，旧明文立即失效；名称、配额、作用域、白名单、限速与有效期不变，
+// 累计用量（used）与创建时间保留。新明文只在此响应返回一次，之后无法找回
+export const rotateApiKey = (id: number) => post<ApiKeyRow & { key: string }>(`/api-keys/${id}/rotate`)
 export const deleteApiKey = (id: number) => del(`/api-keys/${id}`)
 export const batchApiKeys = (ids: number[], action: 'enable' | 'disable' | 'delete') => batchAction('/api-keys', ids, action)
 

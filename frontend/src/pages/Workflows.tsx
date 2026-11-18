@@ -31,7 +31,7 @@ export default function Workflows() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
   const [running, setRunning] = useState<WorkflowRow | null>(null)
   const [publishing, setPublishing] = useState<WorkflowRow | null>(null)
-  const list = usePagedList<WorkflowRow>(listWorkflows, { filters, selectable: true })
+  const list = usePagedList<WorkflowRow>(listWorkflows, { filters, selectable: true, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
 
   const openCreate = () => navigate('/workflows/new')

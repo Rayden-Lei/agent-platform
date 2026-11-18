@@ -82,18 +82,7 @@ export default function WorkflowOverview({ workflow: wf }: Props) {
         ) : <span className="text-[13px] text-muted-foreground">没有定时任务；到"定时任务"页新建并选择本工作流。</span>}
       </Panel>
 
-      <Panel title={`引用它的智能体（${wf.agents.length}）`}>
-        {wf.agents.length ? (
-          <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
-            {wf.agents.map((a) => (
-              <li key={a.id} className="flex items-center gap-2 text-[13.5px]">
-                <ResourceLink type="agent" id={a.id} name={a.name} showIcon />
-                <StatusTag domain="agent" value={a.status} />
-              </li>
-            ))}
-          </ul>
-        ) : <span className="text-[13px] text-muted-foreground">没有智能体关联本工作流；在智能体表单里选择即可让对话走这个流程。</span>}
-      </Panel>
+
     </div>
   )
 }

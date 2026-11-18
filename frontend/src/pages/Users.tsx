@@ -36,7 +36,7 @@ export default function Users() {
   const [editing, setEditing] = useState<UserRow | null>(null)
   const [resetting, setResetting] = useState<UserRow | null>(null)
   const [current, setCurrent] = useState<UserRow | null>(null)
-  const list = usePagedList<UserRow>(listUsers, { filters, selectable: true, emptyText: <EmptyState description="没有匹配的用户" /> })
+  const list = usePagedList<UserRow>(listUsers, { filters, selectable: true, emptyText: <EmptyState description="没有匹配的用户" />, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => { const row = list.items.find((u) => u.id === id); if (row) setCurrent(row); else toast.warning('该用户不在当前列表里，请调整筛选') })
 

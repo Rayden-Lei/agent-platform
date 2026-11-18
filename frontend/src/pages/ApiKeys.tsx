@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { KeyRound, Plus } from 'lucide-react'
-import { batchApiKeys, deleteApiKey, listApiKeys, listUsers, OPTIONS_PAGE, toggleApiKey, type ApiKeyRow } from '../api'
+import { batchApiKeys, deleteApiKey, listApiKeys, listUsers, OPTIONS_PAGE, rotateApiKey, toggleApiKey, type ApiKeyRow } from '../api'
 import { useAuth } from '../store/auth'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
@@ -22,6 +22,7 @@ import CreatedKeyModal from '../components/admin/CreatedKeyModal'
 import { buildApiKeyColumns } from '../components/admin/apiKeyColumns'
 import DataTable from '../components/table/DataTable'
 import Button from '../components/ui/Button'
+import { confirm } from '../components/ui/confirm'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { errorText } from '../utils/errors'
 
@@ -36,11 +37,12 @@ export default function ApiKeys() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<ApiKeyRow | null>(null)
-  const [createdKey, setCreatedKey] = useState<string | null>(null)
+  // 一次性明文弹窗：created = 新生成的，rotated = 轮换出来的（文案要提示旧密钥已失效）
+  const [createdKey, setCreatedKey] = useState<{ value: string; rotated: boolean } | null>(null)
   const [current, setCurrent] = useState<ApiKeyRow | null>(null)
   const owners = useAsyncData(() => (isAdmin ? listUsers(OPTIONS_PAGE) : Promise.resolve({ items: [] as { id: number; username: string }[] })), [isAdmin])
   const scopeOptions = useApiKeyScopeOptions(formOpen) // 授权范围的下拉，表单打开时才取
-  const list = usePagedList<ApiKeyRow>(listApiKeys, { filters, selectable: true })
+  const list = usePagedList<ApiKeyRow>(listApiKeys, { filters, selectable: true, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => {
     const row = list.items.find((k) => k.id === id)
@@ -55,8 +57,26 @@ export default function ApiKeys() {
   }
   // 抽屉里点编辑：先关抽屉再开表单，避免抽屉叠抽屉
   const onEdit = (k: ApiKeyRow) => { setCurrent(null); setEditing(k); setFormOpen(true) }
+  // 轮换：旧明文立即失效（没有过渡期），所以必须先二次确认；成功后复用"只显示一次"的明文弹窗
+  const onRotate = async (k: ApiKeyRow) => {
+    const ok = await confirm({
+      title: `轮换「${k.name}」的密钥？`,
+      content: '会立刻换一把新明文：旧密钥立即失效，正在用它调用的系统会马上收到 401。名称、配额、授权范围、来源白名单、限速与有效期不变，累计用量保留。新明文只显示一次，关掉就拿不回来了。',
+      okText: '轮换',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      const res = await rotateApiKey(k.id)
+      setCreatedKey({ value: res.key, rotated: true })
+      // 抽屉正开着时同步刷新前缀：否则它显示的还是旧前缀，用户会以为轮换没生效。
+      // 只合并 key_prefix 而不整体换成 res —— rotate 的响应不带 username（服务端传 None），整体替换会让"归属"变成 '-'。
+      setCurrent((c) => (c && c.id === k.id ? { ...c, key_prefix: res.key_prefix } : c))
+      list.reload()
+    } catch (e) { toast.error(errorText(e, '轮换失败')) }
+  }
   const columns = useMemo(
-    () => buildApiKeyColumns({ isAdmin, onOpen: setCurrent, onToggle, onEdit, onDelete }),
+    () => buildApiKeyColumns({ isAdmin, onOpen: setCurrent, onToggle, onEdit, onDelete, onRotate }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isAdmin],
   )
@@ -137,11 +157,11 @@ export default function ApiKeys() {
         scopeOptions={scopeOptions}
         onClose={() => setFormOpen(false)}
         onSaved={() => { list.reload(); setCurrent(null) }}
-        onCreated={setCreatedKey}
+        onCreated={(key) => setCreatedKey({ value: key, rotated: false })}
         ownerOptions={isAdmin ? (owners.data?.items ?? []).map((u) => ({ value: u.id, label: u.username })) : undefined}
       />
-      <CreatedKeyModal value={createdKey} onClose={() => setCreatedKey(null)} />
-      <ApiKeyDrawer apiKey={current} onClose={() => setCurrent(null)} onEdit={onEdit} />
+      <CreatedKeyModal value={createdKey?.value ?? null} rotated={createdKey?.rotated} onClose={() => setCreatedKey(null)} />
+      <ApiKeyDrawer apiKey={current} onClose={() => setCurrent(null)} onEdit={onEdit} onRotate={onRotate} />
       <BatchResultModal result={batch.result} onClose={batch.closeResult} nameOf={(id) => list.items.find((k) => k.id === id)?.name} />
     </ListPage>
   )

@@ -31,12 +31,12 @@ export const EVENT_ROWS: DocRow[] = [
 ]
 
 export const ERROR_ROWS: DocRow[] = [
-  { key: '401', name: '401', desc: 'Key 无效或已停用' },
+  { key: '401', name: '401', desc: 'Key 无效、已停用或已过期（过期不消耗配额）' },
   { key: '403', name: '403', desc: '"该 API Key 无权调用此智能体"、"智能体未发布"、"智能体已下线"、"API Key 不允许从该 IP 调用"' },
   { key: '404', name: '404', desc: '智能体不存在；会话不存在或不属于该智能体（含 end_user 不一致）' },
   { key: '409', name: '409', desc: '同一个 client_message_id 的首次请求仍在生成' },
   { key: '422', name: '422', desc: '请求体不合法：detail 是逐字段的数组' },
-  { key: '429', name: '429', desc: '限流（带 Retry-After 秒数）或 Key 配额用尽' },
+  { key: '429', name: '429', desc: '限流（带 Retry-After 秒数）或 Key 配额用尽（配额为 0 的 Key 每次都是这个）' },
   { key: '503', name: '503', desc: '模型熔断中（带 Retry-After）；流里则以 error 事件结束' },
   { key: '500', name: '500', desc: '服务器内部错误：响应体带 trace_id，反馈时附上' },
 ]
@@ -124,7 +124,7 @@ export function markdownDoc(api: string, agent: { id: number; name: string }): s
 - Base URL：\`${api}\`
 - 智能体 ID：\`${agent.id}\`
 - 鉴权：请求头 \`Authorization: Bearer ${KEY_PLACEHOLDER}\`（向管理员索取；只在服务端调用，不要放进浏览器或 App）
-- 每次请求消耗 1 次 Key 配额；Key 只能调用授权给它的智能体
+- 每次请求消耗 1 次 Key 配额（配额为空则不计数）；Key 只能调用授权给它的智能体，过期或被停用后一律 401
 
 ## 端点
 

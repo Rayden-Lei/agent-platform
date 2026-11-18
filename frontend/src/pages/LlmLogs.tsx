@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Cpu } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
@@ -8,6 +8,7 @@ import {
 } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
+import { useAsyncData } from '../hooks/useAsyncData'
 import ListPage from '../components/layout/ListPage'
 import PageHeader from '../components/layout/PageHeader'
 import FilterBar from '../components/layout/FilterBar'
@@ -35,14 +36,14 @@ const PURPOSE_LABEL: Record<string, string> = {
 // 打码口径：只有凭据打码，地址、请求体、响应体、错误原文全部原样保留。
 export default function LlmLogs() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
-  const [stats, setStats] = useState<LlmCallStats | null>(null)
+  // 统计取不到时页头要能说明：原来静默置 null，页头直接不显示这一行，
+  // 用户分不清"今天没有调用"和"统计没取到"
+  const stats = useAsyncData<LlmCallStats>(getLlmCallStats, [], { errorText: '加载调用统计失败' })
   const [current, setCurrent] = useState<LlmCallDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
 
   const empty = <EmptyState description="还没有模型调用记录。发起一次对话或测试一次模型连通性后，这里会记录完整的请求与响应报文。" />
-  const list = usePagedList<LlmCallRow>(listLlmCalls, { filters, emptyText: empty })
-
-  useEffect(() => { getLlmCallStats().then(setStats).catch(() => setStats(null)) }, [])
+  const list = usePagedList<LlmCallRow>(listLlmCalls, { filters, emptyText: empty, syncUrl: true })
 
   const open = async (r: LlmCallRow) => {
     setLoadingDetail(true)
@@ -113,16 +114,18 @@ export default function LlmLogs() {
           icon={<Cpu />}
           title="模型调用日志"
           description="每次模型调用的完整报文：请求地址、messages 全文、工具定义、响应原文、思考过程、用量与耗时。凭据已打码，其余原样保存。"
-          extra={stats && (
+          extra={stats.error ? (
+            <span className="text-[12.5px] text-destructive">{stats.error}（点筛选条的刷新重试）</span>
+          ) : stats.data && (
             <span className="text-[12.5px] text-muted-foreground">
-              共 {stats.total} 次 · 今日 {stats.today} 次{stats.failed > 0 && <span className="ml-1 text-destructive">失败 {stats.failed}</span>}
-              {!stats.enabled && <span className="ml-2 text-destructive">日志已关闭（LLM_LOG_ENABLED=false）</span>}
+              共 {stats.data.total} 次 · 今日 {stats.data.today} 次{stats.data.failed > 0 && <span className="ml-1 text-destructive">失败 {stats.data.failed}</span>}
+              {!stats.data.enabled && <span className="ml-2 text-destructive">日志已关闭（LLM_LOG_ENABLED=false）</span>}
             </span>
           )}
         />
       }
       filters={
-        <FilterBar onReset={resetFilters} onRefresh={list.reload} loading={list.loading}
+        <FilterBar onReset={resetFilters} onRefresh={() => { list.reload(); stats.reload(true) }} loading={list.loading}
           activeCount={Object.values(filters).filter(Boolean).length}>
           <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索地址 / 模型 / 错误" />
           <Select value={filters.status ?? 'all'} onValueChange={(v) => setFilters({ status: v === 'all' ? undefined : v })}>

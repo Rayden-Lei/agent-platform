@@ -48,7 +48,7 @@ export default function McpServers() {
       action={{ label: '新增服务器', onClick: openCreate }}
     />
   )
-  const list = usePagedList<McpServerRow>(listMcpServers, { filters, selectable: true, emptyText: empty })
+  const list = usePagedList<McpServerRow>(listMcpServers, { filters, selectable: true, emptyText: empty, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
 
   // 刷新详情失败时不能静默关掉抽屉：用户会以为"服务器刚被谁删了"。

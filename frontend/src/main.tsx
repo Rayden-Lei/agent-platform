@@ -1,5 +1,4 @@
 // 应用入口：挂载 React 根节点、全局提示与确认框宿主
-import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'

@@ -17,8 +17,11 @@ export interface ModelBreakerStatus {
   opened_at: string | null
   retry_after_seconds: number
 }
-export interface DegradedItem { item: 'embedding' | 'login_guard' | 'rate_limit' | 'model_breaker' | 'database' | 'scheduler' | string; message: string }
-export interface SchedulerStatus { running: boolean; registered_jobs: number; enabled_jobs: number; reason?: string | null }
+export interface DegradedItem { item: 'embedding' | 'login_guard' | 'rate_limit' | 'model_breaker' | 'database' | 'scheduler' | 'kb_unsearchable' | string; message: string }
+// 当前检索不了的知识库（绑定的向量模型被停用/删除，2026-11-18 起）：结构化清单，前端不必解析 degraded 的文案
+export interface KbUnsearchableStatus { id: number; name: string; embedding_model_id: number | null; reason: string }
+// is_leader（2026-11-18 起）：本实例是否持有调度锁；false = 从实例（定时任务由持锁实例执行，registered_jobs=0 属正常）；null = 调度器未启动
+export interface SchedulerStatus { running: boolean; registered_jobs: number; enabled_jobs: number; is_leader: boolean | null; reason?: string | null }
 export interface RerankStatus { mode: 'model' | 'lexical'; configured: boolean; provider: string | null; model: string | null; reason: string | null; last_error: { at: string; error: string } | null }
 export interface SystemStatus {
   app: string
@@ -27,12 +30,16 @@ export interface SystemStatus {
   rerank: RerankStatus
   login_guard: { enabled: boolean; reason: string | null; max_fail: number; lock_seconds: number }
   // 入口限流：configured=false 是配置关闭（不算降级），configured=true 且 enabled=false 是 Redis 故障
-  rate_limit: { enabled: boolean; configured: boolean; reason: string | null; api_key_per_minute: number; user_per_minute: number; ip_per_minute: number }
+  // degraded / public_fail_closed / fail_closed_scopes（2026-11-18 起）：Redis 故障时的降级方向。
+  // public_fail_closed=true 表示公开入口已被拒绝（不是"没保护"而是"主动拒绝"），false 表示全部放行
+  rate_limit: { enabled: boolean; configured: boolean; degraded: boolean; public_fail_closed: boolean; fail_closed_scopes: string[]; reason: string | null; api_key_per_minute: number; user_per_minute: number; ip_per_minute: number }
   // 只列非 closed 的模型熔断器；open 的同时会出现在 degraded
   model_breakers: ModelBreakerStatus[]
   scheduler: SchedulerStatus
   // 来源 IP 自检（docs/15 PB-07）：开了 TRUSTED_PROXY_ENABLED 却没收到合法 X-Real-IP 时 ok=false，同时出现在 degraded；resolved 是本次请求解析出的来源
   client_ip: { trusted_proxy: boolean; real_ip_header: boolean; resolved: string | null; ok: boolean }
+  // 有界：items 最多 20 条，total 是实际总数，truncated 是被截掉的条数
+  unsearchable_kbs: { items: KbUnsearchableStatus[]; total: number; truncated: number }
   degraded: DegradedItem[]
 }
 export const getSystemStatus = () => get<SystemStatus>('/system/status')

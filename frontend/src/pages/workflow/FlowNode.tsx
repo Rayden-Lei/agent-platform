@@ -1,10 +1,11 @@
-import { Handle, Position } from '@xyflow/react'
+import { Handle, Position, type NodeProps, type NodeTypes } from '@xyflow/react'
+import type { FlowNodeType } from './palette'
 
 // 自定义节点渲染：左侧类型色图标 + 标签/摘要，左右各一个连接点（Handle）。
 // 2026-11-05 改版：图标不再铺实色圆角块（画布上一排彩色方块很吵），改成细线图标 + 类型色；
 // 节点更紧凑（横向 padding 10、纵向 8），一屏能多放两行。选中加粗边框 + 阴影，
 // 配置有误（data.configError）时红框并在摘要处写原因。
-export function FlowNode({ data, selected }: any) {
+export function FlowNode({ data, selected }: NodeProps<FlowNodeType>) {
   const border = data.configError ? '1.5px solid #dc2626' : selected ? '1.5px solid ' + data.color : '1px solid var(--border)'
   return (
     <div
@@ -34,4 +35,5 @@ export function FlowNode({ data, selected }: any) {
   )
 }
 
-export const nodeTypes = { flow: FlowNode }
+// 按 ReactFlow 要求的 NodeTypes 形状标注：自定义节点组件收到的 props 是 NodeProps 的超集
+export const nodeTypes: NodeTypes = { flow: FlowNode }

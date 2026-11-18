@@ -277,11 +277,11 @@ export default function ConfigSections({ values, onChange, models, kbOptions, to
   )
 }
 
-// 草稿 → 表单值。workflow_id 没有表单项，放进编辑态只为保存时原样带回（PUT 是整体覆盖）
+// 草稿 → 表单值（PUT 是整体覆盖，所以编辑态要带上所有后端会读的字段）
 export function toFormValues(a: AgentDetail) {
   return {
     name: a.name, description: a.description ?? '', system_prompt: a.system_prompt, model_id: a.model_id, params: a.params ?? {},
-    kb_ids: a.kb_ids ?? [], tool_ids: a.tool_ids ?? [], skill_ids: a.skill_ids ?? [], workflow_id: a.workflow_id,
+    kb_ids: a.kb_ids ?? [], tool_ids: a.tool_ids ?? [], skill_ids: a.skill_ids ?? [],
     use_template: !!a.prompt_template_id, prompt_template_id: a.prompt_template_id, prompt_variables: a.prompt_variables ?? {},
   }
 }

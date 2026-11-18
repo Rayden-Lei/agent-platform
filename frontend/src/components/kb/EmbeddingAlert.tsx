@@ -23,7 +23,7 @@ export default function EmbeddingAlert() {
       <AlertDescription>
         <div className="text-[13px]">
           <div>{embedding.reason}</div>
-          {embedding.last_error && <div className="mt-1">最近一次失败：{embedding.last_error.at}　{embedding.last_error.error}</div>}
+          {embedding.last_error && <div className="mt-1">最近一次失败：{embedding.last_error.at} · {embedding.last_error.error}</div>}
           <div className="mt-1">恢复方式：配置 EMBEDDING_API_BASE 与 EMBEDDING_API_KEY 后重启后端，再对已有文档执行"重新解析"重建向量。</div>
         </div>
       </AlertDescription>

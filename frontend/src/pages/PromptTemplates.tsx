@@ -29,7 +29,7 @@ export default function PromptTemplates() {
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<PromptTemplateRow | null>(null)
   const [current, setCurrent] = useState<PromptTemplateRow | null>(null)
-  const list = usePagedList<PromptTemplateRow>(listPromptTemplates, { filters, selectable: true, emptyText: <EmptyState description="还没有模板。把系统提示词沉淀成带变量的模板，多个智能体共用并按版本管理。" action={{ label: '新增模板', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
+  const list = usePagedList<PromptTemplateRow>(listPromptTemplates, { filters, selectable: true, syncUrl: true, emptyText: <EmptyState description="还没有模板。把系统提示词沉淀成带变量的模板，多个智能体共用并按版本管理。" action={{ label: '新增模板', onClick: () => { setEditing(null); setFormOpen(true) } }} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getPromptTemplate(id).then(setCurrent).catch((e) => toast.error(errorText(e, '模板不存在'))) })
 
@@ -38,7 +38,13 @@ export default function PromptTemplates() {
     try { setEditing(r.content !== undefined ? r : await getPromptTemplate(r.id)); setFormOpen(true) } catch (e) { toast.error(errorText(e, '加载模板失败')) }
   }
   const onDelete = async (r: PromptTemplateRow) => { try { await deletePromptTemplate(r.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) } }
-  const afterSave = () => { list.reload(); if (current) getPromptTemplate(current.id).then(setCurrent).catch(() => setCurrent(null)) }
+  // 保存后刷新抽屉里的详情：模板可能刚被删除或权限变了，取不到就关掉抽屉并说明原因，
+  // 不能静默置 null（用户会以为"刚保存的东西不见了"）
+  const afterSave = () => {
+    list.reload()
+    if (!current) return
+    getPromptTemplate(current.id).then(setCurrent).catch((e) => { setCurrent(null); toast.error(errorText(e, '刷新模板详情失败，已关闭抽屉')) })
+  }
   const columns = useMemo(() => buildTemplateColumns({ onOpen: setCurrent, onEdit, onDelete }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

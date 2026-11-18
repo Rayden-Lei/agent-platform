@@ -17,6 +17,7 @@ const ENTRY: Record<string, { to: string; label: string }> = {
   rerank: { to: '/knowledge-bases', label: '去知识库' },
   model_breaker: { to: '/models', label: '去模型' },
   scheduler: { to: '/schedules', label: '去定时任务' },
+  kb_unsearchable: { to: '/knowledge-bases', label: '去知识库' },
   client_ip: { to: '/system-settings', label: '去系统参数' },
   login_guard: { to: '/system-settings', label: '去系统参数' },
   rate_limit: { to: '/system-settings', label: '去系统参数' },
@@ -33,6 +34,7 @@ const TITLE: Record<string, string> = {
   login_guard: '登录限流未生效',
   rate_limit: '入口限流未生效',
   sandbox: '脚本沙箱已降级',
+  kb_unsearchable: '有知识库无法检索',
 }
 
 export default function DegradedBanner() {

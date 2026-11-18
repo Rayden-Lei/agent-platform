@@ -19,7 +19,7 @@ const DEFAULTS: AuditFilterValues = { username: undefined, action: undefined, re
 // 审计日志（只读）：多条件筛选同步 URL、服务端排序、展开看完整 detail、导出当前页 CSV。
 export default function AuditLogs() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
-  const list = usePagedList<AuditLogRow>(listAuditLogs, { filters, defaultSort: { field: 'id', order: 'desc' } })
+  const list = usePagedList<AuditLogRow>(listAuditLogs, { filters, defaultSort: { field: 'id', order: 'desc' }, syncUrl: true })
   const columns = useMemo(() => buildAuditColumns(), [])
   const exportPage = () => exportCsv('审计日志', [
     { title: 'ID', value: (r) => r.id },

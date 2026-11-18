@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Citation, ToolStep } from './types'
+import type { Citation, KbUnsearchable, ToolStep } from './types'
 
 // 思考过程：折叠成一行，进行中显示呼吸脉冲与实时计时；点开看模型的实际推理与步骤。
 //
@@ -8,6 +8,8 @@ import type { Citation, ToolStep } from './types'
 // 摘要行也相应改成"调用了 N 个工具"，不假称"思考"。
 interface Props {
   citations?: Citation[]
+  // 本轮检索不了的库（向量模型被停用/删除）。有值时在摘要行直接点名，不让它安静地消失
+  kbUnsearchable?: KbUnsearchable[]
   tools?: ToolStep[]
   reasoning?: string
   // 思考阶段：正文还没开始（streaming && 没有正文）。计时器按它跑
@@ -22,7 +24,7 @@ const CHEVRON = (
   </svg>
 )
 
-export default function ThinkingTrace({ citations, tools, reasoning, running, streaming = false }: Props) {
+export default function ThinkingTrace({ citations, kbUnsearchable, tools, reasoning, running, streaming = false }: Props) {
   const [open, setOpen] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const startRef = useRef<number>(0)
@@ -31,6 +33,7 @@ export default function ThinkingTrace({ citations, tools, reasoning, running, st
   const reasonRef = useRef<HTMLDivElement>(null)
 
   const hasCitations = Array.isArray(citations) && citations.length > 0
+  const brokenKbs = Array.isArray(kbUnsearchable) ? kbUnsearchable : []
   const hasTools = Array.isArray(tools) && tools.length > 0
   const hasReasoning = !!reasoning && reasoning.length > 0
   const toolCount = tools?.length ?? 0
@@ -65,7 +68,7 @@ export default function ThinkingTrace({ citations, tools, reasoning, running, st
   }, [reasoning, running])
 
   // 三者都没有：不渲染这一行（以下不许再出现任何 hook）
-  if (!hasReasoning && !hasCitations && !hasTools && !running) return null
+  if (!hasReasoning && !hasCitations && !hasTools && !brokenKbs.length && !running) return null
 
   // 摘要：有推理内容才说"思考了 N 秒"，否则只说做了什么。
   // 历史回放（从库里读出的旧消息）没有真实计时，doneMsRef 与 elapsed 都是 0，
@@ -85,6 +88,7 @@ export default function ThinkingTrace({ citations, tools, reasoning, running, st
     : [
         hasCitations ? `检索 ${citations!.length} 条` : '',
         toolCount ? `调用 ${toolCount} 个工具` : '',
+        brokenKbs.length ? `${brokenKbs.length} 个知识库无法检索` : '',
       ].filter(Boolean).join(' · ') || '已处理'
 
   // 有推理内容时默认展开，让用户看到模型在想什么；纯步骤则默认收起
@@ -140,6 +144,14 @@ export default function ThinkingTrace({ citations, tools, reasoning, running, st
               <span>命中 {citations!.length} 条相关片段</span>
             </div>
           )}
+          {/* 库坏了要看得见：回答里没有引用时，用户必须能区分"库里确实没内容"与"库当前检索不了"。
+              只追加这一块，不改动引用卡片的既有展示。 */}
+          {brokenKbs.map((kb) => (
+            <div key={kb.kb_id} className="flex flex-wrap items-baseline gap-x-1.5" style={{ color: '#B45309' }}>
+              <span>知识库「{kb.kb_name}」当前无法检索</span>
+              <span className="text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>{kb.reason}</span>
+            </div>
+          ))}
           {/* 工具调用不再在这里列：下方 ToolList 已经一行一个完整渲染（名称 + 入参 + 可展开的结果），
               这里再列一遍就是 2026-11-05 使用者指出的"calculator 出现两次"。摘要行仍保留"调用 N 个工具"。 */}
         </div>

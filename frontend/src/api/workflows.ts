@@ -25,7 +25,7 @@ export interface WorkflowRow {
 }
 export interface WorkflowDetail extends WorkflowRow {
   graph: WorkflowGraph
-  agents: { id: number; name: string; status: string }[]
+
   schedules: { id: number; name: string; cron: string; is_enabled: boolean; last_run_at: string | null }[]
 }
 export interface WorkflowInput { name: string; description?: string; graph: WorkflowGraph }
@@ -70,6 +70,9 @@ export const batchWorkflows = (ids: number[]) => batchAction('/workflows', ids, 
 export const runWorkflow = (id: number, data: { inputs: Record<string, unknown> }) => post<WorkflowRunResult>(`/workflows/${id}/run`, data)
 export const testRunWorkflow = (data: { graph: WorkflowGraph; inputs: Record<string, unknown> }) => post<WorkflowRunResult>('/workflows/test-run', data)
 export const getWorkflowParameters = (id: number) => get<WorkflowParameters>(`/workflows/${id}/parameters`)
+// 保留未调用：后端这个接口就是 run_service.list_runs(workflow_id=...) 的转发，字段与过滤完全一致。
+// 工作流详情页的"运行记录"页签用 RunsTable + filters={{ workflow_id }} 走 /runs 就够了，
+// 而且 /runs 还多支持 source、user_id、model_id 等筛选；再接这条只会多一条等价路径。
 export const listWorkflowRuns = (id: number, params?: PageQuery) => get<Page<RunRow>>(`/workflows/${id}/runs`, params)
 export const resumeWorkflow = (workflowId: number, runId: number, decision: Record<string, unknown>) => post<WorkflowRunResult>(`/workflows/${workflowId}/runs/${runId}/resume`, { decision })
 // 发布草稿成为线上版本（可带说明）；与线上一致时 publish_result=unchanged，不生成新版本

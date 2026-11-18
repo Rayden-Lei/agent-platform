@@ -9,10 +9,16 @@ import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import Drawer from '../ui/Drawer'
 import Button from '../ui/Button'
-import { QuotaCell } from './apiKeyColumns'
+import { ExpiredBadge, QuotaCell } from './apiKeyCells'
+import { formatDateTime } from '../../utils/time'
 
-// API Key 详情抽屉：授权范围、配额与用量、来源白名单全文、限速、归属与时间；密钥本身不可再查看。
-interface Props { apiKey: ApiKeyRow | null; onClose: () => void; onEdit: (k: ApiKeyRow) => void }
+// API Key 详情抽屉：授权范围、配额与用量、有效期、来源白名单全文、限速、归属与时间；密钥本身不可再查看。
+interface Props {
+  apiKey: ApiKeyRow | null
+  onClose: () => void
+  onEdit: (k: ApiKeyRow) => void
+  onRotate: (k: ApiKeyRow) => void
+}
 
 // 详情字段：标签在上、值在下（替代 antd Descriptions 的表格块）
 function Field({ label, children, wide }: { label: string; children: ReactNode; wide?: boolean }) {
@@ -36,14 +42,19 @@ function ScopeList({ type, items }: { type: ResourceType; items: ApiKeyScopeItem
   )
 }
 
-export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit }: Props) {
+export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit, onRotate }: Props) {
   return (
     <Drawer
       open={!!k}
       width={720}
       title={k ? `API Key：${k.name}` : ''}
       onClose={onClose}
-      extra={k && <Button variant="primary" onClick={() => onEdit(k)}>编辑</Button>}
+      extra={k && (
+        <span className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => onRotate(k)}>轮换密钥</Button>
+          <Button variant="primary" onClick={() => onEdit(k)}>{k.is_expired ? '改有效期' : '编辑'}</Button>
+        </span>
+      )}
     >
       {k && (
         <div className="flex flex-col gap-4">
@@ -66,8 +77,21 @@ export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit }: Props) {
 
           <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-2">
             <Field label="Key 前缀"><span className="font-mono">{k.key_prefix}…</span></Field>
-            <Field label="状态"><StatusTag domain="enabled" value={k.is_enabled} /></Field>
-            <Field label="配额 / 已用" wide><QuotaCell used={k.used} quota={k.quota} /></Field>
+            <Field label="状态">
+              <span className="inline-flex items-center gap-1.5">
+                <StatusTag domain="enabled" value={k.is_enabled} />
+                {k.is_expired && <ExpiredBadge expiresAt={k.expires_at} />}
+              </span>
+            </Field>
+            <Field label="有效期">
+              {k.expires_at
+                ? <span className="inline-flex items-center gap-1.5">
+                    <span className={k.is_expired ? 'text-destructive' : undefined}>{formatDateTime(k.expires_at)}</span>
+                    <span className="text-[12px] text-muted-foreground">（{k.is_expired ? '已过期' : '到期后自动拒绝调用'}）</span>
+                  </span>
+                : <span className="text-muted-foreground">永不过期</span>}
+            </Field>
+            <Field label="配额 / 已用"><QuotaCell used={k.used} quota={k.quota} /></Field>
             <Field label="每分钟限速">{k.rate_limit_per_minute === 0 ? '服务端默认' : k.rate_limit_per_minute}</Field>
             <Field label="归属">{k.username || '-'}</Field>
             <Field label="最后使用"><TimeCell value={k.last_used_at} /></Field>
@@ -89,8 +113,20 @@ export default function ApiKeyDrawer({ apiKey: k, onClose, onEdit }: Props) {
             )}
           </section>
 
+          {k.is_expired && (
+            <Alert variant="destructive">
+              <TriangleAlert />
+              <AlertTitle>这个 Key 已过期，调用会被拒绝</AlertTitle>
+              <AlertDescription>
+                到期后每次调用返回 401「API Key 已过期」，且不消耗配额。点右上角"改有效期"选一个未来时间，或清除有效期改为永不过期即可恢复；
+                已经泄露的话请直接"轮换密钥"，旧明文会立即失效。
+              </AlertDescription>
+            </Alert>
+          )}
+
           <p className="m-0 text-[12px] leading-relaxed text-muted-foreground">
-            密钥明文只在生成时显示一次，无法找回；泄露时请删除并重新生成。通过该 Key 发起的运行在
+            密钥明文只在生成时显示一次，无法找回；泄露时请点"轮换密钥"换一把（旧明文立即失效、其余设置与累计用量不变），
+            或删除后重新生成。通过该 Key 发起的运行在
             <Link to="/runs?source=api_key" className="text-primary hover:underline">运行记录</Link>
             里按"API Key"来源筛选。
           </p>

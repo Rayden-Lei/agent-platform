@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronDown, X } from 'lucide-react'
 import { Input } from '@/components/shadcn/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { listAgents, listWorkflows, OPTIONS_PAGE } from '../../api'
+import { useAsyncData } from '../../hooks/useAsyncData'
 import { statusOptions } from '../../constants/status'
 import DateRangeFilter from '../common/DateRangeFilter'
 import FilterTrigger from '../common/FilterTrigger'
@@ -33,13 +34,16 @@ interface Props {
 
 interface Option { value: string; label: string }
 
-// 可搜索单选：智能体 / 工作流可能有上百条，shadcn Select 没有内置搜索，这里用 Popover + 输入框自己拼一个
-function SearchSelect({ value, onChange, placeholder, options, width }: {
+// 可搜索单选：智能体 / 工作流可能有上百条，shadcn Select 没有内置搜索，这里用 Popover + 输入框自己拼一个。
+// error 是选项加载失败的文案：必须显示出来，否则下拉里只有"没有匹配项"，
+// 用户分不清"系统里一个都没有"还是"列表没取到"（与 Schedules 页工作流下拉同一口径）
+function SearchSelect({ value, onChange, placeholder, options, width, error }: {
   value?: string
   onChange: (v?: string) => void
   placeholder: string
   options: Option[]
   width: number
+  error?: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -67,7 +71,8 @@ function SearchSelect({ value, onChange, placeholder, options, width }: {
           >
             全部{placeholder}
           </button>
-          {shown.length === 0 && <span className="px-2 py-3 text-center text-[12.5px] text-muted-foreground">没有匹配项</span>}
+          {error && <span className="px-2 py-2 text-center text-[12.5px] text-destructive">{error}</span>}
+          {!error && shown.length === 0 && <span className="px-2 py-3 text-center text-[12.5px] text-muted-foreground">没有匹配项</span>}
           {shown.map((o) => (
             <button
               key={o.value}
@@ -85,14 +90,15 @@ function SearchSelect({ value, onChange, placeholder, options, width }: {
 }
 
 export default function RunFilters({ values, onChange, onReset, onRefresh, onExport, loading, lockOwner = false }: Props) {
-  const [agents, setAgents] = useState<Option[]>([])
-  const [workflows, setWorkflows] = useState<Option[]>([])
-  useEffect(() => {
-    if (lockOwner) return
-    // 下拉选项各取前 100 条（docs/07 第 7 节）；失败不阻塞筛选，只是没有选项
-    listAgents(OPTIONS_PAGE).then((p) => setAgents(p.items.map((a) => ({ value: String(a.id), label: a.name })))).catch(() => setAgents([]))
-    listWorkflows(OPTIONS_PAGE).then((p) => setWorkflows(p.items.map((w) => ({ value: String(w.id), label: w.name })))).catch(() => setWorkflows([]))
-  }, [lockOwner])
+  // 下拉选项各取前 100 条（docs/07 第 7 节）；取不到不阻塞筛选，但要在下拉里说明，不能静默成"一个都没有"
+  const agents = useAsyncData(
+    async () => (await listAgents(OPTIONS_PAGE)).items.map((a) => ({ value: String(a.id), label: a.name })),
+    [], { auto: !lockOwner, errorText: '加载智能体列表失败' },
+  )
+  const workflows = useAsyncData(
+    async () => (await listWorkflows(OPTIONS_PAGE)).items.map((w) => ({ value: String(w.id), label: w.name })),
+    [], { auto: !lockOwner, errorText: '加载工作流列表失败' },
+  )
 
   return (
     <FilterBar onReset={onReset} onRefresh={onRefresh} onExport={onExport} loading={loading}
@@ -121,8 +127,8 @@ export default function RunFilters({ values, onChange, onReset, onRefresh, onExp
         </SelectContent>
       </Select>
 
-      {!lockOwner && <SearchSelect value={values.agent_id} onChange={(v) => onChange({ agent_id: v })} placeholder="智能体" options={agents} width={160} />}
-      {!lockOwner && <SearchSelect value={values.workflow_id} onChange={(v) => onChange({ workflow_id: v })} placeholder="工作流" options={workflows} width={160} />}
+      {!lockOwner && <SearchSelect value={values.agent_id} onChange={(v) => onChange({ agent_id: v })} placeholder="智能体" options={agents.data ?? []} error={agents.error} width={160} />}
+      {!lockOwner && <SearchSelect value={values.workflow_id} onChange={(v) => onChange({ workflow_id: v })} placeholder="工作流" options={workflows.data ?? []} error={workflows.error} width={160} />}
 
       {values.model_id && (
         <span className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-secondary px-2 text-[12.5px] text-foreground">

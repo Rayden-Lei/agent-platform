@@ -37,7 +37,7 @@ export default function Tools() {
   const [editing, setEditing] = useState<ToolRow | null>(null)
   const [current, setCurrent] = useState<ToolRow | null>(null)
   const [testing, setTesting] = useState<ToolRow | null>(null)
-  const list = usePagedList<ToolRow>(listTools, { filters, selectable: canManage, emptyText: <EmptyState description="还没有工具。内置工具由服务提供，HTTP 工具把任意接口声明成模型可调用的能力。" action={canManage ? { label: '新增工具', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
+  const list = usePagedList<ToolRow>(listTools, { filters, selectable: canManage, syncUrl: true, emptyText: <EmptyState description="还没有工具。内置工具由服务提供，HTTP 工具把任意接口声明成模型可调用的能力。" action={canManage ? { label: '新增工具', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   useOpenParam((id) => { const row = list.items.find((t) => t.id === id); if (row) setCurrent(row); else getTool(id).then(setCurrent).catch((e) => toast.error(errorText(e, '工具不存在'))) })
 

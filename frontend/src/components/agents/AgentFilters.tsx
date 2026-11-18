@@ -21,10 +21,12 @@ interface Props {
   onReset: () => void
   onRefresh: () => void
   models: ModelRow[]
+  /** 模型选项加载失败的文案：要显示出来，否则下拉里只剩"全部模型"，看起来像系统里没有模型 */
+  modelsError?: string | null
   loading?: boolean
 }
 
-export default function AgentFilters({ values, onChange, onReset, onRefresh, models, loading }: Props) {
+export default function AgentFilters({ values, onChange, onReset, onRefresh, models, modelsError, loading }: Props) {
   return (
     <FilterBar onReset={onReset} onRefresh={onRefresh} loading={loading}
       activeCount={Object.values(values).filter(Boolean).length}>
@@ -44,6 +46,8 @@ export default function AgentFilters({ values, onChange, onReset, onRefresh, mod
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL}>全部模型</SelectItem>
+          {/* 加载失败给一行提示：否则下拉里只有「全部模型」，看起来像"系统里一个模型都没有" */}
+          {modelsError && <SelectItem value="__error__" disabled>{modelsError}</SelectItem>}
           {models.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>)}
         </SelectContent>
       </Select>

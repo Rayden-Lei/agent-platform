@@ -7,7 +7,7 @@ import ErrorState from '../common/ErrorState'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
 import Button from '../ui/Button'
-import { QuotaCell } from '../admin/apiKeyColumns'
+import { ExpiredBadge, QuotaCell } from '../admin/apiKeyCells'
 
 // "发布渠道"的密钥区（docs/15 3.7.2）：作用域含本智能体的 Key（developer 只看到本人的，服务端过滤）；
 // "生成仅限此智能体的 Key"由页面打开预填了作用域的 Key 表单。数据由页面传入，本组件不发请求。
@@ -68,7 +68,12 @@ export default function AgentKeysCard({ keys, total, error, onRetry, onCreate }:
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2.5"><Link to={`/api-keys?open=${r.id}`} className="text-primary hover:underline">{r.name}</Link></td>
                     <td className="px-3 py-2.5"><code className="font-mono text-[12.5px]">{r.key_prefix}…</code></td>
-                    <td className="px-3 py-2.5"><StatusTag domain="enabled" value={r.is_enabled} /></td>
+                    <td className="px-3 py-2.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <StatusTag domain="enabled" value={r.is_enabled} />
+                        {r.is_expired && <ExpiredBadge expiresAt={r.expires_at} />}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5"><QuotaCell used={r.used} quota={r.quota} /></td>
                     <td className="px-3 py-2.5"><TimeCell value={r.last_used_at} mode="relative" /></td>
                   </tr>

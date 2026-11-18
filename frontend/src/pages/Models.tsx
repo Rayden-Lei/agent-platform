@@ -41,7 +41,7 @@ export default function Models() {
   const { status, refresh } = useSystemStatus(30000)
   const breakers = useMemo(() => Object.fromEntries((status?.model_breakers ?? []).map((b) => [b.model_id, b])), [status])
   const usage = useAsyncData(async () => Object.fromEntries((await getModelUsage({ days: 7 })).items.map((u) => [u.model_id, u])), [])
-  const list = usePagedList<ModelRow>(listModels, { filters, selectable: canManage, emptyText: <EmptyState description="还没有接入模型。新增一个 OpenAI 兼容端点后，智能体才能对话。" action={canManage ? { label: '新增模型', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
+  const list = usePagedList<ModelRow>(listModels, { filters, selectable: canManage, syncUrl: true, emptyText: <EmptyState description="还没有接入模型。新增一个 OpenAI 兼容端点后，智能体才能对话。" action={canManage ? { label: '新增模型', onClick: () => { setEditing(null); setFormOpen(true) } } : undefined} /> })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   // ?open= 深链：列表可能还没加载完或该模型不在当前筛选内，直接取详情打开
   useOpenParam((id) => { const row = list.items.find((m) => m.id === id); if (row) setCurrent(row); else getModel(id).then(setCurrent).catch((e) => toast.error(errorText(e, '模型不存在或无权查看'))) })

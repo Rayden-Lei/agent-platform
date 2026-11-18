@@ -5,7 +5,7 @@ import { FieldDiff } from '../common/DiffView'
 // 并把模型 / 知识库 / 工具 ID 换成"名称（#ID）"便于辨认；查不到名称的（已删除或不在下拉前 100 条）保留 ID。
 export const SNAPSHOT_LABELS: Record<string, string> = {
   name: '名称', description: '描述', system_prompt: '系统提示词', model_id: '模型', params: '模型参数', kb_ids: '知识库', tool_ids: '工具', skill_ids: '技能',
-  workflow_id: '工作流（预留）', prompt_template_id: '提示词模板', prompt_template_version: '模板版本', prompt_variables: '模板变量',
+  prompt_template_id: '提示词模板', prompt_template_version: '模板版本', prompt_variables: '模板变量',
 }
 
 export interface RefNames { model?: Record<number, string>; kb?: Record<number, string>; tool?: Record<number, string>; skill?: Record<number, string> }

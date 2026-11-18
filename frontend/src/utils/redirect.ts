@@ -5,6 +5,9 @@ const NOTICE_KEY = 'login_notice' // 被踢回登录页的原因（如"账号已
 // 只接受站内路径：以单个 / 开头；不是 // 或 /\（浏览器把反斜杠当斜杠，两者都会跳到外站）；不含控制字符。
 // 其余（http:、javascript:、空）一律回首页，防开放重定向
 export function safeRedirect(raw: string | null | undefined): string {
+  // 控制字符是这里要显式拦截的输入（换行、`\0` 等能截断 Location 头或注入日志），
+  // 不是误用正则，故对 no-control-regex 单条豁免
+  // eslint-disable-next-line no-control-regex
   if (!raw || !raw.startsWith('/') || /^\/[/\\]/.test(raw) || /[\u0000-\u001f]/.test(raw)) return '/'
   return raw
 }

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Controls, MiniMap, addEdge, useNodesState, useEdgesState, useReactFlow } from '@xyflow/react'
-import type { XYPosition } from '@xyflow/react'
+import type { Connection, XYPosition } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { toast } from 'sonner'
 import { ArrowLeft, Blocks } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getWorkflow, updateWorkflow, createWorkflow, listAgents, listTools, listKBs, testRunWorkflow, publishWorkflow, OPTIONS_PAGE } from '../api'
-import { PaletteList, buildDetail, degreeOf, paletteOf, toGraph } from './workflow/palette'
+import { PaletteList, buildDetail, degreeOf, paletteOf, toGraph, type FlowEdgeType, type FlowNodeType } from './workflow/palette'
 import { nodeTypes } from './workflow/FlowNode'
 import { collectNodeConfig, configToFormValues, type NodeFormValues } from './workflow/NodeConfigForm'
 import ConfigPanel from './workflow/ConfigPanel'
@@ -35,16 +35,17 @@ function EditorInner() {
   const setDirty = useUnsaved((s) => s.setDirty)
   const guardedNavigate = useGuardedNavigate()
   const baseline = useRef<string | null>(null)
-  // ReactFlow 的节点/边状态：nodes 的 data 里挂 nodeType/config/detail 等业务数据
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  // ReactFlow 的节点/边状态：nodes 的 data 里挂 nodeType/config/detail 等业务数据。
+  // 显式给出元素类型：不写时空数组会被推成 never[]，之后每个 n.data 都取不到
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNodeType>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdgeType>([])
   // 配置面板下拉的数据源（智能体/工具/知识库各取前 100 条）
   const [agents, setAgents] = useState<any[]>([])
   const [tools, setTools] = useState<any[]>([])
   const [kbs, setKBs] = useState<any[]>([])
   // 当前选中的节点/连线：两者互斥，决定右侧配置面板展示什么
-  const [selectedNode, setSelectedNode] = useState<any>(null)
-  const [selectedEdge, setSelectedEdge] = useState<any>(null)
+  const [selectedNode, setSelectedNode] = useState<FlowNodeType | null>(null)
+  const [selectedEdge, setSelectedEdge] = useState<FlowEdgeType | null>(null)
   // 节点配置表单的值（受控）：与选中节点一一对应
   const [nodeValues, setNodeValues] = useState<NodeFormValues>(() => configToFormValues({}))
   const [nodeErrorField, setNodeErrorField] = useState<string | null>(null)
@@ -67,7 +68,7 @@ function EditorInner() {
   const [showPalette, setShowPalette] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 删除确认：待确认的元素，确认后真正删除
-  const [pendingDelete, setPendingDelete] = useState<{ nodes: any[]; edges: any[] } | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{ nodes: FlowNodeType[]; edges: FlowEdgeType[] } | null>(null)
   const pendingResolve = useRef<((ok: boolean) => void) | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, deleteElements, fitView } = useReactFlow()
@@ -92,13 +93,13 @@ function EditorInner() {
       getWorkflow(Number(id)).then((wf) => {
         setName(wf.name)
         setDescription(wf.description || '')
-        const ns = (wf.graph?.nodes || []).map((n: any) => {
+        const ns: FlowNodeType[] = (wf.graph?.nodes || []).map((n) => {
           // 摘要先留空，避免用空 agents/tools 误显示"未选择智能体/工具"；
           // 真正的摘要由下方 [agents, tools] 的 effect 在数据就绪后派生
           return { id: n.id, type: 'flow', position: { x: n.position?.x ?? 80, y: n.position?.y ?? 80 }, data: { ...paletteOf(n.type), nodeType: n.type, config: n.config || {}, detail: '' } }
         })
         // 边 label 对应后端连线的 when 字段（条件分支的值）
-        const es = (wf.graph?.edges || []).map((e: any, i: number) => ({ id: 'e' + i, source: e.from, target: e.to, label: e.when || undefined }))
+        const es: FlowEdgeType[] = (wf.graph?.edges || []).map((e, i) => ({ id: 'e' + i, source: e.from, target: e.to, label: e.when || undefined }))
         setNodes(ns)
         setEdges(es)
         baseline.current = JSON.stringify({ name: wf.name, description: wf.description || '', graph: toGraph(ns, es) })
@@ -155,18 +156,18 @@ function EditorInner() {
     addNode(event.dataTransfer.getData('application/reactflow'), screenToFlowPosition({ x: event.clientX, y: event.clientY }))
   }
   // 从节点拖线到另一节点：默认新建一条连线
-  const onConnect = useCallback((conn: any) => setEdges((eds) => addEdge(conn, eds)), [setEdges])
+  const onConnect = useCallback((conn: Connection) => setEdges((eds) => addEdge<FlowEdgeType>(conn, eds)), [setEdges])
 
   // 选中节点并回填表单值。上次改出错的节点回填出错时的原文，不拿旧 config 盖掉没改完的内容
-  const selectNode = (node: any) => {
+  const selectNode = (node: FlowNodeType) => {
     setSelectedNode(node)
     setSelectedEdge(null)
     setNodeErrorField(node.data.errorField ?? null)
     setNodeValues(node.data.formDraft ?? configToFormValues(node.data.config))
   }
-  const onNodeClick = (_: any, node: any) => selectNode(node)
+  const onNodeClick = (_: React.MouseEvent, node: FlowNodeType) => selectNode(node)
   // 点击连线：编辑分支值（label）；点击空白处取消所有选中
-  const onEdgeClick = (_: any, edge: any) => { setSelectedEdge(edge); setSelectedNode(null); setEdgeLabel(edge.label || '') }
+  const onEdgeClick = (_: React.MouseEvent, edge: FlowEdgeType) => { setSelectedEdge(edge); setSelectedNode(null); setEdgeLabel(typeof edge.label === 'string' ? edge.label : '') }
   const onPaneClick = () => { setSelectedNode(null); setSelectedEdge(null) }
 
   // 节点配置随改随写回（此前要点"应用配置"，不点就悄悄丢，docs/15 2.3 第 19 条）。
@@ -195,7 +196,7 @@ function EditorInner() {
 
   // 删除确认：React Flow 默认按 Backspace 删除选中元素，误按即删且没有撤销（撤销在 3B 的 WF-20）。
   // 按钮删除也走 deleteElements，同样先过这里；涉及节点才弹（连带删掉的连线一并列出），只删连线不弹，删了重连即可
-  const confirmDelete = ({ nodes: ns, edges: es }: { nodes: any[]; edges: any[] }) => {
+  const confirmDelete = ({ nodes: ns, edges: es }: { nodes: FlowNodeType[]; edges: FlowEdgeType[] }) => {
     if (!ns.length) return Promise.resolve(true)
     return new Promise<boolean>((resolve) => {
       pendingResolve.current = resolve
@@ -208,7 +209,7 @@ function EditorInner() {
     setPendingDelete(null)
   }
   // 删除后清掉指向已删元素的选中，否则右侧面板还停在已删的节点上（Backspace 删除此前就有这个问题）
-  const onDeleted = ({ nodes: ns, edges: es }: { nodes: any[]; edges: any[] }) => {
+  const onDeleted = ({ nodes: ns, edges: es }: { nodes: FlowNodeType[]; edges: FlowEdgeType[] }) => {
     if (selectedNode && ns.some((n) => n.id === selectedNode.id)) setSelectedNode(null)
     if (selectedEdge && es.some((e) => e.id === selectedEdge.id)) setSelectedEdge(null)
   }
@@ -216,7 +217,7 @@ function EditorInner() {
 
   // 有节点配置校验不过时拦下保存与测试运行：提示是哪个节点，选中它并移到视口里（AC-034 ③）
   const blockedByInvalidNode = () => {
-    const bad: any = nodes.find((n) => n.data.configError)
+    const bad = nodes.find((n) => n.data.configError)
     if (!bad) return false
     toast.error(`节点「${bad.data.label}${bad.data.detail ? ' · ' + bad.data.detail : ''}」配置有误：${bad.data.configError}`)
     // 已选中的不重选：重选会清掉当前的标红

@@ -1,5 +1,8 @@
-import type { ReactNode } from 'react'
+import type { DragEvent, ReactNode } from 'react'
+import type { Edge, Node } from '@xyflow/react'
 import { CirclePlay, CircleStop, Bot, Wrench, GitBranch, BookOpen, Code, Globe, Repeat, UserCheck, Split, Merge } from 'lucide-react'
+import type { NodeFormValues } from './NodeConfigForm'
+import type { WorkflowGraph } from '../../api'
 
 // 工作流编辑器的节点库常量、节点摘要、画布 ↔ 后端 graph 的序列化。
 // 画布数据与后端契约的映射：节点 {id, type, config, position}，连线 {from, to, when}。
@@ -11,6 +14,28 @@ export interface PaletteItem {
   icon: ReactNode
   description: string
 }
+
+// 画布节点的 data：节点库里的外观（label/color/icon/description）+ 业务节点类型 + 后端存的 config + 画布摘要。
+// 表单校验不过时把原因与表单原文也挂在这里（画布上标红，保存与测试运行被拦下）。
+export interface FlowNodeData extends Record<string, unknown> {
+  nodeType: string
+  config: Record<string, any>
+  detail: string
+  label?: string
+  color?: string
+  icon?: ReactNode
+  description?: string
+  configError?: string
+  errorField?: string
+  formDraft?: NodeFormValues
+}
+
+// ReactFlow 自定义节点：type 固定为 'flow'，与 FlowNode.tsx 注册的 nodeTypes 键一一对应。
+// 画布状态、事件回调都按它取类型，避免把节点推成 never
+export type FlowNodeType = Node<FlowNodeData, 'flow'>
+
+// 画布连线：label 为条件/循环分支值（true/false、loop/exit），并行出边没有 label
+export type FlowEdgeType = Edge
 
 export const PALETTE: PaletteItem[] = [
   // 图标统一走 16px 线框（lucide 默认 stroke），与侧栏菜单同一套视觉；颜色只保留类型区分，
@@ -38,7 +63,8 @@ export interface NodeDegree { inbound: number; outbound: number }
 
 // 生成节点摘要文案：根据节点类型与已保存的 config 提炼一行说明（如智能体名/URL/循环次数），
 // 让画布上不开配置面板也能看出每个节点在干什么；并行 / 汇聚的摘要来自连线数量
-export function buildDetail(nodeType: string, config: any, agents: any[], tools: any[], degree?: NodeDegree): string {
+// tools 形参保留：调用方按同一签名传参（agent 摘要用 agents 查名，工具摘要直接读 config.tool_name）
+export function buildDetail(nodeType: string, config: any, agents: any[], _tools: any[], degree?: NodeDegree): string {
   if (nodeType === 'agent') { const a = agents.find((x: any) => x.id === config.agent_id); return a ? a.name : '未选择智能体' }
   if (nodeType === 'tool') return config.tool_name || '未选择工具'
   if (nodeType === 'condition') return config.expression || '未设表达式'
@@ -52,15 +78,15 @@ export function buildDetail(nodeType: string, config: any, agents: any[], tools:
   return ''
 }
 
-export function degreeOf(nodeId: string, edges: any[]): NodeDegree {
+export function degreeOf(nodeId: string, edges: FlowEdgeType[]): NodeDegree {
   return { inbound: edges.filter((e) => e.target === nodeId).length, outbound: edges.filter((e) => e.source === nodeId).length }
 }
 
 // 把画布序列化成与保存 / 测试运行一致的 graph；边的 label 即后端的 when（并行出边没有 when）
-export function toGraph(nodes: any[], edges: any[]) {
+export function toGraph(nodes: FlowNodeType[], edges: FlowEdgeType[]): WorkflowGraph {
   return {
     nodes: nodes.map((n) => ({ id: n.id, type: n.data.nodeType, config: n.data.config, position: n.position })),
-    edges: edges.map((e) => ({ from: e.source, to: e.target, when: e.label || undefined })),
+    edges: edges.map((e) => ({ from: e.source, to: e.target, when: typeof e.label === 'string' ? e.label || undefined : undefined })),
   }
 }
 
@@ -70,7 +96,7 @@ export function toGraph(nodes: any[], edges: any[]) {
 // 副标题（流程入口 / 调用工具）只在悬停时以 title 提示给出。
 // 拖拽建节点（dragstart 时把类型写入 dataTransfer），也可以点击添加到画布中央 ——
 // 触屏上拖不了，移动端只能靠点击（docs/15 WF-01）
-export function PaletteList({ onDragStart, onAdd }: { onDragStart: (event: any, type: string) => void; onAdd: (type: string) => void }) {
+export function PaletteList({ onDragStart, onAdd }: { onDragStart: (event: DragEvent<HTMLDivElement>, type: string) => void; onAdd: (type: string) => void }) {
   return (
     <div className="flex flex-col gap-0.5">
       <div className="px-2 pb-1.5 text-[11px] font-medium" style={{ color: 'var(--fg-subtle)' }}>节点库</div>

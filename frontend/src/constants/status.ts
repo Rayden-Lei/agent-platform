@@ -57,10 +57,17 @@ export const STATUS: Record<StatusDomain, Record<string, StatusMeta>> = {
     logout_others: { label: '退出其他设备', color: 'volcano' },
     rag_retrieve: { label: '知识检索', color: 'cyan' },
     api_key_ip_rejected: { label: 'Key 来源被拒', color: 'red' },
+    // Key 生命周期（docs/15 PB-11）：过期 / 停用 / 归属账号停用被拒时留痕，轮换写 rotate
+    api_key_expired: { label: 'Key 已过期被拒', color: 'red' },
+    api_key_disabled: { label: 'Key 已停用被拒', color: 'red' },
+    api_key_owner_inactive: { label: 'Key 归属账号不可用', color: 'volcano' },
+    rotate: { label: '轮换密钥', color: 'volcano' },
     share_enable: { label: '开启分享', color: 'magenta' },
     share_update: { label: '修改分享', color: 'orange' },
     share_disable: { label: '关闭分享', color: 'default' },
     share_reset: { label: '重置分享链接', color: 'volcano' },
+    // 运行记录页把卡住的运行（超过 STUCK_RUN_MINUTES 仍 running）标记为失败（docs/15 OP-10）
+    mark_failed: { label: '标记失败', color: 'red' },
   },
   auditResource: {
     auth: { label: '登录', color: 'default' },

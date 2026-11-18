@@ -15,7 +15,6 @@ export interface AgentRow {
   kb_ids: number[]
   tool_ids: number[]
   skill_ids: number[]
-  workflow_id: number | null
   status: AgentStatus | string
   version: number // 最近一次生成的版本号
   published_version: number | null // 线上版本号；从未发布为 null
@@ -46,7 +45,6 @@ export interface AgentInput {
   kb_ids?: number[]
   tool_ids?: number[]
   skill_ids?: number[]
-  workflow_id?: number | null
   prompt_template_id?: number | null
   prompt_variables?: Record<string, string>
 }
@@ -62,7 +60,6 @@ export interface AgentDetail extends AgentRow {
   missing_kb_ids: number[]
   skills: AgentSkillRef[]
   missing_skill_ids: number[]
-  workflow: { id: number; name: string; status: string } | null
   prompt_template: { id: number; name: string; version: number; variables: { name: string; description?: string; required?: boolean; default?: string | null }[] } | null
   // 草稿与线上两份同形快照（字段由后端 snapshot_of 定义）：发布弹窗与版本对比据此做字段级差异；从未发布时线上为 null
   draft_snapshot: AgentSnapshot

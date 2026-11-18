@@ -1,4 +1,7 @@
-import type { DebugMetrics, PromptInfo, TraceStep } from '../../api'
+import type { DebugMetrics, KbUnsearchable, PromptInfo, TraceStep } from '../../api'
+
+// 转出给同目录组件用（ThinkingTrace 直接从这里取类型，与 Citation / ToolStep 同一入口）
+export type { KbUnsearchable }
 
 // Chat 对话页共享类型定义：描述一条聊天消息除正文外的附加信息（引用、工具步骤、Token 用量、所属运行）
 
@@ -55,6 +58,8 @@ export interface Msg {
   // 模型的推理内容（思维链）。不是所有模型都给；有值时"思考过程"展开区显示它
   reasoning?: string
   citations?: Citation[]
+  // 本轮检索不了的库（向量模型被停用/删除）：回答里没有引用时用它区分"库里没内容"与"库坏了"
+  kbUnsearchable?: KbUnsearchable[]
   tools?: ToolStep[]
   usage?: ChatUsage
   runId?: number

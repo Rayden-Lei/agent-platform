@@ -28,7 +28,7 @@ export default function KnowledgeBases() {
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<KnowledgeBaseRow | null>(null)
-  const list = usePagedList<KnowledgeBaseRow>(listKBs, { filters, selectable: true })
+  const list = usePagedList<KnowledgeBaseRow>(listKBs, { filters, selectable: true, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
   const remove = async (kb: KnowledgeBaseRow) => {
     try { await deleteKB(kb.id); list.reload() } catch (e) { toast.error(errorText(e, '删除失败')) }

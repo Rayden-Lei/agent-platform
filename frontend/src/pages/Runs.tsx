@@ -23,7 +23,7 @@ const DEFAULTS: RunFilterValues = { run_type: undefined, status: undefined, sour
 export default function Runs() {
   const navigate = useNavigate()
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
-  const list = usePagedList<RunRow>(listRuns, { filters, defaultSort: { field: 'id', order: 'desc' } })
+  const list = usePagedList<RunRow>(listRuns, { filters, defaultSort: { field: 'id', order: 'desc' }, syncUrl: true })
   // 统计不随 status 变化：状态卡本身就是按状态切分的
   const summaryFilters = useMemo(() => ({ ...filters, status: undefined }), [filters])
   const summary = useAsyncData(() => getRunsSummary(summaryFilters), [JSON.stringify(summaryFilters)], { errorText: '加载统计失败' })

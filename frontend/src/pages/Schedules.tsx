@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Clock, Plus, TriangleAlert } from 'lucide-react'
-import { batchSchedules, deleteSchedule, listSchedules, listWorkflows, OPTIONS_PAGE, runScheduleNow, toggleSchedule, type ScheduleRow } from '../api'
+import { batchSchedules, deleteSchedule, getSchedule, listSchedules, listWorkflows, OPTIONS_PAGE, runScheduleNow, toggleSchedule, type ScheduleRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
@@ -39,12 +39,19 @@ export default function Schedules() {
   const schedulerRunning = scheduler?.running ?? true // 状态未知时不误报
   // 筛选下拉只列已发布的工作流（FR-075）：定时任务只能绑线上版本
   const workflows = useAsyncData(() => listWorkflows({ ...OPTIONS_PAGE, status: 'published' }), [])
-  const list = usePagedList<ScheduleRow>(listSchedules, { filters, selectable: true })
+  const list = usePagedList<ScheduleRow>(listSchedules, { filters, selectable: true, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
+  // 抽屉打开时按 id 再取一次最新数据：列表行是列表加载那一刻的快照，
+  // 立即运行、启停之后"下次运行 / 最近运行"还停在旧值，看起来像没生效
+  const openDetail = async (row: ScheduleRow) => {
+    setCurrent(row)
+    try { setCurrent(await getSchedule(row.id)) } catch (e) { toast.error(errorText(e, '刷新定时任务详情失败')) }
+  }
   useOpenParam((id) => {
     const row = list.items.find((s) => s.id === id)
-    if (row) setCurrent(row)
-    else toast.warning('该任务不在当前列表里')
+    if (row) { void openDetail(row); return }
+    // 不在当前页或当前筛选里：按 id 直接取，?open= 深链（运行记录、审计日志里的关联）才打得开
+    getSchedule(id).then(setCurrent).catch((e) => toast.error(errorText(e, '该定时任务不存在或无权查看')))
   })
 
   const openCreate = () => { setEditing(null); setFormOpen(true) }
@@ -58,7 +65,7 @@ export default function Schedules() {
   // 抽屉里点编辑：先关抽屉再开表单，避免抽屉叠抽屉
   const onEdit = (s: ScheduleRow) => { setCurrent(null); setEditing(s); setFormOpen(true) }
   const columns = useMemo(
-    () => buildScheduleColumns({ schedulerRunning, onOpen: setCurrent, onToggle, onRunNow, onEdit, onDelete }),
+    () => buildScheduleColumns({ schedulerRunning, onOpen: openDetail, onToggle, onRunNow, onEdit, onDelete }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [schedulerRunning],
   )

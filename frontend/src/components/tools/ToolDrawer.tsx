@@ -97,8 +97,9 @@ export default function ToolDrawer({ tool, canManage, onClose, onTest, onEdit }:
                   <span className="flex items-center gap-1.5">
                     <Badge tone="info">{(tool.config?.method || 'POST').toUpperCase()}</Badge>
                     <code className="min-w-0 break-all text-[12.5px]">{tool.config?.url || '-'}</code>
+                    {/* 回调里重新判空：JSX 条件渲染不会把窄化带进闭包，这里判一次才拿得到 string */}
                     {tool.config?.url && (
-                      <Button size="sm" variant="ghost" aria-label="复制请求地址" onClick={() => copyUrl(tool.config.url)}>
+                      <Button size="sm" variant="ghost" aria-label="复制请求地址" onClick={() => { const url = tool.config.url; if (url) copyUrl(url) }}>
                         <Copy className="size-3.5" />
                       </Button>
                     )}

@@ -108,9 +108,6 @@ export default function AgentOverview({ agent }: Props) {
             </span>
           ) : <span className="text-muted-foreground">未绑定</span>}
         </Cell>
-        <Cell label="关联工作流">
-          {agent.workflow ? <ResourceLink type="workflow" id={agent.workflow.id} name={agent.workflow.name} /> : '-'}
-        </Cell>
         <Cell label="创建人 / 时间">{agent.created_by_username || '-'} / {formatDateTime(agent.created_at)}</Cell>
         <Cell label="更新时间">{formatDateTime(agent.updated_at)}</Cell>
         <Cell label="模型参数">

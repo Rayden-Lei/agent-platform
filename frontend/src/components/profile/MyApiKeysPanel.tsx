@@ -7,7 +7,7 @@ import EmptyState from '../common/EmptyState'
 import ErrorState from '../common/ErrorState'
 import StatusTag from '../common/StatusTag'
 import TimeCell from '../common/TimeCell'
-import { QuotaCell, ScopeCell } from '../admin/apiKeyColumns'
+import { ExpiredBadge, QuotaCell, ScopeCell } from '../admin/apiKeyCells'
 import { KEY_PLACEHOLDER } from '../publish/apiSnippets'
 
 // 个人中心"我的 API 密钥"（docs/15 OP-03、D-15）：归属本人的 Key，只读。admin / developer 去「API Key 管理」生成与启停；
@@ -69,7 +69,12 @@ export default function MyApiKeysPanel({ keys, total, error, onRetry, canManage,
                   {canManage ? <Link to={`/api-keys?open=${r.id}`} className="text-primary hover:underline">{r.name}</Link> : r.name}
                 </td>
                 <td className="px-3 py-2.5"><code className="font-mono text-[12.5px]">{r.key_prefix}</code></td>
-                <td className="px-3 py-2.5"><StatusTag domain="enabled" value={r.is_enabled} /></td>
+                <td className="px-3 py-2.5">
+                  <span className="inline-flex items-center gap-1.5">
+                    <StatusTag domain="enabled" value={r.is_enabled} />
+                    {r.is_expired && <ExpiredBadge expiresAt={r.expires_at} />}
+                  </span>
+                </td>
                 <td className="px-3 py-2.5"><ScopeCell scope={r.scope} /></td>
                 <td className="px-3 py-2.5"><QuotaCell used={r.used} quota={r.quota} /></td>
                 <td className="px-3 py-2.5"><TimeCell value={r.last_used_at} mode="relative" /></td>

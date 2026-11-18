@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from "sonner"
 import { Plus, Bot } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { batchAgents, deleteAgent, getAgent, listAgents, listModels, OPTIONS_PAGE, publishAgent, type AgentDetail, type AgentRow, type ModelRow } from '../api'
+import { batchAgents, deleteAgent, getAgent, listAgents, listModels, OPTIONS_PAGE, publishAgent, type AgentDetail, type AgentRow } from '../api'
 import { usePagedList } from '../hooks/usePagedList'
 import { useQueryState } from '../hooks/useQueryState'
 import { useBatchAction } from '../hooks/useBatchAction'
+import { useAsyncData } from '../hooks/useAsyncData'
 import ListPage from '../components/layout/ListPage'
 import PageHeader from '../components/layout/PageHeader'
 import EmptyState from '../components/common/EmptyState'
@@ -25,7 +26,8 @@ const DEFAULTS: AgentFilterValues = { q: undefined, status: undefined, model_id:
 export default function Agents() {
   const navigate = useNavigate()
   const [filters, setFilters, resetFilters] = useQueryState(DEFAULTS)
-  const [models, setModels] = useState<ModelRow[]>([])
+  // 模型下拉的选项：取不到不阻塞列表，但筛选条要说明（原来静默成空数组，看起来像"系统里没有模型"）
+  const models = useAsyncData(async () => (await listModels(OPTIONS_PAGE)).items, [], { errorText: '加载模型列表失败' })
   const [publishing, setPublishing] = useState<AgentDetail | null>(null)
   const list = usePagedList<AgentRow>(listAgents, {
     filters,
@@ -33,8 +35,6 @@ export default function Agents() {
     emptyText: <EmptyState description="还没有智能体。先配置模型，再创建智能体并发布，之后才能对话。" action={{ label: '新增智能体', onClick: () => navigate('/agents/new') }} />,
   })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload() })
-
-  useEffect(() => { listModels(OPTIONS_PAGE).then((p) => setModels(p.items)).catch(() => setModels([])) }, [])
 
   const act = async (fn: () => Promise<unknown>, fallback: string) => {
     try { await fn(); list.reload() } catch (e) { toast.error(errorText(e, fallback)) }
@@ -62,7 +62,7 @@ export default function Agents() {
   return (
     <ListPage
       header={<PageHeader icon={<Bot />} title="智能体管理" description="提示词、模型、工具与知识库的组合。保存只改草稿，发布后才对外生效；每次发布生成一个可回滚的版本。" extra={<Button variant="primary" size="md" icon={<Plus />} onClick={() => navigate('/agents/new')}>新增智能体</Button>} />}
-      filters={<AgentFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} models={models} loading={list.loading} />}
+      filters={<AgentFilters values={filters} onChange={setFilters} onReset={resetFilters} onRefresh={list.reload} models={models.data ?? []} modelsError={models.error} loading={list.loading} />}
       batch={
         <BatchActionBar
           count={list.selectedKeys.length}

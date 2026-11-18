@@ -72,8 +72,12 @@ export interface DebugMetrics {
   config_source: 'inline' | 'draft' | 'live'
 }
 
+// 本轮绑定了、但当前检索不了的知识库（向量模型被停用/删除，2026-11-18 起随 citations 事件追加下发）。
+// 没有它，用户看到"回答里没引用"分不清是库里确实没内容还是库坏了。
+export interface KbUnsearchable { kb_id: number; kb_name: string; reason: string }
+
 export interface ChatStreamHandlers {
-  onCitations?: (citations: any[]) => void
+  onCitations?: (citations: any[], kbUnsearchable: KbUnsearchable[]) => void
   onDelta?: (content: string) => void
   // 推理内容（思维链）增量。DeepSeek 系模型会给，其他模型可能完全没有，没有时不会回调
   onReasoning?: (content: string) => void
@@ -194,7 +198,7 @@ export async function streamSse(url: string, body: ChatPayload | DebugChatPayloa
       try { evt = JSON.parse(part.slice(6)) } catch { continue }
       switch (evt.type) {
         case 'citations':
-          handlers.onCitations?.(evt.citations || [])
+          handlers.onCitations?.(evt.citations || [], evt.kb_unsearchable || [])
           break
         case 'delta':
           handlers.onDelta?.(evt.content || '')

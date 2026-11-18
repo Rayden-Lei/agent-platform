@@ -56,6 +56,9 @@ export interface WorkflowUsageRow extends RunMetrics {
 
 export const getStatsOverview = () => get<StatsOverview>('/stats/overview')
 export const getDailyRunStats = (params?: PageQuery) => get<{ days: number; timezone: string; items: DailyRunStat[] }>('/stats/runs/daily', params)
+// 保留未调用：时间窗内的汇总指标。与它同口径的数已经能拿到 —— 智能体 / 工作流统计页签用
+// getAgentUsage / getWorkflowUsage 的 items[0]（同一份 RunMetrics，还多带会话数、最近运行时间），
+// 运行记录页用 getRunsSummary（随列表筛选联动、多给耗时分位与延迟分布）。再接一条只会多一份重复来源。
 export const getPeriodSummary = (params?: PageQuery) => get<RunMetrics & { days: number }>('/stats/runs/summary', params)
 export const getModelUsage = (params?: PageQuery) => get<{ days: number; items: ModelUsageRow[] }>('/stats/models', params)
 export const getAgentUsage = (params?: PageQuery) => get<{ days: number; items: AgentUsageRow[] }>('/stats/agents', params)

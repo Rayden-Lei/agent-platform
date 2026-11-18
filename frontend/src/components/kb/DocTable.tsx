@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { FileText, Play, RotateCw, Settings, Upload } from 'lucide-react'
@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/shadcn/tooltip'
 import { batchDocs, deleteDoc, listDocs, reprocessDoc, resumeDoc, uploadDoc, type DocumentRow, type UploadPolicy } from '../../api'
 import { usePagedList } from '../../hooks/usePagedList'
+import { useQueryState } from '../../hooks/useQueryState'
 import { useBatchAction } from '../../hooks/useBatchAction'
 import { statusOptions } from '../../constants/status'
 import FilterBar from '../layout/FilterBar'
@@ -26,6 +27,11 @@ import { errorText } from '../../utils/errors'
 // 知识库文档页签：上传、状态 / 文件名筛选、分页、失败原因、切片抽屉、重新解析、批量删除 / 重新解析。
 // 处理中的文档显示进度条（已入库 / 计划总数、速度、预计剩余），有处理中的文档时每 3 秒轮询一次，没有则停（docs/07 第 3 节）。
 interface Props { kbId: number; uploadPolicy?: UploadPolicy | null; onChanged?: () => void }
+
+// 状态 / 文件名筛选进 URL：与全站其它列表同一口径（刷新不丢、能分享、能落深链）。
+// 原来这两个值是本地 useState，是唯一没接 useQueryState 的列表筛选。
+type DocFilters = { status?: string; q?: string }
+const DOC_FILTER_DEFAULTS: DocFilters = { status: undefined, q: undefined }
 
 // 上传前预检（服务端仍会再校验，不合规 400 / 413）：挡掉明显传不上去的文件，省得几十 MB 传完才被拒
 function precheck(file: File, policy?: UploadPolicy | null): string | null {
@@ -98,13 +104,11 @@ function StatusCell({ doc }: { doc: DocumentRow }) {
 const canResume = (doc: DocumentRow) => doc.status === 'failed' || docProgress(doc).stalled
 
 export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
-  const [status, setStatus] = useState<string | undefined>()
-  const [q, setQ] = useState<string | undefined>()
+  const [filters, setFilters, resetFilters] = useQueryState(DOC_FILTER_DEFAULTS)
   const [chunkDoc, setChunkDoc] = useState<DocumentRow | null>(null)
   const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const filters = useMemo(() => ({ status, q }), [status, q])
-  const list = usePagedList<DocumentRow>((params) => listDocs(kbId, params), { filters, pageSize: 10, selectable: true })
+  const list = usePagedList<DocumentRow>((params) => listDocs(kbId, params), { filters, pageSize: 10, selectable: true, syncUrl: true })
   const batch = useBatchAction(() => { list.clearSelection(); list.reload(); onChanged?.() })
   const processing = list.items.some((d) => PROCESSING.has(d.status))
 
@@ -135,7 +139,7 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
     list.reload(); onChanged?.()
   }
 
-  const empty = <EmptyState description={status || q ? '没有匹配的文档' : '还没有文档，点右上角上传（PDF / Word / Markdown / TXT）'} />
+  const empty = <EmptyState description={filters.status || filters.q ? '没有匹配的文档' : '还没有文档，点右上角上传（PDF / Word / Markdown / TXT）'} />
 
   const columns: DataColumn<DocumentRow>[] = [
     { key: 'name', header: '文件名', primary: true, sortable: true, width: 220, cell: (d) => <span className="block truncate font-medium">{d.name}</span> },
@@ -186,10 +190,10 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <FilterBar
-        onReset={() => { setStatus(undefined); setQ(undefined) }}
+        onReset={resetFilters}
         onRefresh={list.reload}
         loading={list.loading}
-        activeCount={(status ? 1 : 0) + (q ? 1 : 0)}
+        activeCount={Object.values(filters).filter(Boolean).length}
         extra={
           <>
             <input
@@ -206,8 +210,8 @@ export default function DocTable({ kbId, uploadPolicy, onChanged }: Props) {
           </>
         }
       >
-        <SearchInput value={q} onChange={setQ} placeholder="搜索文件名" width={200} />
-        <Select value={status ?? 'all'} onValueChange={(v) => setStatus(v === 'all' ? undefined : v)}>
+        <SearchInput value={filters.q} onChange={(q) => setFilters({ q })} placeholder="搜索文件名" width={200} />
+        <Select value={filters.status ?? 'all'} onValueChange={(v) => setFilters({ status: v === 'all' ? undefined : v })}>
           <SelectTrigger size="sm" className="h-8 w-[110px] text-[13px]" aria-label="状态">
             <SelectValue placeholder="状态" />
           </SelectTrigger>

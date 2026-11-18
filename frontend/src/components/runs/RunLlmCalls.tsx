@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import { listLlmCalls, type LlmCallRow } from '../../api'
 import { errorText } from '../../utils/errors'
 import Badge from '../ui/Badge'
