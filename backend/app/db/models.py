@@ -59,7 +59,6 @@ class Agent(Base, TimestampMixin):
     # 技能绑定（docs/17 §4.3）：与 kb_ids / tool_ids 同风格，JSONB 数组无外键，技能删除后残留 ID 装配时忽略。
     # 不塞进 tool_ids：技能不是"动作"，混进去会让工具列表与执行器都要多判一次类型
     skill_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
-    workflow_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True)
     # draft 从未发布 / published 线上可用 / offline 有线上版本但已下线（docs/15 3.2，FR-039）
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 最近一次生成的版本号
@@ -170,6 +169,10 @@ class McpServer(Base, TimestampMixin):
 
 class Tool(Base):
     __tablename__ = "tools"
+    # 工具名唯一（DB 约束，不是只靠服务层查重）：工作流 tool 节点按名字查工具，
+    # 重名时那一查就无从判断该调哪一个。服务层的 _check_name_taken 只是给人一句好懂的 409，
+    # 并发建同名工具时它是拦不住的 —— 唯一性必须由库兜底（rules/database.md）。
+    __table_args__ = (UniqueConstraint("name", name="uq_tools_name"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -323,17 +326,6 @@ class WorkflowVersion(Base):
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)  # 发布说明
 
 
-class WorkflowNode(Base):
-    __tablename__ = "workflow_nodes"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    workflow_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
-    node_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    node_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    pos_x: Mapped[float] = mapped_column(Float, nullable=False, default=0)
-    pos_y: Mapped[float] = mapped_column(Float, nullable=False, default=0)
-
-
 class Conversation(Base, TimestampMixin):
     __tablename__ = "conversations"
     # 两个通道各自的会话列表（docs/15 3.7.1，M2a）：界面按 (本人, ui)，API Key 按 (Key, 终端用户)
@@ -469,6 +461,34 @@ class AgentShare(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class ShareQuotaUsage(Base):
+    """分享链接的每日额度计数（2026-11-18）：一行 = 一条分享在一个自然日已消耗的对话次数。
+
+    为什么单建计数表而不是继续 count(runs)：原来是"先 count 再放行"的 check-then-act，
+    并发请求各自 count 到同一个未超限的数字后全部放行，链接每日总量这个**成本硬上限**直接失效。
+    改成在数据库层做原子扣减（UPDATE ... WHERE used < quota 按影响行数判断，与 api_key_service.authenticate 同一范式），
+    并发下由行锁串行化，不会超扣。
+
+    为什么按天一行、而不是在 agent_shares 上放一个当日计数器：
+    计数器要能自然过期（换天即归零），单列计数器还得额外写"跨天重置"的逻辑，而重置本身又是竞态点。
+    按 (share_id, usage_date) 一行，换天就是换一行，INSERT ... ON CONFLICT 天然处理首次与并发。
+
+    usage_date 存业务时区（REPORT_TIMEZONE）的自然日，与运营统计同一口径；
+    存 UTC 的话，"今天"在时区边界上会和页面上看到的日期对不上。
+    """
+
+    __tablename__ = "share_quota_usage"
+    __table_args__ = (UniqueConstraint("share_id", "usage_date", "visitor_id", name="uq_share_quota_usage_share_day_visitor"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    share_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("agent_shares.id", ondelete="CASCADE"), nullable=False, index=True)
+    usage_date: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)  # 业务时区的自然日 00:00
+    # 空串表示"整条链接的总量"，否则是某个访客的量。用空串而不是 NULL：
+    # PostgreSQL 的唯一约束把 NULL 视为互不相等，用 NULL 会让"整条链接"这一行每次都能再插一条，唯一约束形同虚设。
+    visitor_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -477,7 +497,10 @@ class ApiKey(Base):
     key_prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)  # 鉴权按哈希查找
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    quota: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    # 调用额度（docs/15 PB-11，2026-11-18 起可空）：NULL = 不限次数，0 = 一次都不能调。
+    # 此前是 NOT NULL + 页面把 0 显示成"不限"，实际扣减条件 used < quota 恒不成立、每次都 429 —— 同一个值两种含义。
+    # evaluates_none()：显式传 None 要落成 NULL（表示"不限"），而不是被列默认值 1000 顶掉
+    quota: Mapped[int | None] = mapped_column(Integer().evaluates_none(), nullable=True, default=1000)
     used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 入口治理（FR-025 / FR-026）：来源 IP 白名单（IP 或 CIDR 列表，空 = 不限制）；每分钟限速（0 = 用全局默认）
     allowed_ips: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -488,6 +511,9 @@ class ApiKey(Base):
     workflow_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     kb_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # 有效期（docs/15 PB-11，2026-11-18 起）：NULL = 永不过期；到期后 authenticate 直接 401「已过期」且不扣配额。
+    # 判定一律在服务端（api_key_service.authenticate），前端只用于展示 is_expired。
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
