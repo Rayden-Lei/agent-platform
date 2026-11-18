@@ -24,6 +24,7 @@ from app.tools.executor import execute_tool
 from app.tools.permission import ToolCallContext
 from app.tools.schema import check_tool_args
 from app.core import outbound
+from app.workflow import cancel
 from app.workflow.checkpointer import new_saver
 from app.workflow.io_contract import end_outputs
 from app.workflow.safe_eval import ConditionSyntaxError, evaluate
@@ -38,6 +39,22 @@ def _merge_dict(current: dict, update: dict) -> dict:
 
 def _last_write(current: Any, update: Any) -> Any:
     return update
+
+
+def _merge_usage(current: dict | None, update: dict | None) -> dict:
+    """按模型累加 token 用量：{模型 id: {prompt_tokens, completion_tokens, total_tokens}}。
+
+    为什么用 reducer 而不是覆盖：并行分支里两个智能体节点可能在同一超步各自写一次，
+    没有 reducer 会抛 InvalidUpdateError；覆盖则会丢掉其中一个分支的用量，成本算少。
+    键用字符串（模型 id），因为 state 会被 JSON 序列化进检查点，JSON 的对象键只能是字符串。
+    """
+    merged = {k: dict(v or {}) for k, v in (current or {}).items()}
+    for mid, usage in (update or {}).items():
+        key = str(mid)
+        slot = merged.setdefault(key, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            slot[field] = int(slot.get(field) or 0) + int((usage or {}).get(field) or 0)
+    return merged
 
 
 class WorkflowState(TypedDict, total=False):
@@ -55,6 +72,9 @@ class WorkflowState(TypedDict, total=False):
     review_result: str
     node_outputs: Annotated[dict, _merge_dict]
     steps: Annotated[list, operator.add]
+    # 每个智能体节点按模型累计的 token 用量，收尾时据此折算成本（runs.token_usage / runs.cost）。
+    # 2026-11-18 前工作流运行从不写这两列，运营统计里工作流的 token 与成本恒为 0。
+    usage_by_model: Annotated[dict, _merge_usage]
 
 
 # checkpointer 用 Postgres（docs/15 WF-12、docs/09 第二梯队）。2026-11-15 前这里是模块级 MemorySaver()：
@@ -108,6 +128,20 @@ def _require_str(config: dict, key: str) -> str:
     if not isinstance(value, str) or not value:
         raise BizError(400, f"节点配置 {key} 必须是非空字符串")
     return value
+
+
+def _guarded(run_id: int | None, fn: Callable) -> Callable:
+    """节点执行前查一次取消标记（docs/15 WF-05）：命中直接抛 RunCancelled，不写任何节点日志。
+
+    包装放在**节点函数之外**，而不是塞进 _start_node：节点函数都是
+    "rn_id = _start_node(...)" + "except: _node_failed(rn_id, ...)" 的形状，
+    若 _start_node 自己抛，rn_id 未赋值，except 分支会拿未定义变量再抛一次，真正的错误信息就丢了。
+    在节点函数之前抛，既满足"命中则不再新增节点日志"，也让异常干净地穿出图。
+    """
+    def run(state: WorkflowState) -> dict:
+        cancel.raise_if_cancelled(run_id)
+        return fn(state)
+    return run
 
 
 def _start_node(run_id: int | None, node_id: str, node_type: str, input_data: Any = None) -> int:
@@ -257,6 +291,10 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
             ], purpose="workflow", run_id=run_id)
             out = _finalize_node_output(node_id, resp.content, config)
             out["steps"] = [f"agent:{live.name}"]
+            usage = _usage_of(resp)
+            if usage:
+                # 记到运行上：工作流的 token 与成本原先一直是 0（2026-11-18 审计）
+                out["usage_by_model"] = {str(model.id): usage}
             _finish_node(rn_id, "success", out["output"])
             return out
         except Exception as e:
@@ -266,6 +304,23 @@ def _make_agent_node(config: dict, run_id: int, node_id: str, default_ref: str |
             db.close()
 
     return run
+
+
+def _usage_of(message: Any) -> dict:
+    """从一次模型返回里取 token 用量，统一成 {prompt_tokens, completion_tokens, total_tokens}。
+
+    取不到就返回空字典（例如打桩的模型、某些厂商不回 usage）：宁可不记，也不编一个 0 出来
+    —— 0 会被当成"确实没花 token"，而缺失能被看出来是没采集到。
+    """
+    um = getattr(message, "usage_metadata", None) or getattr(message, "response_metadata", {}).get("token_usage")
+    if not um:
+        return {}
+    prompt = int(um.get("input_tokens") or um.get("prompt_tokens") or 0)
+    completion = int(um.get("output_tokens") or um.get("completion_tokens") or 0)
+    total = int(um.get("total_tokens") or 0) or prompt + completion
+    if not (prompt or completion or total):
+        return {}
+    return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
 
 
 def _resolve_param_value(state: WorkflowState, value: Any) -> Any:
@@ -630,14 +685,15 @@ def build_workflow(graph_data: dict, run_id: int | None = None, role: str | None
     g = StateGraph(WorkflowState)
     for n in nodes:
         ntype, nid, config = n.get("type"), n["id"], n.get("config") or {}
+        # 每个节点都套一层取消检查（WF-05）：命中后不再写节点日志、不再往下跑。
         if ntype == "kb_retrieval":
             # 知识库检索节点需要携带触发者角色做权限过滤
-            g.add_node(nid, _make_kb_node(config, run_id, nid, role, default_ref=default_refs.get(nid)))
+            g.add_node(nid, _guarded(run_id, _make_kb_node(config, run_id, nid, role, default_ref=default_refs.get(nid))))
         elif ntype == "join":
-            g.add_node(nid, _make_join_node(config, run_id, nid, join_preds.get(nid, [])))
+            g.add_node(nid, _guarded(run_id, _make_join_node(config, run_id, nid, join_preds.get(nid, []))))
         else:
             builder = NODE_BUILDERS.get(ntype, _make_start_node)
-            g.add_node(nid, builder(config, run_id, nid, default_ref=default_refs.get(nid)))
+            g.add_node(nid, _guarded(run_id, builder(config, run_id, nid, default_ref=default_refs.get(nid))))
 
     start_ids = [n["id"] for n in nodes if n.get("type") == "start"]
     end_ids = [n["id"] for n in nodes if n.get("type") == "end"]

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core import outbound
 from app.tools import general, permission
 from app.tools.permission import ToolCallContext
 from app.db.models import Tool
@@ -57,10 +58,24 @@ def test_gate_allows_builtin_without_allowlist():
 
 # --------------------------------------------------------------------------- 内置 http_request：空名单只拦内网
 
+def _fake_resolver(monkeypatch, ip: str):
+    """让任意域名都解析到指定 IP。
+
+    **打桩点是 outbound._resolver，不是 general.socket**：2026-11-18 起内置工具不再自己
+    解析 DNS，判定全部委托给 app.core.outbound（两份实现分叉过，修一份漏一份就是绕过洞）。
+    """
+    import socket as _socket
+
+    def _resolve(host, port, *args, **kwargs):
+        family = _socket.AF_INET6 if ":" in ip else _socket.AF_INET
+        return [(family, _socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+    monkeypatch.setattr(outbound, "_resolver", _resolve)
+
+
 def test_builtin_empty_allowlist_allows_public_host(monkeypatch):
     """内置 http_request 空名单时放行公网 —— 让工具开箱可用。"""
-    monkeypatch.setattr(general.socket, "getaddrinfo",
-                        lambda host, port: [(None, None, None, None, ("93.184.216.34", 0))])
+    _fake_resolver(monkeypatch, "93.184.216.34")
     ok, reason = general._host_allowed("example.com", "")
     assert ok is True, reason
 
@@ -71,8 +86,7 @@ def test_builtin_blocks_private_addresses_even_without_allowlist(monkeypatch, pr
 
     这是内置工具的安全下限 —— 它比工具行那层"松"，但不是没有底线。
     """
-    monkeypatch.setattr(general.socket, "getaddrinfo",
-                        lambda host, port: [(None, None, None, None, (private_ip, 0))])
+    _fake_resolver(monkeypatch, private_ip)
     ok, reason = general._host_allowed("evil.example.com", "")
     assert ok is False
     assert "内网" in reason
@@ -80,8 +94,7 @@ def test_builtin_blocks_private_addresses_even_without_allowlist(monkeypatch, pr
 
 def test_builtin_blocks_when_domain_resolves_to_private(monkeypatch):
     """域名解析到内网 IP 同样拦：光看域名字面会被绕过。"""
-    monkeypatch.setattr(general.socket, "getaddrinfo",
-                        lambda host, port: [(None, None, None, None, ("192.168.0.7", 0))])
+    _fake_resolver(monkeypatch, "192.168.0.7")
     ok, reason = general._host_allowed("totally-public-looking.com", "")
     assert ok is False
     assert "192.168.0.7" in reason
@@ -89,26 +102,26 @@ def test_builtin_blocks_when_domain_resolves_to_private(monkeypatch):
 
 def test_builtin_allowlist_narrows_public_access(monkeypatch):
     """填了白名单就严格按白名单：公网域名不在名单里也要拒。"""
-    monkeypatch.setattr(general.socket, "getaddrinfo",
-                        lambda host, port: [(None, None, None, None, ("93.184.216.34", 0))])
+    _fake_resolver(monkeypatch, "93.184.216.34")
     ok, reason = general._host_allowed("other.com", "example.com")
     assert ok is False
     assert "白名单" in reason or "不在" in reason
 
 
 def test_builtin_allowlist_supports_exact_and_suffix(monkeypatch):
-    monkeypatch.setattr(general.socket, "getaddrinfo",
-                        lambda host, port: [(None, None, None, None, ("93.184.216.34", 0))])
+    _fake_resolver(monkeypatch, "93.184.216.34")
     assert general._host_allowed("example.com", "example.com")[0] is True
     assert general._host_allowed("v2.example.com", "example.com")[0] is True
 
 
 def test_builtin_rejects_unresolvable_host(monkeypatch):
     """解析不了就拒绝：判不出目标是不是内网，不能放行。"""
-    def boom(host, port):
-        raise general.socket.gaierror("nxdomain")
+    import socket as _socket
 
-    monkeypatch.setattr(general.socket, "getaddrinfo", boom)
+    def boom(host, port, *args, **kwargs):
+        raise _socket.gaierror("nxdomain")
+
+    monkeypatch.setattr(outbound, "_resolver", boom)
     ok, reason = general._host_allowed("no-such-host.invalid", "")
     assert ok is False
     assert "无法解析" in reason

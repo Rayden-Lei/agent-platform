@@ -117,16 +117,18 @@ def test_config_fields_declared_for_tools():
     assert search["default_limit"].kind == "int"
 
 
-def test_secret_never_leaves_via_config_out(db):
+def test_secret_never_leaves_via_config_out():
     """工具行里的密钥加密存 secret_enc，_config_out 只给声明和 has_secret，绝不下发明文。
-
-    造数自己造，不依赖库里已有 web_search 工具行：CI 是空库，`.first()` 返回 None 会让这条
-    用例直接 AttributeError —— 那等于"密钥脱敏"从没在 CI 上真正验过。
 
     行名必须仍是 web_search（不带 pytest- 前缀）：_config_out 按名字从 BUILTIN_PARAMETERS /
     TOOL_CONFIG_FIELDS 补声明，换个名字就只测到"非内置工具原样返回 config"，验不到"补声明但
-    不下发密钥"这条真正要守的路径。因此回收只能靠下面的 finally 删除，不能靠 cleanup.py 的
-    前缀扫描 —— 这是本用例唯一需要人工留意的地方，别把 finally 里的 delete 删掉。
+    不下发密钥"这条真正要守的路径。
+
+    **不落库**（2026-11-18 改）：tools.name 现在有数据库唯一约束（迁移 20261118_100000），
+    而共享库里已有一条种子 web_search，再插一行同名直接 UniqueViolation。
+    被测的两个函数都只读对象属性、不查库，所以造一个内存里的 Tool 实例即可 ——
+    既避免与种子行冲突，也不必再靠 finally 手工回收（原注释担心的正是"换个名字就测不到"，
+    现在这个顾虑由"不落库"消掉了）。
     """
     from app.core.security import encrypt_secret
     from app.db.models import Tool
@@ -134,26 +136,20 @@ def test_secret_never_leaves_via_config_out(db):
 
     secret = "sk-tool-owned-never-leaked-9999"
     t = Tool(
-        name="web_search", description="pytest 造数：只用于验证 _config_out 不下发密钥，用例结束即删", type="builtin",
+        name="web_search", description="pytest 内存造数：只用于验证 _config_out 不下发密钥", type="builtin",
         config={"default_limit": 3, "endpoint": "https://example.com/search"}, timeout=20,
         secret_enc=encrypt_secret(secret),
     )
-    db.add(t)
-    db.commit()
-    try:
-        out = _config_out(t)
-        assert secret not in str(out), "明文出现在接口返回里"
-        assert out.get("default_limit") == 3, "普通配置项要照常带出来"
-        # 走的是内置分支：参数声明与配置项声明都是代码里的，不落库
-        assert "query" in out["parameters"]["properties"]
-        assert any(f["kind"] == "secret" for f in out["config_fields"])
-        # 对外整体形态（工具页真正拿到的那个 dict）同样只认 has_secret
-        whole = _to_dict(t)
-        assert secret not in str(whole), "明文出现在工具对外形态里"
-        assert whole["auth"]["has_secret"] is True
-    finally:
-        db.delete(t)
-        db.commit()
+    out = _config_out(t)
+    assert secret not in str(out), "明文出现在接口返回里"
+    assert out.get("default_limit") == 3, "普通配置项要照常带出来"
+    # 走的是内置分支：参数声明与配置项声明都是代码里的，不落库
+    assert "query" in out["parameters"]["properties"]
+    assert any(f["kind"] == "secret" for f in out["config_fields"])
+    # 对外整体形态（工具页真正拿到的那个 dict）同样只认 has_secret
+    whole = _to_dict(t)
+    assert secret not in str(whole), "明文出现在工具对外形态里"
+    assert whole["auth"]["has_secret"] is True
 
 
 def test_settings_service_no_longer_owns_tool_config():

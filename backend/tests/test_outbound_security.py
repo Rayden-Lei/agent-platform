@@ -175,6 +175,113 @@ def test_redirect_within_allowlist_is_followed(monkeypatch):
     assert resp.status_code == 200 and resp.text == "ok"
 
 
+def test_async_redirect_to_private_address_is_blocked(monkeypatch):
+    """**内置 http_request 的异步路径**也必须逐跳校验（2026-11-18 审计的 P0）。
+
+    修复前 http_request 用 `httpx.AsyncClient(follow_redirects=True)`：首跳过了 _host_allowed，
+    对方 302 到 169.254.169.254 就绕过全部检查。同步版当时已经手工跟重定向，异步版漏了 ——
+    同一个安全规则两份实现，修一份漏一份。这里直接打 async 入口，钉住"异步也逐跳校验"。
+    """
+    import asyncio
+
+    import httpx
+
+    _fake_dns(monkeypatch, {
+        "a.example.com": "93.184.216.34",
+        "b.example.com": "93.184.216.35",
+        "169.254.169.254": "169.254.169.254",
+    })
+    calls = {"n": 0}
+
+    class _FakeAsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            calls["n"] += 1
+            req = httpx.Request(method, url)
+            # 第一跳合法，第二跳跳到云元数据
+            target = {"https://a.example.com/x": "http://169.254.169.254/latest/meta-data/"}[url]
+            return httpx.Response(302, headers={"location": target}, request=req)
+
+    monkeypatch.setattr(outbound.httpx, "AsyncClient", _FakeAsyncClient)
+    with pytest.raises(outbound.OutboundBlocked):
+        asyncio.run(outbound.arequest_with_checked_redirects(
+            "https://a.example.com/x", allowed=["*.example.com"], timeout=1))
+    assert calls["n"] == 1, "第二跳的目标在发请求之前就该被拦下"
+
+
+def test_async_redirect_within_allowlist_is_followed(monkeypatch):
+    """合法域名之间的重定向异步也要正常跟过去 —— 收紧安全不能把功能收没了。"""
+    import asyncio
+
+    import httpx
+
+    _fake_dns(monkeypatch, {
+        "a.example.com": "93.184.216.34",
+        "b.example.com": "93.184.216.35",
+    })
+
+    class _FakeAsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            req = httpx.Request(method, url)
+            if url.endswith("/x"):
+                return httpx.Response(302, headers={"location": "https://b.example.com/y"}, request=req)
+            return httpx.Response(200, text="ok", request=req)
+
+    monkeypatch.setattr(outbound.httpx, "AsyncClient", _FakeAsyncClient)
+    resp = asyncio.run(outbound.arequest_with_checked_redirects(
+        "https://a.example.com/x", allowed=["*.example.com"], timeout=1))
+    assert resp.status_code == 200 and resp.text == "ok"
+
+
+def test_async_redirect_loop_is_capped(monkeypatch):
+    """A→B→A 的循环不能无限跟：超过 max_redirects 就放弃并报可读原因。"""
+    import asyncio
+
+    import httpx
+
+    _fake_dns(monkeypatch, {
+        "a.example.com": "93.184.216.34",
+        "b.example.com": "93.184.216.35",
+    })
+
+    class _FakeAsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            req = httpx.Request(method, url)
+            target = "https://b.example.com/y" if url.endswith("/x") else "https://a.example.com/x"
+            return httpx.Response(302, headers={"location": target}, request=req)
+
+    monkeypatch.setattr(outbound.httpx, "AsyncClient", _FakeAsyncClient)
+    with pytest.raises(outbound.OutboundBlocked, match="重定向次数超过"):
+        asyncio.run(outbound.arequest_with_checked_redirects(
+            "https://a.example.com/x", allowed=["*.example.com"], timeout=1, max_redirects=3))
+
+
 def test_http_node_without_allowlist_fails_cleanly():
     """未配白名单的 HTTP 节点应当失败并给出可读原因，而不是发出去。"""
     from app.workflow.engine import build_workflow

@@ -12,17 +12,16 @@ from __future__ import annotations
 
 import base64
 import binascii
-import ipaddress
 import json
 import logging
 import random
 import re
-import socket
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.config import settings
+from app.core import http as http_util
 from app.core import outbound
 
 logger = logging.getLogger(__name__)
@@ -244,7 +243,8 @@ def json_query(json_text: str, path: str) -> dict:
 
 # 内网地址段与白名单匹配规则统一在 app.core.outbound（原先这里、permission.py、skill_github.py 各有一份，
 # 而工作流 HTTP 节点一份都没有 —— 那就是 2026-11-14 审计出来的 SSRF 洞）。
-_PRIVATE_NETS = outbound.PRIVATE_NETS
+# 2026-11-18 收口：连"内置工具自己那份 DNS/内网判定"也删掉了，一律调 outbound.check_host，
+# 两份实现分叉正是 http_request 302 绕过（只校验首跳）的成因。
 
 
 def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
@@ -266,29 +266,18 @@ def _host_allowed(host: str, allowed: str = "") -> tuple[bool, str]:
 
     两者对空的处理相反，是因为**默认值的安全性不同**：内置工具默认"公网可达但碰不到内网"
     已经是安全的下限；工具行的地址是任意 URL，没有白名单就无从判断。
+
+    **实现只剩一层**：判定全部委托给 app.core.outbound（DNS 解析 + 内网段 + 白名单匹配），
+    这里只把它的异常翻译成工具层统一的 (ok, reason)。以前这里是第二份 DNS/内网判定代码，
+    与 outbound 各写一遍 —— 同步版修了、异步版忘了修，正是 2026-11-18 那个 302 绕过洞的成因。
     """
-    if not host:
-        return False, "URL 缺少主机名"
-
-    # 先把域名解析成 IP 再判内网：否则 http://127.0.0.1 换个域名照样能绕过去
+    allow = [p.strip() for p in (allowed or "").split(",") if p.strip()]
     try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return False, f"域名无法解析：{host}"
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if any(ip in net for net in _PRIVATE_NETS):
-            return False, f"不允许访问内网地址（{host} → {ip}）"
-
-    allow = (allowed or "").strip()
-    if not allow:
-        return True, ""
-    patterns = [p.strip().lower() for p in allow.split(",") if p.strip()]
-    h = host.lower()
-    for p in patterns:
-        if _pattern_matches(h, p):
-            return True, ""
-    return False, f"域名不在白名单内：{host}（允许：{', '.join(patterns)}）"
+        # None = 只拦内网放行公网（内置工具的开箱默认）；非空列表 = 严格白名单
+        outbound.check_host(host, allow or None)
+    except outbound.OutboundBlocked as e:
+        return False, str(e)
+    return True, ""
 
 
 def _pattern_matches(host: str, pattern: str) -> bool:
@@ -335,8 +324,20 @@ async def http_request(url: str, method: str = "GET", headers: str = "", body: s
 
     timeout = tool_config_float("http_request", config, "timeout")
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.request(m, url.strip(), headers=hdrs, content=body or None)
+        # 走公共出站闸门：手工跟重定向并**逐跳**复核目标主机。
+        # 不能用 follow_redirects=True —— 首跳过了白名单，对方 302 到 169.254.169.254 就绕过了全部检查。
+        resp = await outbound.arequest_with_checked_redirects(
+            url.strip(),
+            allowed=[p.strip() for p in tool_config_str("http_request", config, "allowed_hosts").split(",") if p.strip()] or None,
+            method=m,
+            timeout=timeout,
+            headers=hdrs,
+            content=body or None,
+        )
+    except outbound.OutboundBlocked as e:
+        # 重定向跳到了不该去的地方：这与首跳被拒同等对待，都要能追到日志
+        logger.warning("http_request 拒绝跟随重定向：url=%r reason=%s", url[:200], e)
+        return _err(str(e))
     except httpx.TimeoutException:
         return _err(f"请求超时（{timeout:.0f}s）")
     except httpx.HTTPError as e:
@@ -388,7 +389,8 @@ def web_search(query: str, limit: int = 0, *, config: dict | None = None, api_ke
     timeout = tool_config_float("web_search", config, "timeout")
     payload = {"Query": q}
     try:
-        with httpx.Client(timeout=timeout) as client:
+        # 走统一构造：管理员可能把搜索服务指向内网自建端点，回环/内网地址不该被系统代理劫持
+        with http_util.sync_client(endpoint, timeout) as client:
             resp = client.post(
                 endpoint,
                 json=payload,

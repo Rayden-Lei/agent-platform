@@ -1,19 +1,23 @@
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from langgraph.types import Command, GraphOutput
 from sqlalchemy import func, tuple_
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
-from app.db.session import rows_to_dict
-from app.db.models import Agent, ApiKey, Run, ScheduledJob, User, Workflow, WorkflowVersion
+from app.db.session import SessionLocal, rows_to_dict
+from app.db.models import ApiKey, Run, ScheduledJob, User, Workflow, WorkflowVersion
 from app.runtime.workflow_config import SNAPSHOT_FIELDS, load_version_config, normalize_snapshot, resolve_live_config, snapshot_of
 from app.services import api_key_service, run_service
+from app.workflow import cancel as workflow_cancel
+from app.workflow import runner as workflow_runner
 from app.workflow.checkpointer import delete_thread_safely
 from app.workflow.engine import WorkflowState, build_workflow
 from app.workflow.io_contract import build_initial_state, end_outputs, start_variables
@@ -121,12 +125,15 @@ def get_workflow(db: Session, workflow_id: int) -> Workflow:
 
 
 def get_workflow_detail(db: Session, workflow_id: int) -> dict:
-    """取工作流详情：graph 定义、节点统计、引用它的智能体、绑定的定时任务，供编辑器与详情页加载。"""
+    """取工作流详情：graph 定义、节点统计、绑定的定时任务，供编辑器与详情页加载。
+
+    曾经还带一份"引用它的智能体"清单，取自 agents.workflow_id —— 那一列在对话链路里从未被读过，
+    2026-11-18 按 docs/15 D-12 决策 A 删掉了，清单随之取消（工作流不再有"被智能体绑定"这种关系）。
+    """
     w = get_workflow(db, workflow_id)
-    agents = [{"id": a.id, "name": a.name, "status": a.status} for a in db.query(Agent).filter(Agent.workflow_id == workflow_id).order_by(Agent.id).all()]
     schedules = [{"id": s.id, "name": s.name, "cron": s.cron, "is_enabled": s.is_enabled, "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None}
                  for s in db.query(ScheduledJob).filter(ScheduledJob.workflow_id == workflow_id).order_by(ScheduledJob.id).all()]
-    return {**_serialize(db, [w], with_graph=True)[0], "agents": agents, "schedules": schedules}
+    return {**_serialize(db, [w], with_graph=True)[0], "schedules": schedules}
 
 
 def workflow_parameters(db: Session, workflow_id: int, api_key: ApiKey | None = None) -> dict:
@@ -300,25 +307,20 @@ def list_versions(db: Session, workflow_id: int, params: PageParams) -> dict:
     return page
 
 
-def assert_published(db: Session, workflow_id: int) -> None:
-    """定时任务 / API Key 这类"配置里就固定绑定了一个工作流"的场景，在保存配置时就要拦未发布的：
-    否则任务能建出来、到点才发现跑不了。报错口径与运行时一致（403 工作流未发布）。"""
-    resolve_live_config(db, workflow_id)
-
-
 def delete_workflow(db: Session, workflow_id: int, user: User | None = None) -> None:
-    """删除工作流：先检查智能体引用（RESTRICT），其余关联数据由外键 CASCADE 级联删除。
+    """删除工作流：关联数据全部由外键 CASCADE 级联删除。
 
     写审计 delete：这个操作会连带删掉该工作流的全部运行记录与会话（CASCADE），
     是最不该无声发生的一类删除。
+
+    2026-11-18 起没有"被智能体引用则 409"这道检查了：agents.workflow_id 已按 docs/15 D-12
+    决策 A 删掉，工作流与智能体之间只剩运行记录（runs.workflow_id）、会话
+    （conversations.workflow_id）、定时任务（scheduled_jobs.workflow_id）三类级联关系，
+    都是随删除一起带走的下游数据，不是拦住删除的引用。
     """
     w = get_workflow(db, workflow_id)
     name = w.name
-    # agents.workflow_id 为 RESTRICT，删除前给出友好提示
-    ref_count = db.query(Agent).filter(Agent.workflow_id == workflow_id).count()
-    if ref_count:
-        raise BizError(409, f"该工作流已被 {ref_count} 个智能体引用，无法删除")
-    # runs / run_nodes / conversations / workflow_nodes / scheduled_jobs 由数据库外键 CASCADE 级联删除
+    # runs / run_nodes / conversations / scheduled_jobs 由数据库外键 CASCADE 级联删除
     db.delete(w)
     db.commit()
     if user is not None:
@@ -368,6 +370,18 @@ async def test_run_workflow(graph: dict, inputs: dict | None, role: str | None =
         delete_thread_safely(thread_id)
 
 
+def _refresh_quietly(db: Session, run: Run) -> None:
+    """把 run 对象与库里的最新行同步（取消等跨会话写入后必须先做）。
+
+    刷新失败不该让执行线程崩掉：数据已经在库里，收尾失败只会让状态稍后被清理任务纠正，
+    而在这里抛异常会把"运行已取消"变成"运行执行异常"，反而误导调用方。
+    """
+    try:
+        db.refresh(run)
+    except Exception:
+        logger.warning("刷新运行记录失败 run_id=%s", run.id, exc_info=True)
+
+
 def execute_workflow(db: Session, workflow_id: int, version: int, payload, run: Run, role: str | None = None) -> dict:
     """同步执行（或续跑）一张工作流图，并收尾运行记录。接口触发（线程池）、API Key、人工审核续跑与定时任务共用。
 
@@ -385,16 +399,49 @@ def execute_workflow(db: Session, workflow_id: int, version: int, payload, run: 
     会从空 state 重跑（实测行为见 tests/test_checkpoint_postgres.py::test_awaiting_review_thread_must_survive_cleanup）。
     清理失败只记日志（delete_thread_safely），绝不影响已经定稿的运行结果。
     """
+    run_id = run.id
+    cancelled_at_end = False
     try:
-        graph = build_workflow(load_version_config(db, workflow_id, version).graph, run_id=run.id, role=role)
+        graph = build_workflow(load_version_config(db, workflow_id, version).graph, run_id=run_id, role=role)
         # 显式要 v2：结果按 GraphOutput 取值（state 在 .value、中断在 .interrupts），见 _interrupt_value
-        result = graph.invoke(payload, {"configurable": {"thread_id": str(run.id)}}, version="v2")
+        result = graph.invoke(payload, {"configurable": {"thread_id": str(run_id)}}, version="v2")
+    except workflow_cancel.RunCancelled:
+        # 取消不是失败：调用方主动终止的，落 cancelled 而不是 failed（docs/15 WF-05）。
+        # 先 refresh：取消接口在另一个会话里已经把行写成 cancelled，本会话的 run 对象还停在 running，
+        # 不刷新就 finalize 会把 finished_at / latency_ms 覆盖成"执行线程发现取消的时刻"，与取消时间对不上。
+        # finalize_run 本身幂等：刷新后若已是终态，它返回 False，一个字段都不改。
+        logger.info("工作流运行已取消 run_id=%s workflow_id=%s", run_id, workflow_id)
+        _refresh_quietly(db, run)
+        run_service.finalize_run(db, run, "cancelled", error="运行已取消")
+        delete_thread_safely(str(run_id))
+        return {"run_id": run_id, "status": "cancelled"}
     except Exception as e:
-        logger.exception("工作流执行失败 run_id=%s workflow_id=%s version=%s", run.id, workflow_id, version)
+        # 先判是不是"被取消"：RunCancelled 在节点里抛出后可能被框架包装成别的异常类型
+        # （例如并行分支聚合时），只看异常类型会把它误判成执行失败、写一条假的 failed 日志。
+        if workflow_cancel.is_cancelled(run_id):
+            logger.info("工作流运行已取消 run_id=%s workflow_id=%s", run_id, workflow_id)
+            _refresh_quietly(db, run)
+            run_service.finalize_run(db, run, "cancelled", error="运行已取消")
+            delete_thread_safely(str(run_id))
+            return {"run_id": run_id, "status": "cancelled"}
+        logger.exception("工作流执行失败 run_id=%s workflow_id=%s version=%s", run_id, workflow_id, version)
         run_service.finalize_run(db, run, "failed", error=str(e))
         # 终态：先收尾运行记录，再回收检查点。顺序反了的话"收尾失败"会连累检查点，留下一份没有主的快照
-        delete_thread_safely(str(run.id))
-        return {"run_id": run.id, "status": "failed", "error": str(e)}
+        delete_thread_safely(str(run_id))
+        return {"run_id": run_id, "status": "failed", "error": str(e)}
+    finally:
+        # 取消标记用完即清（任何结局都要清）：留着就是内存泄漏，且会误伤同 id 的后续运行。
+        # 清之前先读一次：取消可能恰好落在"图刚跑完、还没收尾"的缝里，下面的 success 分支要靠它让位。
+        cancelled_at_end = workflow_cancel.is_cancelled(run_id)
+        workflow_cancel.discard(run_id)
+
+    if cancelled_at_end:
+        # 图已经跑完，但取消在收尾前落地：尊重取消，不把结果写成 success（用户看到"取消了却成功"会困惑）。
+        # 同样先 refresh：取消接口若已把行写成 cancelled，finalize_run 幂等返回 False，不覆盖它的终态时间。
+        _refresh_quietly(db, run)
+        run_service.finalize_run(db, run, "cancelled", error="运行已取消")
+        delete_thread_safely(str(run_id))
+        return {"run_id": run_id, "status": "cancelled"}
 
     state = result.value
     steps = state.get("steps", [])
@@ -404,32 +451,103 @@ def execute_workflow(db: Session, workflow_id: int, version: int, payload, run: 
         # 这里**绝不能**清理检查点 —— resume 要靠它找回被 interrupt 的图。
         run.status = "awaiting_review"
         run.output = {"interrupt": iv, "steps": steps}
+        # 中断不是终态，但已经花掉的 token 要先落库：审批可能隔天才做，
+        # 期间运营统计里这条运行不该显示成"0 token"。续跑结束后会用完整用量覆盖。
+        run_service.apply_usage_by_model(db, run, state.get("usage_by_model") or {})
         db.commit()
         return {"run_id": run.id, "status": "awaiting_review", "interrupt": iv, "steps": steps}
-    run_service.finalize_run(db, run, "success", output={"output": state.get("output"), "steps": steps})
+    run_service.finalize_run(db, run, "success", output={"output": state.get("output"), "steps": steps},
+                             usage_by_model=state.get("usage_by_model"))
     delete_thread_safely(str(run.id))
     return {"run_id": run.id, "status": "success", "output": state.get("output"), "steps": steps}
 
 
-async def run_workflow(db: Session, workflow_id: int, inputs: dict | None, user, api_key: ApiKey | None = None) -> dict:
-    """接口触发工作流：建运行记录后在独立线程执行（不阻塞请求线程）。图结构或入参不合法 400 且不建运行记录。
+@dataclass(frozen=True)
+class AcceptedRun:
+    """202 语义的运行受理结果（docs/15 WF-05）：blocking 超时与 async 模式都只回 run_id 与状态，让调用方轮询。
+
+    为什么要单独一个类型而不是往返回字典里塞标记字段：响应体必须与文档一致（{run_id, status}），
+    多一个内部标记就是对外契约的噪声；由路由层据此把状态码改成 202，业务字段保持不变。
+    """
+
+    payload: dict
+
+
+def _execute_in_background(run_id: int, workflow_id: int, version: int, initial: dict, role: str | None) -> dict:
+    """后台线程里的执行入口：**自带 Session**，不复用请求会话。
+
+    为什么不能复用：async 模式请求返回后 FastAPI 会关掉请求会话（get_db 的 finally），
+    之后 run 对象是 detached 的 —— finalize_run 里改 run.status 再 commit 会静默丢掉收尾，
+    运行记录永远停在 running。自己开一个会话，执行期的一切写入都是它自己的事务。
+    """
+    db = SessionLocal()
+    try:
+        run = db.get(Run, run_id)
+        if run is None:  # 建记录与执行之间被删除（清理任务）：没有可收尾的对象，记日志即可
+            logger.warning("工作流运行记录不存在，跳过执行 run_id=%s", run_id)
+            return {"run_id": run_id, "status": "failed"}
+        return execute_workflow(db, workflow_id, version, initial, run, role)
+    finally:
+        db.close()
+
+
+async def run_workflow(db: Session, workflow_id: int, inputs: dict | None, user, api_key: ApiKey | None = None,
+                       response_mode: str = "blocking") -> dict | AcceptedRun:
+    """接口触发工作流：建运行记录后交给工作流专用线程池执行（不阻塞请求线程）。图结构或入参不合法 400 且不建运行记录。
 
     **读线上发布版本，不读草稿**（FR-075）：未发布 403「工作流未发布」且不建运行记录；
     入参按线上版本的开始节点声明校验 —— 草稿里改了变量声明不会让已发出的 API 调用方立刻失效，
     发布之后才切换。这样才能做到"改草稿不影响线上，出事能回滚"。
 
     api_key 不为空表示 Key 调用：工作流须在 Key 的作用域内（否则 403 且不建运行记录，docs/15 3.7.1——2026-10-05 前
-    Key 能调归属人能调的任意工作流），运行记录 source=api_key 并记 api_key_id，与定时任务的 schedule 一起供运行记录页追溯。"""
+    Key 能调归属人能调的任意工作流），运行记录 source=api_key 并记 api_key_id，与定时任务的 schedule 一起供运行记录页追溯。
+
+    response_mode（WF-05）：
+    - blocking（默认，存量调用方不受影响）：等执行结果，最多等 WORKFLOW_BLOCKING_TIMEOUT_S 秒；
+      超时**只放弃等待、不取消执行**，返回 AcceptedRun 让调用方按 run_id 轮询。
+      刻意不用 asyncio.wait_for 包 to_thread：wait_for 超时会 cancel 任务，图被中断在半路，
+      运行记录永远停在 running（结果丢了，取消也取消不掉）。
+    - async：建完运行记录立刻返回 AcceptedRun，后台继续跑。
+    """
     api_key_service.check_workflow_scope(api_key, workflow_id)
     live = resolve_live_config(db, workflow_id)
     check_graph(live.graph)
     # 入参校验放在建运行记录之前：不合法不该留下一条 failed 运行
     initial = build_initial_state(live.graph, inputs)
-    # 记声明层面的入参字典（initial["vars"]），不是"主输入"——运行记录要能回答"这次填了什么"
-    run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"inputs": initial["vars"]},
-                                 source="api_key" if api_key else "ui", api_key_id=api_key.id if api_key else None,
-                                 workflow_version=live.version)
-    return await asyncio.to_thread(execute_workflow, db, workflow_id, live.version, initial, run, user.role)
+    # 判满也在建运行记录之前：满了就 429，不能留一条永远没人执行的 running（调用方会以为在跑）
+    slot = workflow_runner.acquire()
+    try:
+        # 记声明层面的入参字典（initial["vars"]），不是"主输入"——运行记录要能回答"这次填了什么"
+        run = run_service.create_run(db, "workflow", user.id, workflow_id=workflow_id, input_data={"inputs": initial["vars"]},
+                                     source="api_key" if api_key else "ui", api_key_id=api_key.id if api_key else None,
+                                     workflow_version=live.version)
+    except BaseException:
+        workflow_runner.release(slot)  # 槽已占但任务没提交，必须在这里还回去
+        raise
+    run_id = run.id
+    future = workflow_runner.submit(slot, _execute_in_background, run_id, workflow_id, live.version, initial, user.role)
+    if response_mode == "async":
+        return AcceptedRun({"run_id": run_id, "status": "running"})
+    # 与 chat.py 的心跳同一写法：起成独立 Task，超时只放弃等待、不取消它。
+    task = asyncio.wrap_future(future)
+    done, _ = await asyncio.wait({task}, timeout=settings.WORKFLOW_BLOCKING_TIMEOUT_S)
+    if not done:
+        # 放弃等待后这个 Task 没人再取结果：加一个回调把异常取出来，否则 asyncio 会在 GC 时报
+        # "Task exception was never retrieved"（噪音日志，且掩盖真正的失败原因）。
+        # 取出来只记日志 —— 失败详情已经由 execute_workflow 写进 runs.error，调用方轮询能看到。
+        task.add_done_callback(_log_abandoned_result)
+        logger.info("工作流 blocking 等待超时，转后台继续执行 run_id=%s", run_id)
+        return AcceptedRun({"run_id": run_id, "status": "running"})
+    return task.result()
+
+
+def _log_abandoned_result(task: "asyncio.Future") -> None:
+    """blocking 超时后丢弃的 Task 的收尾：取出结果/异常，避免"未取回的异常"告警。"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("blocking 超时后后台执行失败", exc_info=exc)
 
 
 async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: dict, api_key: ApiKey | None = None) -> dict:
@@ -451,6 +569,66 @@ async def resume_workflow(db: Session, workflow_id: int, run_id: int, decision: 
     executor = db.get(User, run.user_id) if run.user_id else None
     role = executor.role if executor is not None else None
     return await asyncio.to_thread(execute_workflow, db, workflow_id, version, Command(resume=decision), run, role)
+
+
+def get_workflow_run(db: Session, workflow_id: int, run_id: int, api_key: ApiKey | None = None) -> dict:
+    """查单条工作流运行（docs/15 WF-05）：允许 Key 调用，且只能查本 Key 发起的运行。
+
+    行级校验与 resume_workflow 同一套口径：不属于该工作流、或不属于这个 Key，一律 404「运行记录不存在」，
+    不暴露存在性（拿到 run_id 的任意 Key 不该能枚举别人的运行）。
+    返回字段复用 run_service.get_run（含 input / output / nodes），与运行记录页一致。
+    """
+    _load_owned_run(db, workflow_id, run_id, api_key)
+    return run_service.get_run(db, run_id)
+
+
+def _load_owned_run(db: Session, workflow_id: int, run_id: int, api_key: ApiKey | None) -> Run:
+    """取运行记录并做行级校验（工作流归属 + Key 归属）；不满足一律 404，不区分"不存在"与"无权"。
+
+    resume_workflow 与 cancel/get 共用，避免三处各写一遍、日后只改一处导致口径漂移。
+    """
+    run = db.get(Run, run_id)
+    if run is None or run.workflow_id != workflow_id or (api_key is not None and run.api_key_id != api_key.id):
+        raise BizError(404, "运行记录不存在")
+    return run
+
+
+def cancel_workflow_run(db: Session, workflow_id: int, run_id: int, api_key: ApiKey | None = None) -> dict:
+    """取消一条运行中的工作流（docs/15 WF-05）。
+
+    用**带前置条件的 UPDATE**（id + workflow_id + status='running'）并按影响行数判断，而不是
+    "先读后写"：两个并发取消请求只有一个能把 running 改成 cancelled，另一个按 rowcount=0 走下面的区分分支，
+    不会互相覆盖，也不会把已经 success 的运行改成 cancelled（那个竞态会凭空造出一条"取消成功"的假记录）。
+
+    rowcount=0 时再查一次区分三种情况（按 docs/15 的裁决）：
+    - 已 cancelled：200，状态不变（重复取消是幂等的，客户端重试不该报错）；
+    - 其它终态（success / failed / awaiting_review）：409，运行已经结束，取消没有意义；
+    - 不存在 / 不属于该工作流 / 不属于本 Key：404，不暴露存在性。
+    """
+    run = _load_owned_run(db, workflow_id, run_id, api_key)
+    now = datetime.now(timezone.utc)
+    started_at = run.started_at
+    # 耗时在这里一起算：带前置条件的 UPDATE 绕过了 finalize_run，不补的话被取消的运行 latency_ms 恒为 0，
+    # 监控页会把它算成"0 耗时"而不是"跑了 N 秒后被取消"。
+    values = {Run.status: "cancelled", Run.finished_at: now, Run.error: "运行已取消"}
+    if started_at is not None:
+        values[Run.latency_ms] = max(0, int((now - started_at).total_seconds() * 1000))
+    cancelled = (
+        db.query(Run)
+        .filter(Run.id == run_id, Run.workflow_id == workflow_id, Run.status == "running")
+        .update(values, synchronize_session=False)
+    )
+    db.commit()
+    if cancelled:
+        # 双写：库里是唯一可靠的终态（重启/多 worker 也认），进程内标记让正在跑的图在下一个节点边界就停
+        workflow_cancel.mark(run_id)
+        logger.info("工作流运行已取消 run_id=%s workflow_id=%s", run_id, workflow_id)
+    # UPDATE 用了 synchronize_session=False，会话里可能还留着旧的 Run 对象，重新读一次拿准确状态
+    db.expire_all()
+    run = _load_owned_run(db, workflow_id, run_id, api_key)
+    if cancelled or run.status == "cancelled":
+        return {"run_id": run.id, "status": "cancelled"}
+    raise BizError(409, f"运行已结束（{run.status}），无法取消")
 
 
 def list_workflow_runs(db: Session, workflow_id: int, params: PageParams, status: str | None = None,

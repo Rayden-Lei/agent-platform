@@ -118,6 +118,20 @@ def check_url(url: str, allowed: list[str] | None = None) -> None:
     check_host(urlparse(url).hostname or "", allowed)
 
 
+def _next_hop(current: str, resp: httpx.Response) -> str | None:
+    """这一跳是不是重定向；是则返回下一跳的绝对地址，否则 None。
+
+    抽出来给同步与异步两个实现共用：重定向的判定口径只能有一份，
+    两边各写一遍迟早会出现"同步拦住了、异步没拦住"的分叉（就是本次审计的成因）。
+    """
+    if resp.status_code not in (301, 302, 303, 307, 308):
+        return None
+    location = resp.headers.get("location") or ""
+    if not location:
+        return None  # 重定向却没有 Location：原样返回，让调用方按状态码处理
+    return str(httpx.URL(current).join(location))
+
+
 def request_with_checked_redirects(
     url: str,
     *,
@@ -127,7 +141,7 @@ def request_with_checked_redirects(
     max_redirects: int = MAX_REDIRECTS,
     **kwargs,
 ) -> httpx.Response:
-    """发一次请求，**手工跟随重定向并逐跳校验目标主机**。
+    """发一次请求，**手工跟随重定向并逐跳校验目标主机**（同步版）。
 
     为什么不能直接用 follow_redirects=True：它会把请求安静地送到任意主机 ——
     初始地址过了白名单，对方 302 到 169.254.169.254 就绕过了全部检查。
@@ -141,12 +155,41 @@ def request_with_checked_redirects(
         current = url
         for _ in range(max_redirects + 1):
             resp = client.request(method.upper(), current, **kwargs)
-            if resp.status_code not in (301, 302, 303, 307, 308):
+            nxt = _next_hop(current, resp)
+            if nxt is None:
                 return resp
-            location = resp.headers.get("location") or ""
-            if not location:
-                return resp  # 重定向却没有 Location：原样返回，让调用方按状态码处理
-            nxt = str(httpx.URL(current).join(location))
+            check_url(nxt, allowed)  # 每一跳都重新校验，不只第一跳
+            if resp.status_code == 303:
+                method = "GET"
+                kwargs.pop("json", None)
+            current = nxt
+    raise OutboundBlocked("重定向次数超过 " + str(max_redirects) + " 次，已放弃：" + url)
+
+
+async def arequest_with_checked_redirects(
+    url: str,
+    *,
+    allowed: list[str] | None = None,
+    method: str = "GET",
+    timeout: float = 30,
+    max_redirects: int = MAX_REDIRECTS,
+    **kwargs,
+) -> httpx.Response:
+    """异步版：语义与 request_with_checked_redirects 完全相同，供 async 调用方使用。
+
+    为什么必须有这一份：内置 http_request 是 async 的，原先直接用
+    `httpx.AsyncClient(follow_redirects=True)` —— 首跳过了 _host_allowed 之后，
+    对方 302 到 169.254.169.254 就绕过全部检查（2026-11-18 审计的 P0）。
+    同步版不能拿来凑合：在事件循环里跑同步 httpx 会阻塞整个 worker。
+    """
+    check_url(url, allowed)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        current = url
+        for _ in range(max_redirects + 1):
+            resp = await client.request(method.upper(), current, **kwargs)
+            nxt = _next_hop(current, resp)
+            if nxt is None:
+                return resp
             check_url(nxt, allowed)  # 每一跳都重新校验，不只第一跳
             if resp.status_code == 303:
                 method = "GET"

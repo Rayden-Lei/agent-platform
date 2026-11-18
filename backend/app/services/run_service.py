@@ -1,13 +1,16 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import BigInteger, case, cast, func
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.core.audit import record_audit
 from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.db.session import rows_to_dict
 from app.db.models import Agent, ModelConfig, Run, RunNode, User, Workflow
+from app.workflow.checkpointer import delete_thread_safely
 
 # 运行记录的终态。awaiting_review 不是终态：它不写 finished_at，等待 resume 后再收尾。
 FINAL_STATUSES = ("success", "failed", "cancelled")
@@ -15,6 +18,10 @@ RUN_STATUSES = ("running", "success", "failed", "cancelled", "awaiting_review")
 # 触发来源（runs.source 列，2026-09-25 前只写在 input.source）：登录对话 / 界面运行工作流 / API Key（对话或工作流）/
 # 定时任务 / 装配页调试。运营指标默认排除 debug（docs/15 D-05）
 RUN_SOURCES = ("chat", "ui", "api_key", "schedule", "debug", "share")  # share：分享链接的访客对话（docs/15 3.6，带 share_id）
+
+# 卡住运行被人工终止时写进 runs.error 的原因（docs/15 OP-10）。
+# 写成固定文案而不是让调用方自由输入：运行记录页要能按它区分"真的执行失败"与"没人收尾被清理掉"。
+STUCK_RUN_REASON = "运行超时未收尾，已人工终止"
 
 # 列表排序白名单（字段名不能拼进 SQL）
 SORTABLE = {"id": Run.id, "started_at": Run.started_at, "finished_at": Run.finished_at, "latency_ms": Run.latency_ms, "cost": Run.cost}
@@ -60,12 +67,17 @@ def create_run(db: Session, run_type: str, user_id: int, agent_id: int | None = 
     return run
 
 
-def finalize_run(db: Session, run: Run, status: str, output: dict | None = None, error: str | None = None, usage: dict | None = None) -> bool:
+def finalize_run(db: Session, run: Run, status: str, output: dict | None = None, error: str | None = None,
+                 usage: dict | None = None, usage_by_model: dict | None = None) -> bool:
     """把运行记录置为终态，并写 finished_at / latency_ms / cost 快照。返回是否实际做了收尾。
 
     幂等：已处于终态的记录直接返回 False、不做任何改动，保证首次收尾结果不被覆盖
     （典型场景：流式对话已正常 done，随后客户端断开又触发一次取消收尾）。
     成本按收尾时的模型单价折算后落库，之后改单价不追溯，趋势图不会被重写。
+
+    usage_by_model（工作流用）：{模型 id: {prompt_tokens, completion_tokens, total_tokens}}。
+    一条工作流可以挂多个不同模型的智能体节点，单一 model_id 算不出正确成本，所以按模型分别折算后相加；
+    run.model_id 记用量最大的那个模型，只作为列表展示与筛选的归属（不是成本口径）。
     """
     if status not in FINAL_STATUSES:
         raise ValueError(f"finalize_run 只接受终态 {FINAL_STATUSES}，收到: {status}")
@@ -85,10 +97,48 @@ def finalize_run(db: Session, run: Run, status: str, output: dict | None = None,
     started_at = run.started_at
     if started_at is not None:
         run.latency_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
-    if run.token_usage and run.model_id:
+    if usage_by_model:
+        apply_usage_by_model(db, run, usage_by_model)
+    elif run.token_usage and run.model_id:
         run.cost = _cost(run.token_usage, db.get(ModelConfig, run.model_id))
     db.commit()
     return True
+
+
+def aggregate_usage(usage_by_model: dict | None) -> dict:
+    """把按模型拆分的用量汇总成 runs.token_usage 的口径（三键合计）。无用量时返回空字典。"""
+    total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for usage in (usage_by_model or {}).values():
+        for k in total:
+            total[k] += int((usage or {}).get(k) or 0)
+    return total if any(total.values()) else {}
+
+
+def apply_usage_by_model(db: Session, run: Run, usage_by_model: dict) -> None:
+    """工作流收尾：写总用量、按模型分别折算成本相加、model_id 归属到用量最大的模型。
+
+    为什么要按模型分别算：单价挂在 models 行上，一张图里 A 节点用便宜模型、B 节点用贵模型，
+    用其中一个的单价乘总量会得出一个既不是 A 也不是 B 的数字。
+
+    人工审核中断时也会调它一次（不 commit），让"等待审核"的运行在界面上先看到已花掉的量；
+    续跑结束后 finalize_run 会用完整用量覆盖，不会重复累加。
+    """
+    normalized: dict[int, dict] = {}
+    for mid, usage in usage_by_model.items():
+        try:
+            key = int(mid)
+        except (TypeError, ValueError):
+            continue
+        normalized[key] = {k: int((usage or {}).get(k) or 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+    if not normalized:
+        return
+    run.token_usage = aggregate_usage({str(k): v for k, v in normalized.items()})
+    models = {m.id: m for m in db.query(ModelConfig).filter(ModelConfig.id.in_(list(normalized))).all()}
+    costs = [_cost(usage, models.get(mid)) for mid, usage in normalized.items()]
+    known = [c for c in costs if c is not None]
+    # 全部模型都没配单价时保持 None（与对话口径一致：没配单价就不编一个 0 出来）
+    run.cost = round(sum(known), 6) if known else None
+    run.model_id = max(normalized, key=lambda mid: normalized[mid]["total_tokens"])
 
 
 def _cost(token_usage: dict, model: ModelConfig | None):
@@ -98,6 +148,82 @@ def _cost(token_usage: dict, model: ModelConfig | None):
     prompt = token_usage.get("prompt_tokens") or 0
     completion = token_usage.get("completion_tokens") or 0
     return round(prompt / 1000000 * (model.price_input or 0) + completion / 1000000 * (model.price_output or 0), 6)
+
+
+def stuck_cutoff(now: datetime | None = None) -> datetime:
+    """卡住运行的判定线：早于这个时刻仍处于 running 的运行，视为进程被杀后没收尾的幽灵记录。
+
+    阈值走配置 STUCK_RUN_MINUTES（docs/15 OP-10）。工作台 pending.stuck_running 与本模块的
+    处置入口必须用同一个函数取判定线，否则会出现"工作台报有卡住的、点处置却说过期不够"的错位。
+    """
+    return (now or _now()) - timedelta(minutes=settings.STUCK_RUN_MINUTES)
+
+
+def stuck_condition(cutoff: datetime):
+    """卡住运行的 SQL 条件：仍是 running，且发起时间早于判定线。
+
+    公开（不带下划线）：工作台 stats_service 的 pending.stuck_running 要用同一个条件，
+    两处口径必须一致 —— 各写一份 SQL 迟早会漂移成"工作台说有卡住的、运行记录页筛不出来"。
+    
+
+    started_at 为空的也要算进来：这类行是 2026-09-25 之前直接 Run(...) 构造出来的（当时
+    create_run 还不写 started_at），它们永远不会有 finished_at，不纳入就永久占着 running 计数、
+    也永远没有处置入口。它们必然不是当前进程刚起的运行，按"已超期"处理是安全的。
+    """
+    return (Run.status == "running") & ((Run.started_at < cutoff) | Run.started_at.is_(None))
+
+
+def fail_stuck_run(db: Session, run_id: int, user: User | None = None) -> dict:
+    """把一条卡住的运行置为 failed，并回收它的工作流检查点（docs/15 OP-10）。返回处置结果。
+
+    为什么需要：进程被 kill（部署、OOM、Ctrl-C）时正在执行的运行没有任何人收尾，
+    记录会永久停在 running —— 工作台一直报"卡住 N 个"，运行记录页却没有任何终止入口，
+    只能连库改数据。docs/15 里记录过共享库长期挂着一条超过 1 小时的 running。
+
+    前置条件（都不满足即拒绝，不是"先查后改"）：
+    - 记录存在，否则 404；
+    - 当前必须是 running，已终态 409（不要用本接口改写成功/失败的运行）；
+    - 已超过 STUCK_RUN_MINUTES 仍 running，否则 400 —— 阈值存在的意义就是防止把
+      "还在正常执行的长工作流"当成卡住处置掉。本接口只改数据库状态，**不会中断仍在执行的线程**，
+      所以宁可拒绝也不能提前放行。
+
+    并发：用 SELECT ... FOR UPDATE 锁住这一行再判断，两个管理员同时点只会有一次生效，
+    第二次拿到锁时看到的已是 failed（与 workflow_service._lock_workflow 同一手法）。
+    不用裸 UPDATE 的原因：收尾必须经 finalize_run 写 finished_at / latency_ms / cost 快照
+    （05 铁律 4：运行记录只能经 create_run / finalize_run 收尾），裸 UPDATE 会把这几列漏掉，
+    于是"处置后"的运行耗时仍是 0、统计里既不在 running 也不在已结束。
+
+    检查点：复用 checkpointer.delete_thread_safely（失败只记日志），顺序是先收尾再清理 ——
+    反过来的话"收尾失败"会连累检查点，留下一份没有主的快照（与 execute_workflow 同一口径）。
+    """
+    run = db.query(Run).filter(Run.id == run_id).with_for_update().populate_existing().one_or_none()
+    if run is None:
+        raise BizError(404, "运行记录不存在")
+    if run.status != "running":
+        raise BizError(409, f"该运行当前状态为 {run.status}，只有运行中的运行才能标记为失败")
+    cutoff = stuck_cutoff()
+    started_at = run.started_at
+    if started_at is not None and started_at >= cutoff:
+        raise BizError(400, f"该运行发起不足 {settings.STUCK_RUN_MINUTES} 分钟，仍在正常执行窗口内，不能处置")
+
+    finalize_run(db, run, "failed", error=STUCK_RUN_REASON)
+    delete_thread_safely(str(run.id))
+    if user is not None:
+        record_audit(db, user, "mark_failed", "run", run.id, detail={
+            "run_type": run.run_type, "workflow_id": run.workflow_id, "agent_id": run.agent_id,
+            "previous_status": "running", "started_at": _iso(started_at),
+            "stuck_minutes": settings.STUCK_RUN_MINUTES, "reason": STUCK_RUN_REASON,
+        })
+    return {"id": run.id, "status": run.status, "error": run.error, "finished_at": _iso(run.finished_at)}
+
+
+def apply_batch_action(db: Session, run_id: int, action: str, user: User) -> None:
+    """批量操作的单条执行（mark_failed）；被 core.batch.run_batch 逐条调用，失败进失败清单。"""
+    if action == "mark_failed":
+        fail_stuck_run(db, run_id, user)
+        return
+    # 路由用 Literal 收窄过 action，走到这里说明调用方绕过了路由（脚本/内部调用）：显式报错，不静默成功
+    raise BizError(400, f"不支持的批量操作：{action}")
 
 
 class _Related:
@@ -142,9 +268,14 @@ def _run_dict(r: Run) -> dict:
 
 def _filtered(db: Session, run_type: str | None = None, status: str | None = None, agent_id: int | None = None, workflow_id: int | None = None,
               user_id: int | None = None, model_id: int | None = None, source: str | None = None,
-              started_from: datetime | None = None, started_to: datetime | None = None):
-    """列表与汇总共用的过滤条件：精确过滤 + 发起时间左闭右开区间。"""
+              started_from: datetime | None = None, started_to: datetime | None = None,
+              stuck: bool | None = None):
+    """列表与汇总共用的过滤条件：精确过滤 + 发起时间左闭右开区间 + 卡住运行筛选。"""
     query = db.query(Run)
+    if stuck:
+        # 只筛"超过阈值仍 running"的（docs/15 OP-10）：运行记录页的"卡住的运行"页签靠它列出待处置项。
+        # stuck=False 不做事：它表达的是"不筛"，不是"筛出没卡住的"—— 后者与 status 筛选语义重叠。
+        query = query.filter(stuck_condition(stuck_cutoff()))
     if run_type:
         query = query.filter(Run.run_type == run_type)
     if status:
@@ -168,10 +299,12 @@ def _filtered(db: Session, run_type: str | None = None, status: str | None = Non
 
 def list_runs(db: Session, params: PageParams, run_type: str | None = None, status: str | None = None,
               agent_id: int | None = None, workflow_id: int | None = None, user_id: int | None = None, model_id: int | None = None, source: str | None = None,
-              started_from: datetime | None = None, started_to: datetime | None = None, sort: SortParams | None = None) -> dict:
+              started_from: datetime | None = None, started_to: datetime | None = None, sort: SortParams | None = None,
+              stuck: bool | None = None) -> dict:
     """分页查询运行记录：精确过滤 + 时间区间 + 白名单排序（默认 id 倒序）；
-    返回前为一页数据批量装配关联名称（智能体、模型、工作流、用户各查一次，不在循环内查库）。"""
-    query = _filtered(db, run_type, status, agent_id, workflow_id, user_id, model_id, source, started_from, started_to)
+    返回前为一页数据批量装配关联名称（智能体、模型、工作流、用户各查一次，不在循环内查库）。
+    stuck=True 只返回超过 STUCK_RUN_MINUTES 仍 running 的运行（待人工处置的）。"""
+    query = _filtered(db, run_type, status, agent_id, workflow_id, user_id, model_id, source, started_from, started_to, stuck)
     page = paginate(apply_sort(query, sort, SORTABLE, [Run.id.desc()]), params)
     related = _Related(db, page["items"])
     page["items"] = [related.to_dict(r) for r in page["items"]]
