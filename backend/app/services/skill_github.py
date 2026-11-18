@@ -159,6 +159,9 @@ def _client() -> httpx.Client:
     这里手动跟，且每一步都重新校验主机。
     """
     return httpx.Client(timeout=TIMEOUT_SECONDS, follow_redirects=False,
+                        # GitHub 是公网地址，trust_env=True 是默认行为；显式写出来是因为
+                        # 这里与 core.http 的其他构造走同一口径，避免以后有人"统一"时把它改成直连
+                        trust_env=True,
                         headers={"User-Agent": "agent-platform-skill-import",
                                  "Accept": "application/vnd.github+json"})
 

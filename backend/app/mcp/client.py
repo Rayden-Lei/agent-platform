@@ -30,7 +30,8 @@ import httpx2
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
+
+from app.core import http as http_util
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +77,19 @@ class _Session:
         try:
             if self.transport == "sse":
                 read, write = await self._stack.enter_async_context(
-                    sse_client(self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.timeout)
+                    sse_client(self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.timeout,
+                               # 同 streamable http：SSE 也要按目标地址决定是否信任代理环境
+                               httpx_client_factory=http_util.mcp_http_client_factory(self.url))
                 )
             else:
                 # streamable_http_client 没有 headers 参数，头只能随 client 传。
                 # 用 SDK 自己的工厂建 client：它内部用的是 httpx2（2.x 起换掉了 httpx），
                 # 自己 new 一个 httpx.AsyncClient 会因为类型不匹配被 SDK 拒收。
-                http_client = create_mcp_http_client(
-                    headers=self.headers,
-                    timeout=httpx2.Timeout(self.timeout, read=self.timeout),
-                )
+                # trust_env 按目标地址算：SDK 的 create_mcp_http_client 不接受这个参数，
+                # 而 macOS 上系统代理（Clash）即使没有 proxy 环境变量也会被 httpx2 读到，
+                # 连 127.0.0.1 的 MCP 服务器会被代理拦成 502（"连不上"但地址完全正确）。
+                http_client = http_util.async_client2(self.url, httpx2.Timeout(self.timeout, read=self.timeout))
+                http_client.headers.update(self.headers)
                 self._stack.push_async_callback(http_client.aclose)
                 read, write = await self._stack.enter_async_context(
                     streamable_http_client(self.url, http_client=http_client)

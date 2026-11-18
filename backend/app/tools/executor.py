@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
+from app.core import http as http_util
 from app.core.exceptions import BizError
 from app.core.security import decrypt_secret
 from app.db.models import Tool
@@ -186,7 +187,10 @@ async def _execute_http(tool: Tool, args: dict) -> dict:
         return {"error": "工具凭据无法解密（加密密钥可能已更换），请在工具页重新填写凭据"}
     headers = {**(cfg.get("headers") or {}), **auth_headers}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # trust_env 按目标地址算：管理员可以把工具指向 127.0.0.1 上的内网服务，
+        # 而 macOS 上系统代理（Clash）即使没有 proxy 环境变量也会被 httpx 读到，
+        # 那种调用会被代理拦成 502（表现为"目标服务挂了"，但地址完全正确）。
+        async with http_util.async_client(url, timeout) as client:
             if method == "GET":
                 resp = await client.get(url, params={**args, **auth_params}, headers=headers)
             else:

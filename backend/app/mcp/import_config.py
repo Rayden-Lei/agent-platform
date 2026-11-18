@@ -22,8 +22,10 @@ import json
 import re
 from urllib.parse import urlparse
 
-# 键名里出现这些词的请求头当凭据（与 mcp_service.SECRET_HEADER_MARKERS 同口径，
-# 那边判"禁止写进 headers"，这边主动提取到 secret）
+# 键名里出现这些词的请求头当凭据（与 tool_service.SECRET_HEADER_MARKERS 同口径，
+# 那边判"禁止写进 headers"，这边主动提取到 secret）。
+# 这里多一个 password：识别时宁可多提一个进 secret（少填一个请求头不伤人），
+# 而落库校验按那边更严的那套判，提漏了会被 400 挡回来。
 _SECRET_MARKERS = ("authorization", "cookie", "token", "key", "secret", "password")
 # 传输推断用的路径特征
 _SSE_HINTS = ("/sse", "/events", "/stream")
