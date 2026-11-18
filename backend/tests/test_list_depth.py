@@ -245,7 +245,8 @@ def test_workflows_list_node_count_duplicate_and_batch_delete(client, auth_heade
         assert item["node_count"] == 3 and item["node_types"] == {"start": 1, "code": 1, "end": 1} and item["schedules_count"] == 0
         assert copy["name"] == wf["name"] + " 副本" and copy["version"] == 1
         detail = client.get(f"/api/v1/workflows/{wf['id']}", headers=auth_headers).json()
-        assert detail["graph"] == graph and detail["agents"] == [] and detail["schedules"] == []
+        # 2026-11-18（docs/15 D-12）：agents.workflow_id 删掉后，工作流详情不再有"引用它的智能体"清单
+        assert detail["graph"] == graph and detail["schedules"] == [] and "agents" not in detail
     finally:
         batch = client.post("/api/v1/workflows/batch", headers=auth_headers, json={"ids": [wf["id"], copy["id"]], "action": "delete"}).json()
         assert batch["failed"] == []

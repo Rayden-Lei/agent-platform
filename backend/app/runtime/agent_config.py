@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from app.core.exceptions import BizError
 from app.db.models import Agent, AgentVersion, ModelConfig
 
-# 快照字段：对外行为由这些字段决定。workflow_id 是预留字段（对话不使用），照旧随快照保存，恢复时原样还原
+# 快照字段：对外行为由这些字段决定。只放真正参与装配的字段 —— 曾经有个 workflow_id 预留字段，
+# 存得进、回显得出、对话链路从不读它，属于"改了也不起作用的配置"，2026-11-18 按 docs/15 D-12 决策 A 连列一起删掉
 SNAPSHOT_FIELDS = (
-    "name", "description", "system_prompt", "model_id", "params", "kb_ids", "tool_ids", "skill_ids", "workflow_id",
+    "name", "description", "system_prompt", "model_id", "params", "kb_ids", "tool_ids", "skill_ids",
     "prompt_template_id", "prompt_template_version", "prompt_variables",
 )
 
@@ -27,7 +28,6 @@ def snapshot_of(agent: Agent) -> dict:
         "kb_ids": list(agent.kb_ids or []),
         "tool_ids": list(agent.tool_ids or []),
         "skill_ids": list(agent.skill_ids or []),
-        "workflow_id": agent.workflow_id,
         "prompt_template_id": agent.prompt_template_id,
         "prompt_template_version": agent.prompt_template_version,
         "prompt_variables": agent.prompt_variables or {},
@@ -110,7 +110,6 @@ def normalize_snapshot(snapshot: dict | None) -> dict:
         "kb_ids": list(snap.get("kb_ids") or []),
         "tool_ids": list(snap.get("tool_ids") or []),
         "skill_ids": list(snap.get("skill_ids") or []),
-        "workflow_id": snap.get("workflow_id"),
         "prompt_template_id": snap.get("prompt_template_id"),
         "prompt_template_version": snap.get("prompt_template_version"),
         "prompt_variables": snap.get("prompt_variables") or {},

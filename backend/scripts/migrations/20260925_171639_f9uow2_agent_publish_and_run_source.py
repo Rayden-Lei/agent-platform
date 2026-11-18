@@ -110,8 +110,10 @@ def plan_republish(conn, agent_ids: list[int] | None = None) -> list[dict]:
     # 这里按"列在不在"动态拼：不在就由下面 setdefault 补空数组，否则 snapshot_of 读不到键会抛 AttributeError。
     # 不把新字段写死进 SELECT —— 那样在还没跑过 P2 迁移的库上本脚本就跑不起来了。
     skill_col = ", skill_ids" if _column_exists(conn, "agents", "skill_ids") else ""
+    # workflow_id 不在 SELECT 里：agents.workflow_id 已于 2026-11-18 删掉（docs/15 D-12），
+    # snapshot_of 也不再产出这个键。本脚本要在删列前后两种库上都能跑，所以不写死这一列。
     stmt = text(f"""
-        SELECT id, name, description, system_prompt, model_id, params, kb_ids, tool_ids, workflow_id,
+        SELECT id, name, description, system_prompt, model_id, params, kb_ids, tool_ids,
                prompt_template_id, prompt_template_version, prompt_variables, version{skill_col}
         FROM agents WHERE status = 'published' {pointer}{where} ORDER BY id
     """)

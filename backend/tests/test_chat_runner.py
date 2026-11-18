@@ -49,7 +49,7 @@ def make_agent(client, auth_headers):
     def _make() -> dict:
         a = client.post("/api/v1/agents", headers=auth_headers, json={
             "name": "pytest-runner-" + uuid.uuid4().hex[:6], "description": "", "system_prompt": "测试", "model_id": model["id"],
-            "params": {}, "kb_ids": [], "tool_ids": [], "workflow_id": None,
+            "params": {}, "kb_ids": [], "tool_ids": [],
         }).json()
         assert client.post(f"/api/v1/agents/{a['id']}/publish", headers=auth_headers).status_code == 200
         created.append(a["id"])

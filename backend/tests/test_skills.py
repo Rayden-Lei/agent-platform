@@ -161,7 +161,7 @@ def test_catalog_only_for_on_demand_and_body_for_always_on(client, auth_headers,
     always = make_skill(name="always-rule", always_on=True, content="回答必须以【结论】开头。")
     on_demand = make_skill(name="expense-form", always_on=False, content="步骤一：打开系统。")
     snap = {"name": "t", "description": "", "system_prompt": "你是助手", "model_id": model["id"], "params": {},
-            "kb_ids": [], "tool_ids": [], "skill_ids": [always["id"], on_demand["id"]], "workflow_id": None,
+            "kb_ids": [], "tool_ids": [], "skill_ids": [always["id"], on_demand["id"]],
             "prompt_template_id": None, "prompt_template_version": None, "prompt_variables": {}}
     db = SessionLocal()
     try:
@@ -180,7 +180,7 @@ def test_disabled_skill_not_assembled(client, auth_headers, make_skill, model):
     """停用的技能不装配、不进目录，绑定关系保留（重新启用即恢复）。"""
     s = make_skill(is_enabled=False)
     snap = {"name": "t", "description": "", "system_prompt": "你是助手", "model_id": model["id"], "params": {},
-            "kb_ids": [], "tool_ids": [], "skill_ids": [s["id"]], "workflow_id": None,
+            "kb_ids": [], "tool_ids": [], "skill_ids": [s["id"]],
             "prompt_template_id": None, "prompt_template_version": None, "prompt_variables": {}}
     db = SessionLocal()
     try:

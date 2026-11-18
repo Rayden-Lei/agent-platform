@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 TEST_PREFIX = "pytest-"
 
-# 顺序：子表在前、父表在后。agents.model_id / agents.workflow_id / 各表 created_by 都是 RESTRICT，
+# 顺序：子表在前、父表在后。agents.model_id / 各表 created_by 都是 RESTRICT，
 # 先删 agents 才能删 models / workflows / users；其余依赖（messages、document_chunks、
 # agent_versions、agent_shares、run_nodes）走 ON DELETE CASCADE 自动带走。
 _DELETE_ORDER: list[tuple[str, str]] = [
@@ -194,26 +194,42 @@ def purge_checkpoint_threads(db: Session) -> int:
     return len(threads)
 
 
-def purge_all_history() -> dict[str, int]:
-    """清掉库里所有 pytest- 前缀的历史残留（不限时间窗）。
+# 前置回收的宽限期（分钟）：只清这么久以前创建的 pytest- 行。
+#
+# 为什么不是"清全部历史"（2026-11-18 改）：开发库是共享的，而并行跑测试时（多个 agent / 多个终端
+# 同时 pytest）每个会话都会在 sessionstart 执行一次前置回收。原来的判据是"1970 年起全部"，
+# 于是**后启动的会话会把先启动的会话正在用的夹具整批删掉** —— 现场表现是一堆看似无关的
+# ForeignKeyViolation（agents_model_id_fkey / runs_schedule_id_fkey / run_nodes_run_id_fkey），
+# 单独跑每条都通过，合起来跑就红，排查方向被带偏到业务代码上。
+#
+# 留 30 分钟宽限：被杀进程留下的残留照样会被下一轮清掉（那些行至少是上一次运行留下的），
+# 而任何"正在运行中"的会话，其夹具都是刚刚创建的，不会落进这个窗口。
+CLEANUP_GRACE_MINUTES = 30
+
+
+def purge_all_history(grace_minutes: int = CLEANUP_GRACE_MINUTES) -> dict[str, int]:
+    """清掉库里**超过宽限期**的 pytest- 前缀历史残留（见 CLEANUP_GRACE_MINUTES）。
 
     给 pytest_sessionstart 用。为什么需要它：sessionfinish 只在会话正常结束时执行，
     进程被 kill 时完全不跑；即使跑了，它也只覆盖"本次会话开始之后"的行，
     上一轮漏下的永远清不到 —— 于是越积越多，最后出现在知识库/工具/模型列表页上
     （2026-11-15 现场：2 个 pytest-share-kb-*、17 个 pytest-embed-*、110 个 pytest-mcp-bulk-*）。
 
-    安全性：判据仍是 pytest- 前缀（真实业务数据不带），被非测试数据以 RESTRICT 引用的行
-    会逐个 skip 而不是整批失败；行数超过 ROW_LIMIT 时抛 CleanupAborted 交人决定。
+    安全性：判据仍是 pytest- 前缀（真实业务数据不带），且限定在宽限期之前创建的；
+    被非测试数据以 RESTRICT 引用的行会逐个 skip 而不是整批失败；行数超过 ROW_LIMIT 时抛 CleanupAborted。
+
+    残留风险（已知，未在本轮解决）：并行会话**同时结束**时，先结束的那个仍可能删掉
+    后结束会话在它开始之后创建的行。彻底解决需要给每个会话一个独立的名称前缀，
+    那要改所有用例的造数函数，超出本文件的范围；当前靠"最终交付前串行跑全量"规避。
     """
-    from datetime import timezone as _tz
+    from datetime import timedelta, timezone as _tz
 
     from app.db.session import SessionLocal
 
-    # 起点取"不早于任何行"的值：1970 年，于是 created_at >= since 命中全部历史
-    epoch = datetime(1970, 1, 1, tzinfo=_tz.utc)
+    since = datetime.now(_tz.utc) - timedelta(minutes=grace_minutes)
     db = SessionLocal()
     try:
-        deleted = purge_test_rows(db, epoch)
+        deleted = purge_test_rows(db, since)
         db.commit()
         return deleted
     except Exception:

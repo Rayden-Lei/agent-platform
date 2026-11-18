@@ -1,4 +1,4 @@
-"""技能服务（docs/17 §4）：CRUD 与 load_skill 的白名单查找。
+"""技能服务（docs/17 §4）：CRUD 与装配用的技能查询。
 
 技能是「操作手册」型知识，与提示词模板分工不同：模板是「人设」，保存时渲染进 system_prompt；
 技能是「某类任务的额外知识」，运行时按需加载 —— 只把 name + description 放进提示词目录，
@@ -220,23 +220,6 @@ def delete_skill(db: Session, skill_id: int, user: User) -> None:
     except Exception:
         logger.warning("技能已删除但资源清理失败 skill_id=%s resources=%s", skill_id,
                        [r.get("object") for r in resources if r.get("object")], exc_info=True)
-
-
-def load_for_model(db: Session, skill_ids: list, name: str) -> Skill:
-    """load_skill 工具的唯一入口：只允许读本次装配的 skill_ids 里的技能。
-
-    白名单必须在这里判，不能只靠"模型应该只传目录里的名字"：工具参数是模型生成的，
-    没有约束它可以传任意字符串，不判就等于给了一个读全库技能的越权入口（docs/17 §4.4 第 2 条）。
-
-    未绑定 / 不存在 / 已停用返回同一句「技能不存在」，不区分原因 —— 区分了就等于告诉模型
-    "这个技能存在但你不能看"，等于把技能清单泄露出去。
-    """
-    if not skill_ids:
-        raise BizError(404, "技能不存在")
-    s = db.query(Skill).filter(Skill.id.in_(skill_ids), Skill.name == name, Skill.is_enabled.is_(True)).one_or_none()
-    if s is None:
-        raise BizError(404, "技能不存在")
-    return s
 
 
 def enabled_skills(db: Session, skill_ids: list) -> list[Skill]:

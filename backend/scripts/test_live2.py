@@ -14,7 +14,6 @@ payload = {
     "params": {},
     "kb_ids": [1],
     "tool_ids": [1, 2],
-    "workflow_id": None,
 }
 r = httpx.put(base + "/api/v1/agents/1", json=payload, headers=h)
 print("更新智能体:", r.status_code, "status:", r.json()["status"], "tool_ids:", r.json()["tool_ids"], "kb_ids:", r.json()["kb_ids"])

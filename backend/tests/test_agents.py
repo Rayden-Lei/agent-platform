@@ -11,7 +11,7 @@ def test_agent_crud_publish_rollback(client, auth_headers):
 
     a = client.post("/api/v1/agents", headers=auth_headers, json={
         "name": "pytest-agent", "description": "", "system_prompt": "你是测试助手",
-        "model_id": model_id, "params": {}, "kb_ids": [], "tool_ids": [], "workflow_id": None,
+        "model_id": model_id, "params": {}, "kb_ids": [], "tool_ids": [],
     })
     assert a.status_code == 200, a.text
     aid = a.json()["id"]
@@ -71,7 +71,7 @@ def agents_cleanup(client, auth_headers):
 
 
 def _payload(model_id: int, name: str, **extra) -> dict:
-    return {"name": name, "description": "", "model_id": model_id, "params": {}, "kb_ids": [], "tool_ids": [], "workflow_id": None, **extra}
+    return {"name": name, "description": "", "model_id": model_id, "params": {}, "kb_ids": [], "tool_ids": [], **extra}
 
 
 def _put(client, auth_headers, agent_id: int, body: dict):

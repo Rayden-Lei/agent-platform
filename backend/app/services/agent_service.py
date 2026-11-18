@@ -8,7 +8,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.prompt_render import render
 from app.db.session import rows_to_dict
-from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Skill, Tool, User, Workflow
+from app.db.models import Agent, AgentVersion, ApiKey, KnowledgeBase, ModelConfig, PromptTemplate, Run, Skill, Tool, User
 from app.runtime.agent_config import SNAPSHOT_FIELDS, normalize_snapshot, resolve_live_config, snapshot_of
 from app.schemas import AgentIn, AgentUpdateIn
 from app.services import api_key_service, kb_service, run_service
@@ -44,7 +44,7 @@ class _Related:
         runs_7d, last_run = self.runs.get(a.id, (0, None))
         return {
             "id": a.id, "name": a.name, "description": a.description, "system_prompt": a.system_prompt, "model_id": a.model_id,
-            "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "skill_ids": a.skill_ids, "workflow_id": a.workflow_id,
+            "params": a.params, "kb_ids": a.kb_ids, "tool_ids": a.tool_ids, "skill_ids": a.skill_ids,
             "status": a.status, "version": a.version,
             "prompt_template_id": a.prompt_template_id, "prompt_template_version": a.prompt_template_version,
             "prompt_variables": a.prompt_variables or {}, "prompt_template_outdated": outdated,
@@ -90,7 +90,7 @@ def inline_snapshot(db: Session, data: AgentIn) -> dict:
     校验与保存同一口径（引用 404 / 400、模板渲染），不写 agents 行（docs/15 3.4）。"""
     validate_agent_config(db, data.model_id, data.tool_ids, data.kb_ids, data.skill_ids)
     return {"name": data.name, "description": data.description, "model_id": data.model_id, "params": data.params.to_dict(),
-            "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "skill_ids": data.skill_ids, "workflow_id": data.workflow_id, **_prompt_fields(db, data)}
+            "kb_ids": data.kb_ids, "tool_ids": data.tool_ids, "skill_ids": data.skill_ids, **_prompt_fields(db, data)}
 
 
 def list_agents(db: Session, params: PageParams, q: str | None = None, status: str | None = None, model_id: int | None = None,
@@ -218,7 +218,6 @@ def create_agent(db: Session, data: AgentIn, user: User) -> dict:
         kb_ids=data.kb_ids,
         tool_ids=data.tool_ids,
         skill_ids=data.skill_ids,
-        workflow_id=data.workflow_id,
         created_by=user.id,
     )
     _apply_prompt(db, a, data)
@@ -237,7 +236,7 @@ def get_agent(db: Session, agent_id: int) -> Agent:
 
 
 def get_agent_detail(db: Session, agent_id: int) -> dict:
-    """详情：基础字段 + 关联对象（模型、工具、知识库、工作流、模板）与悬空引用清单。
+    """详情：基础字段 + 关联对象（模型、工具、知识库、技能、模板）与悬空引用清单。
     kb_ids / tool_ids 是 JSONB 数组无外键，知识库或工具删除后 ID 会残留，这里把查不到的 ID 显式列出。
     另给草稿与线上两份同形快照（snapshot_of 定义字段）：发布弹窗、版本对比按它们做字段级差异，前端不再自己维护字段清单。"""
     a = get_agent(db, agent_id)
@@ -245,7 +244,6 @@ def get_agent_detail(db: Session, agent_id: int) -> dict:
     tools = db.query(Tool).filter(Tool.id.in_(a.tool_ids)).order_by(Tool.id).all() if a.tool_ids else []
     kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(a.kb_ids)).order_by(KnowledgeBase.id).all() if a.kb_ids else []
     skills = db.query(Skill).filter(Skill.id.in_(a.skill_ids)).order_by(Skill.id).all() if a.skill_ids else []
-    workflow = db.get(Workflow, a.workflow_id) if a.workflow_id else None
     template = db.get(PromptTemplate, a.prompt_template_id) if a.prompt_template_id else None
     found_tools, found_kbs, found_skills = {t.id for t in tools}, {k.id for k in kbs}, {s.id for s in skills}
     return {
@@ -257,7 +255,6 @@ def get_agent_detail(db: Session, agent_id: int) -> dict:
         "missing_kb_ids": [i for i in (a.kb_ids or []) if i not in found_kbs],
         "skills": [{"id": s.id, "name": s.name, "display_name": s.display_name, "always_on": s.always_on, "is_enabled": s.is_enabled} for s in skills],
         "missing_skill_ids": [i for i in (a.skill_ids or []) if i not in found_skills],
-        "workflow": {"id": workflow.id, "name": workflow.name, "status": workflow.status} if workflow else None,
         "prompt_template": {"id": template.id, "name": template.name, "version": template.version, "variables": template.variables} if template else None,
         "draft_snapshot": snapshot_of(a),
         "live_snapshot": _live_snapshot(db, a),
@@ -283,7 +280,6 @@ def update_agent(db: Session, agent_id: int, data: AgentUpdateIn, user: User) ->
     a.kb_ids = data.kb_ids
     a.tool_ids = data.tool_ids
     a.skill_ids = data.skill_ids
-    a.workflow_id = data.workflow_id
     _apply_prompt(db, a, data)
     db.commit()
     db.refresh(a)

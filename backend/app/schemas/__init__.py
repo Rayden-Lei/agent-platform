@@ -222,7 +222,6 @@ class AgentIn(BaseModel):
     tool_ids: list[int] = Field(default_factory=list, max_length=20)
     # 技能（docs/17 §4）：与工具分开传，技能不是"动作"，混进 tool_ids 会让工具列表与执行器都要多判一次类型
     skill_ids: list[int] = Field(default_factory=list, max_length=20)
-    workflow_id: Optional[int] = None
     prompt_template_id: Optional[int] = None
     prompt_variables: dict = Field(default_factory=dict)
 
@@ -260,7 +259,6 @@ class AgentOut(BaseModel):
     kb_ids: list
     tool_ids: list
     skill_ids: list = Field(default_factory=list)
-    workflow_id: Optional[int]
     status: str
     version: int
     prompt_template_id: Optional[int] = None
@@ -299,7 +297,6 @@ class AgentDetailOut(AgentOut):
     missing_kb_ids: list = Field(default_factory=list)
     skills: list = Field(default_factory=list)
     missing_skill_ids: list = Field(default_factory=list)
-    workflow: Optional[dict] = None
     prompt_template: Optional[dict] = None
     # 草稿与线上两份同形快照（字段由 runtime.agent_config.snapshot_of 定义）；从未发布时 live_snapshot 为空
     draft_snapshot: dict = Field(default_factory=dict)

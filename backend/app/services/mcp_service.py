@@ -25,22 +25,17 @@ from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models import McpServer, Tool, User
 from app.db.session import rows_to_dict
 from app.mcp import client
+from app.services.tool_service import secret_header_keys
 from app.tools.schema import MAX_PROPERTIES, PROPERTY_NAME_RE, ToolParameters
 
 logger = logging.getLogger(__name__)
 
 SORTABLE = {"id": McpServer.id, "name": McpServer.name, "updated_at": McpServer.updated_at}
 MAX_ALLOWED_HOSTS = 20
-# 与 tools 同一套凭据判定：请求头里出现这些词就当凭据，必须在 secret 里配
-SECRET_HEADER_MARKERS = ("authorization", "cookie", "token", "key", "secret")
 # 同步出来的工具名上限（tools.name 是 varchar(128)）
 TOOL_NAME_MAX = 128
 # 远端工具描述进 tools.description，过长会撑爆提示词
 DESCRIPTION_MAX = 1024
-
-
-def secret_header_keys(headers: dict | None) -> list[str]:
-    return [k for k in (headers or {}) if any(m in str(k).lower() for m in SECRET_HEADER_MARKERS)]
 
 
 def _to_dict(s: McpServer, tools_count: int = 0, creator: str | None = None) -> dict:
