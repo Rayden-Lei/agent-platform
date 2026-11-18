@@ -78,7 +78,11 @@ def test_invalid_token_does_not_consume_user_quota(client, auth_headers, monkeyp
 
 def test_anonymous_login_rate_limited_by_ip(client, auth_headers, monkeypatch, client_from, admin_login):
     _enable(monkeypatch, ip_limit=2)
-    ip = "10.77." + ".".join(str(int(b)) for b in uuid.uuid4().bytes[:2])  # 每次运行不同来源，避免固定时钟下计数残留
+    # 每次运行都用不同的来源 IP：限流键的 TTL 是 65 秒，而固定时钟下"同一 IP 换窗口"
+    # 不会发生 —— 用写死的 IP 时，65 秒内重跑一次就会撞上上一次残留的计数（2026-11-18 实测踩到，
+    # 表现为第二条断言拿到 429）。两个 IP 都随机，别只随机第一个。
+    ip = "10.77." + ".".join(str(int(b)) for b in uuid.uuid4().bytes[:2])
+    other_ip = "10.78." + ".".join(str(int(b)) for b in uuid.uuid4().bytes[:2])
     c = client_from(ip)
     assert c.post("/api/v1/auth/login", json=admin_login).status_code == 200
     assert c.post("/api/v1/auth/login", json=admin_login).status_code == 200
@@ -86,7 +90,7 @@ def test_anonymous_login_rate_limited_by_ip(client, auth_headers, monkeypatch, c
     assert r.status_code == 429, r.text
     assert r.headers["x-ratelimit-limit"] == "2"
     # 换一个来源不受影响
-    assert client_from("10.78.0.1").post("/api/v1/auth/login", json=admin_login).status_code == 200
+    assert client_from(other_ip).post("/api/v1/auth/login", json=admin_login).status_code == 200
 
 
 def test_api_key_429_carries_retry_after(client, auth_headers, monkeypatch, key_scope):

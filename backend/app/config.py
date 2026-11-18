@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "Agent Platform"
     API_V1_PREFIX: str = "/api/v1"
+    # 生产关闭交互式文档（docs/09 第三梯队）。/docs、/redoc、/openapi.json 会把全部路由、请求体结构
+    # 与鉴权方式公开出去，对一个可被外部系统调用的中台等于免费给出攻击面清单。
+    # 默认 False（开发时看文档方便），部署时在 .env 设 API_DOCS_ENABLED=true 才打开。
+    API_DOCS_ENABLED: bool = False
     # 空库首次启动时 admin 的口令（只在库里没有 admin 时用）。不配置则用内置默认口令并要求首次登录改密；口令不进日志
     INITIAL_ADMIN_PASSWORD: str = ""
     SECRET_KEY: str = "change-me"
@@ -47,6 +51,16 @@ class Settings(BaseSettings):
     # 调用日志是排查依据，留久一点；审计日志要满足合规追溯，也更久
     LLM_LOG_RETENTION_DAYS: int = 30
     AUDIT_LOG_RETENTION_DAYS: int = 180
+    # 卡住运行的处置阈值（docs/15 OP-10）：超过这么多分钟仍是 running 的运行视为"卡住"
+    # （进程被杀后没收尾的幽灵记录），允许人工置为 failed 并回收检查点。
+    # 不能取得太短：真实的长工作流会跑几十分钟，误判会让人把还在跑的运行当成卡住处置掉。
+    STUCK_RUN_MINUTES: int = 60
+    # 工作流检查点回收（docs/15 WF-12）：终态运行本该在收尾时删掉检查点，这里兜底清残留的
+    # （进程被杀、清理失败），给一个宽限期避免与"刚收尾、正在删"的运行抢同一份数据。
+    CHECKPOINT_TERMINAL_GRACE_HOURS: int = 24
+    # awaiting_review 的检查点是 resume 找回中断点的唯一依据，不能按终态那样清；
+    # 只清超过这么多天仍未审批的，同时把该运行收尾为 failed（否则审批一提交会从空 state 重跑）。
+    CHECKPOINT_AWAITING_REVIEW_RETENTION_DAYS: int = 7
     RAG_TOP_K: int = 4
     CHAT_HISTORY_MAX_MESSAGES: int = 20
     # 对话摘要持久化（FR-031）：更早消息里未折叠进摘要的攒够这么多条才调一次模型，不足时按原文注入
@@ -84,8 +98,19 @@ class Settings(BaseSettings):
     # 而不是让工作流排队等到前端超时（与 app/db/session.py 的 pool_timeout 同口径）。
     CHECKPOINT_POOL_MAX_SIZE: int = 15
     CHECKPOINT_POOL_TIMEOUT: int = 10
+    # 工作流对外运行契约（docs/15 WF-05）：blocking 模式最多等这么多秒，超时只放弃等待、不取消执行，
+    # 返回 202 + run_id 让调用方轮询（长流程不该被前端 30 秒超时打断）。
+    WORKFLOW_BLOCKING_TIMEOUT_S: int = 60
+    # 进程内同时执行的工作流上限（有界线程池 + 信号量）：满了 429，而不是把请求线程池或
+    # checkpointer 连接池一起拖垮。与 CHECKPOINT_POOL_MAX_SIZE 一起决定最坏情况下的连接占用。
+    WORKFLOW_MAX_CONCURRENCY: int = 4
     # 单条对话消息的字符上限：挡住超长输入刷 token 与成本；超出 422，在写消息、建运行记录之前拒绝
     CHAT_MESSAGE_MAX_CHARS: int = 8000
+    # 非流式（blocking）对话的总超时秒数（docs/15 PB-10）：收齐全部事件才返回 JSON，
+    # 所以必须有一个上界，否则上游一直不吐字时这个请求会挂到连接被中间设备掐断为止。
+    # 取值要大于 MODEL_HTTP_TIMEOUT（单次模型调用 120 秒）+ 工具轮次，默认 300 秒；
+    # 超时后把这一轮按"客户端中断"同一路径收尾（已生成内容落库、运行记录置 cancelled），再返回 504。
+    CHAT_BLOCKING_TIMEOUT_SECONDS: int = 300
     # 运营统计按天分桶用的时区（工作台趋势图、按天聚合）；库里存的是 UTC，按业务所在时区切天才符合"今天"的直觉
     REPORT_TIMEZONE: str = "Asia/Shanghai"
     STATS_MAX_DAYS: int = 90
@@ -128,8 +153,28 @@ class Settings(BaseSettings):
     RATE_LIMIT_API_KEY_PER_MINUTE: int = 60
     RATE_LIMIT_USER_PER_MINUTE: int = 300
     RATE_LIMIT_IP_PER_MINUTE: int = 20
+    # Redis 故障时的降级方向（2026-11-18）：逗号分隔的 scope 名单，名单内 fail-closed（拒绝），名单外 fail-open（放行）。
+    # 默认把公开入口（分享 share / 访客 share_v / 来源 IP ip）全部 fail-closed：
+    # 这些入口不要求登录，Redis 一挂就等于对外完全无限流，成本与滥用风险直接暴露给公网；
+    # 而内部接口（API Key ak / 登录用户 user）fail-open 更好 —— 它们背后是已经通过鉴权的可信调用方，
+    # 因为限流组件故障把整站调用全部拒掉，等于用保护措施制造一次更大的故障。
+    # 写成配置而不是写死：不同部署对"宁可拒绝还是宁可放行"的取舍不同，但要显式改，不能默认静默放开。
+    RATE_LIMIT_FAIL_CLOSED_SCOPES: str = "share,share_v,ip"
     # 分享链接每位访客每分钟的对话次数（docs/15 3.6）；整条链接每分钟与每天的上限在每条分享上单独配
     SHARE_VISITOR_PER_MINUTE: int = 10
+
+    # 定时任务的漏跑容忍窗口（秒）。APScheduler 默认 misfire_grace_time=1 秒：
+    # 进程重启、调度线程被长任务占住超过 1 秒，那次触发就被直接丢弃，last_run_at 不变、也不留运行记录 ——
+    # 使用者看到的是"任务配了但没跑"，服务端只有一行没人看的 debug 日志。
+    # 60 秒是折中：够覆盖进程重启、GIL 抖动、一次短时 GC；又不会让"停机两小时后恢复"把积压的触发全补一遍
+    # （coalesce=True 只补一次，不会雪崩）。要更宽容就调大，但别超过业务能接受的最大延迟。
+    SCHEDULE_MISFIRE_GRACE_SECONDS: int = 60
+    # 多实例选主（2026-11-18）：共享库 + 多后端进程时，只有抢到 PostgreSQL advisory lock 的实例
+    # 注册并执行定时任务，避免同一条 cron 被每个进程各触发一次。
+    # 单进程部署可以关掉（关掉等于"本进程必为主"）；测试里也关掉 ——
+    # 开发库是共享的，本机跑着的后端会持有锁，pytest 进程就会变成"非主"，
+    # 那样测出来的行为取决于别人有没有开服务，用例不可复现。
+    SCHEDULER_LEADER_ELECTION_ENABLED: bool = True
 
     @field_validator("CORS_ORIGINS")
     @classmethod

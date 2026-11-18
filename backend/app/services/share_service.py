@@ -4,6 +4,7 @@
 公开模式记在分享创建者名下、end_user 是访客 id，"仅登录"模式记在访客本人名下。访客看到的一切都按访客口径裁剪：
 不出现系统提示词、模型名、工具入参与返回原文、run_id、用量、kb_id / chunk_id / score。
 """
+import logging
 import secrets
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -12,8 +13,9 @@ from typing import AsyncGenerator, AsyncIterator
 from zoneinfo import ZoneInfo
 
 from jose import JWTError
-from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -24,10 +26,12 @@ from app.core.pagination import PageParams, paginate
 from app.core.request_context import get_client_ip, get_request_id
 from app.core.security import GUEST_TOKEN_TYPE, create_guest_token, decode_token, hash_password, verify_password
 from app.db.session import rows_to_dict
-from app.db.models import Agent, AgentShare, Conversation, KnowledgeBase, Message, ModelConfig, Run, Tool, User
+from app.db.models import Agent, AgentShare, KnowledgeBase, Message, ModelConfig, ShareQuotaUsage, Tool, User
 from app.rag.retriever import kb_allows
 from app.runtime.agent_config import load_version_config
 from app.services import chat_turn, conversation_service
+
+logger = logging.getLogger(__name__)
 
 GUEST_TOKEN_DAYS = 30            # 公开模式访客令牌有效期
 GUEST_RENEW_WITHIN = timedelta(days=7)  # 剩余不足 7 天时换发（响应头 X-Share-Token）
@@ -276,10 +280,50 @@ def _today_start() -> datetime:
     return datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
+def _consume_daily_quota(db: Session, share: AgentShare, visitor_id: str, limit: int) -> bool:
+    """原子扣减一条每日额度，返回是否扣到（False = 已达上限）。
+
+    为什么不再"先 count 再放行"（2026-11-18 修）：那是典型的 check-then-act ——
+    并发请求各自 count 到同一个未超限的数字后全部放行，链接每日总量这个**成本硬上限**直接失效。
+    现在改成数据库层的原子扣减，照 api_key_service.authenticate 的既有范式：
+    UPDATE ... WHERE used < 上限，按影响行数判断是否扣到，并发由行锁串行化。
+
+    先用 INSERT ... ON CONFLICT DO NOTHING 保证计数行存在，再 UPDATE：
+    顺序不能反 —— 行不存在时 UPDATE 影响 0 行，会被误判成"已达上限"，把首次对话直接拒掉。
+    ON CONFLICT 同时兜住"两个请求同时首次建行"的竞态（后到的那条不报错）。
+
+    visitor_id 传空串表示整条链接的总量。不用 NULL：PostgreSQL 唯一约束视 NULL 互不相等，
+    那样"整条链接"这一行每次都能再插一条，唯一约束就白建了。
+    """
+    day = _today_start()
+    # 一次语句完成"行不存在则建"，避免多一次往返
+    # on_conflict_do_nothing 是 PostgreSQL 方言的扩展，必须用 dialects.postgresql 的 insert
+    db.execute(
+        pg_insert(ShareQuotaUsage)
+        .values(share_id=share.id, usage_date=day, visitor_id=visitor_id, used=0)
+        .on_conflict_do_nothing(index_elements=["share_id", "usage_date", "visitor_id"])
+    )
+    # 条件 UPDATE 是原子性的：WHERE used < limit 与 used = used + 1 在同一条语句里，
+    # 并发的另一条语句要么排在行锁之后看到已加过的值，要么影响 0 行
+    consumed = db.execute(
+        update(ShareQuotaUsage)
+        .where(ShareQuotaUsage.share_id == share.id, ShareQuotaUsage.usage_date == day,
+               ShareQuotaUsage.visitor_id == visitor_id, ShareQuotaUsage.used < limit)
+        .values(used=ShareQuotaUsage.used + 1, updated_at=func.now())
+    ).rowcount
+    return bool(consumed)
+
+
 def check_chat_quota(db: Session, guest: Guest) -> None:
     """访客对话前的额度：链接每分钟（share）、每位访客每分钟（share_v）、来源 IP 每分钟（ip，防一个 IP 换着令牌绕开 share_v）；
-    链接每天总量与每位访客每天量用数据库计数（Redis 故障时照样生效）。超限 429，不建运行记录。
-    成本的硬上限是链接的每日总量：访客换令牌能绕开"每位访客每日量"，绕不开它。"""
+    链接每天总量与每位访客每天量用数据库**原子扣减**（Redis 故障时照样生效，且并发不会超扣）。超限 429，不建运行记录。
+    成本的硬上限是链接的每日总量：访客换令牌能绕开"每位访客每日量"，绕不开它。
+
+    两次扣减放在同一个事务里，任一不满足就整体回滚：
+    - 链接总量扣不到 → 回滚，报"今日额度已用完"（与 2026-11-18 前的优先级一致，先报链接级）；
+    - 链接扣到了但访客量扣不到 → 回滚，把链接那一次也退回去。
+      不回滚的话，超了每位访客上限的请求会白吃掉链接总额度 —— 一个访客反复刷就能把整条链接的额度耗光。
+    """
     share = guest.share
     for scope, key, limit in (("share", str(share.id), share.rate_limit_per_minute),
                               ("share_v", f"{share.id}:{guest.visitor_id}", settings.SHARE_VISITOR_PER_MINUTE),
@@ -287,15 +331,23 @@ def check_chat_quota(db: Session, guest: Guest) -> None:
         result = rate_limiter.check(scope, key, limit)
         if not result.allowed:
             raise rate_limiter.limit_exceeded(result)
-    since = _today_start()
-    if db.query(func.count(Run.id)).filter(Run.share_id == share.id, Run.started_at >= since).scalar() >= share.daily_message_limit:
-        raise BizError(429, "今日额度已用完，请明天再试")
-    # 访客会话只可能是智能体对话（分享链接挂在智能体上），按 kind 收窄让过滤走同一套口径
-    mine = conversation_service.owned_conversations(db, guest.caller(), kind=chat_turn.KIND_AGENT).with_entities(Conversation.id).order_by(None).subquery()
-    sent = db.query(func.count(Message.id)).filter(Message.conversation_id.in_(db.query(mine.c.id)), Message.role == "user",
-                                                   Message.created_at >= since).scalar()
-    if sent >= share.visitor_daily_limit:
-        raise BizError(429, "你今天的提问次数已用完，请明天再试")
+    try:
+        if not _consume_daily_quota(db, share, "", share.daily_message_limit):
+            db.rollback()
+            raise BizError(429, "今日额度已用完，请明天再试")
+        if not _consume_daily_quota(db, share, guest.visitor_id, share.visitor_daily_limit):
+            # 回滚把上面链接级的那一次扣减一起退掉：本次对话不会发生，不该计入成本
+            db.rollback()
+            raise BizError(429, "你今天的提问次数已用完，请明天再试")
+        db.commit()
+    except BizError:
+        raise
+    except SQLAlchemyError:
+        db.rollback()
+        # 扣减失败不能让请求带着"额度可能没扣上"的未知状态继续跑（等于免费放开成本闸门），
+        # 也不能当成 429 让访客以为是自己用超了 —— 明确报服务暂时不可用
+        logger.exception("访客对话额度扣减失败 share_id=%s visitor=%s", share.id, guest.visitor_id)
+        raise BizError(503, "服务暂时不可用，请稍后重试")
 
 
 # ---------- 访客口径：事件、错误、会话与消息 ----------

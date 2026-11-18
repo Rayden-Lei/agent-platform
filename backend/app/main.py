@@ -79,10 +79,10 @@ async def lifespan(_app: FastAPI):
     yield
     # 先停调度器再关 checkpointer：调度线程可能正在跑工作流，池先被关掉的话它会拿到"池已关闭"的报错。
     # 用 peek（只读入口）判断它是否真的起来过：没起来过就别去 start 一个再关掉。
-    from app.core.scheduler import peek_scheduler
-    sched = peek_scheduler()
-    if sched is not None:
-        sched.shutdown(wait=False)
+    # release_scheduler 同时释放调度锁：锁是连接级的，连接不断开时别的实例接管不了，
+    # 优雅退出要把锁交出去，而不是等连接被服务端判死
+    from app.core.scheduler import release_scheduler
+    release_scheduler()
     checkpointer.close_checkpointer()
 
 
@@ -104,7 +104,11 @@ def _configure_logging() -> None:
 
 _configure_logging()
 
-app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+# 交互式文档默认关闭（docs/09 第三梯队「生产关闭 /docs」）：/docs、/redoc、/openapi.json
+# 会把全部路由与请求体结构公开，对一个对外可调用的中台等于交出攻击面清单。
+# 需要时在 .env 设 API_DOCS_ENABLED=true（本地开发用），生产不要开。
+_docs_kwargs = {} if settings.API_DOCS_ENABLED else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan, **_docs_kwargs)
 # 中间件顺序（后 add 的在外层）：IP 黑名单 → CORS → 请求 ID。
 # 黑名单放在 CORS 内层，403 才会带跨域头；请求 ID 放最外层，CORS 预检与鉴权失败的响应也带追踪 ID。
 app.add_middleware(IpFilterMiddleware)
