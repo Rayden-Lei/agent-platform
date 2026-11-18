@@ -9,7 +9,7 @@
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -35,9 +35,15 @@ class RunIn(BaseModel):
     """工作流正式运行请求体：inputs 为按开始节点声明填的变量字典（docs/15 WF-04，D-32 一次切换）。
 
     声明与校验在 workflow.io_contract：未声明的键 400、必填缺值 400、类型不符按声明宽松转换后仍不符 400。
+
+    response_mode（docs/15 WF-05，FR-078）：
+    - blocking（默认）：等执行结果，最多等 WORKFLOW_BLOCKING_TIMEOUT_S 秒，超时返回 202 + run_id 让调用方轮询。
+      默认值必须保持 blocking —— 存量调用方（前端运行弹窗、既有测试）都按同步返回解析结果。
+    - async：建完运行记录立刻返回 202 + run_id，后台继续跑。
     """
 
     inputs: dict = {}
+    response_mode: Literal["blocking", "async"] = "blocking"
 
 
 class TestRunIn(BaseModel):
@@ -171,15 +177,46 @@ def delete_workflow(workflow_id: int, db: Session = Depends(get_db), user: User 
 
 
 @router.post("/{workflow_id}/run")
-async def run_workflow(workflow_id: int, data: RunIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
-    """运行指定工作流。允许 API Key 调用，供外部系统触发执行（工作流须在 Key 的作用域内）；运行记录记下触发来源（ui / api_key）。"""
-    return await workflow_service.run_workflow(db, workflow_id, data.inputs, user, api_key=current_api_key(request))
+async def run_workflow(workflow_id: int, data: RunIn, request: Request, response: Response, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
+    """运行指定工作流。允许 API Key 调用，供外部系统触发执行（工作流须在 Key 的作用域内）；运行记录记下触发来源（ui / api_key）。
+
+    response_mode（docs/15 WF-05）：blocking 等结果（默认，超时 202 + run_id）；async 立即 202 + run_id。
+    并发已满 429，且在**建运行记录之前**拒绝 —— 不留一条永远没人执行的 running 记录。
+    """
+    result = await workflow_service.run_workflow(db, workflow_id, data.inputs, user, api_key=current_api_key(request),
+                                                 response_mode=data.response_mode)
+    if isinstance(result, workflow_service.AcceptedRun):
+        response.status_code = 202
+        return result.payload
+    return result
 
 
 @router.post("/{workflow_id}/runs/{run_id}/resume")
 async def resume_workflow(workflow_id: int, run_id: int, data: ResumeIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
     """人工审核通过 / 驳回后续跑。允许 API Key 调用：工作流须在作用域内，且只能续跑本 Key 发起的运行。"""
     return await workflow_service.resume_workflow(db, workflow_id, run_id, data.decision, api_key=current_api_key(request))
+
+
+@router.get("/{workflow_id}/runs/{run_id}")
+def get_workflow_run(workflow_id: int, run_id: int, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
+    """查一条工作流的运行（docs/15 WF-05，FR-078）：状态、输出、节点执行结果，供异步运行的调用方轮询。
+
+    允许 API Key 调用，但**只能查本 Key 发起的运行**（与续跑同一套行级校验）：不属于该工作流或不属于本 Key
+    一律 404「运行记录不存在」，不暴露存在性。JWT 请求的口径不变。
+    """
+    return workflow_service.get_workflow_run(db, workflow_id, run_id, api_key=current_api_key(request))
+
+
+@router.post("/{workflow_id}/runs/{run_id}/cancel")
+def cancel_workflow_run(workflow_id: int, run_id: int, request: Request, db: Session = Depends(get_db),
+                        user: User = Depends(require_roles("admin", "developer", allow_api_key=True))):
+    """取消一条运行中的工作流（docs/15 WF-05）：状态变 cancelled，引擎在下一个节点开始前停下。
+
+    只限本 Key 发起的运行（同查询接口的行级校验）。重复取消已取消的返回 200 且状态不变；
+    已 success / failed / awaiting_review 的返回 409；不存在或不属于本 Key 的 404。
+    """
+    return workflow_service.cancel_workflow_run(db, workflow_id, run_id, api_key=current_api_key(request))
 
 
 @router.get("/{workflow_id}/runs")

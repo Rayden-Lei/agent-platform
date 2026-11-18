@@ -55,13 +55,31 @@ class ChatTurn:
 
 
 def _audit_retrieval(db, turn, ctx: chat_service.ChatContext, ip: str | None, source: str | None = None) -> None:
-    """检索鉴权留痕：召回的 chunk_id、鉴权剔除数、重排方式。走 record_audit 才带得上来源 IP（2026-09-25 前直接写 AuditLog，ip 恒为空）。
+    """检索鉴权留痕：召回的 chunk_id、鉴权剔除数、重排方式、检索不了的库。走 record_audit 才带得上来源 IP（2026-09-25 前直接写 AuditLog，ip 恒为空）。
     装配页调试的检索同样留痕（source=debug），调试也是一次真实的知识库访问。"""
     detail = {"query": turn.message, "recalled_chunk_ids": [c["chunk_id"] for c in ctx.citations],
               "acl_rejected": ctx.acl_rejected, "rerank_mode": ctx.rerank_mode}
+    if ctx.kb_unsearchable:
+        # 库不可检索（向量模型被停用/删除）不是报错而是"安静地少了一段召回"，
+        # 只留在日志里等于没人看得见；审计详情能按 rag_retrieve 查到具体是哪个库、为什么。
+        detail["kb_unsearchable"] = ctx.kb_unsearchable
     if source:
         detail["source"] = source
     record_audit(db, db.get(User, turn.user_id), "rag_retrieve", "agent", turn.agent_id, detail, ip)
+
+
+def error_status(e: Exception) -> int:
+    """异常 → 下发给调用方的 HTTP 状态码（非流式对话用，docs/15 PB-10「失败按 HTTP 状态码」）。
+
+    流式对话只能把错误塞进事件里（响应头已经发出去了），非流式可以直接用状态码，
+    调用方不必解析 body 才知道是熔断还是参数错。两者共用同一个映射：
+    BizError 自带状态码（熔断是 503、业务校验是 400），工具轮数超限是 400，其余按 500。
+    """
+    if isinstance(e, BizError):
+        return e.status_code
+    if isinstance(e, ToolRoundsExceeded):
+        return 400
+    return 500
 
 
 def public_error(e: Exception) -> str:
@@ -253,7 +271,9 @@ async def stream_chat(turn: ChatTurn) -> AsyncGenerator[dict, None]:
         state.citations = ctx.citations
         # 来源 IP 在事件循环里取好再传进线程池，不依赖线程池是否复制请求上下文
         await run_in_threadpool(_audit_retrieval, db, turn, ctx, get_client_ip())
-        citations_event = events.emit("citations", citations=state.citations)
+        # kb_unsearchable 是追加字段（docs/04 第 5 节只追加不改变既有字段）：本轮绑定了、但当前检索不了的库
+        # （向量模型被停用/删除）。没有它，用户看到"回答里没引用"分不清是库里确实没内容还是库坏了。
+        citations_event = events.emit("citations", citations=state.citations, kb_unsearchable=ctx.kb_unsearchable)
         apply_event(state, citations_event)
         yield citations_event
         try:
@@ -517,7 +537,8 @@ async def stream_debug(turn: chat_service.DebugTurn) -> AsyncIterator[dict]:
             await run_in_threadpool(_audit_retrieval, db, turn, ctx, get_client_ip(), "debug")
             state.citations = ctx.citations
             yield events.emit("prompt", system_prompt=ctx.system_prompt[:PROMPT_EVENT_MAX_CHARS], history_count=len(ctx.history_messages) - 1)
-            yield events.emit("citations", citations=state.citations)
+            # 与线上对话同一口径（追加字段）：调试面板也要能看出"这个库检索不了"，否则调试时同样是静默的
+            yield events.emit("citations", citations=state.citations, kb_unsearchable=ctx.kb_unsearchable)
             for step in ctx.trace:
                 yield events.emit("trace", step=step)
             async for event in _agent_events(ctx, state, events, started, run_id=turn.run_id,

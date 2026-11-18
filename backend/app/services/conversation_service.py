@@ -110,8 +110,11 @@ def get_conversation(db: Session, conversation_id: int, caller: Caller) -> dict:
     return _serialize(db, [get_owned_conversation(db, conversation_id, caller)])[0]
 
 
-def _names_of(db: Session, rows: list[Conversation]) -> dict:
-    """三种类型的对象名各批量查一次，返回 {(kind, id): 名字}。删掉对象后会话随外键级联消失，查不到即返回 None。"""
+def names_of(db: Session, rows: list[Conversation]) -> dict:
+    """三种类型的对象名各批量查一次，返回 {(kind, id): 名字}。删掉对象后会话随外键级联消失，查不到即返回 None。
+
+    公开给管理面（conversation_log_service）复用：对象名的口径只有这一处，别处再写一份必然漂移。
+    """
     ids_of = {kind: {getattr(c, column) for c in rows if c.kind == kind and getattr(c, column)} for kind, column in TARGET_COLUMN.items()}
     tables = {KIND_MODEL: ModelConfig, KIND_AGENT: Agent, KIND_WORKFLOW: Workflow}
     names: dict = {}
@@ -124,15 +127,26 @@ def _names_of(db: Session, rows: list[Conversation]) -> dict:
     return names
 
 
+def message_counts(db: Session, conversation_ids: list[int]) -> dict:
+    """一批会话的消息数，一次分组查询，返回 {会话 id: 条数}。空集合不发查询。
+
+    公开给管理面（conversation_log_service）复用：列表项的 message_count 只有这一个算法。
+    """
+    if not conversation_ids:
+        return {}
+    return rows_to_dict(db.query(Message.conversation_id, func.count(Message.id))
+                        .filter(Message.conversation_id.in_(conversation_ids))
+                        .group_by(Message.conversation_id).all())
+
+
 def _serialize(db: Session, rows: list[Conversation]) -> list[dict]:
     """会话行 → 接口结构：消息数用一次分组查询，对象名按类型各一次 IN 查询，不逐行查库。
 
     kind / target_id / target_name 是三种对话统一的归属口径（docs/17 §3.3）：前端按 kind 切页签、
     按 target_id 选对象，不需要知道哪个类型对应哪一列。原来的 agent_id / agent_name 已随之退休。
     """
-    ids = [c.id for c in rows]
-    counts = rows_to_dict(db.query(Message.conversation_id, func.count(Message.id)).filter(Message.conversation_id.in_(ids)).group_by(Message.conversation_id).all()) if ids else {}
-    names = _names_of(db, rows)
+    counts = message_counts(db, [c.id for c in rows])
+    names = names_of(db, rows)
     return [{
         "id": c.id, "kind": c.kind, "target_id": getattr(c, TARGET_COLUMN[c.kind], None),
         "target_name": names.get((c.kind, getattr(c, TARGET_COLUMN[c.kind], None))),
@@ -178,6 +192,16 @@ def list_messages(db: Session, conversation_id: int, caller: Caller, full_tool_r
     get_owned_conversation(db, conversation_id, caller)
     if full_tool_results and not full_allowed:
         raise BizError(403, "只有 admin / developer 的登录请求可以查看完整工具结果")
+    return serialize_messages(db, conversation_id, full_tool_results, limit)
+
+
+def serialize_messages(db: Session, conversation_id: int, full_tool_results: bool = False, limit: int = MESSAGES_MAX) -> list[dict]:
+    """会话消息 → 接口结构（**不做归属与权限判定**，由调用方先做完）。
+
+    对话页（list_messages）与管理面的对话日志（conversation_log_service）共用这一份：
+    同一条消息在两处的字段与截断口径必须一致，各写一份必然漂移。
+    调用方负责：先确认有权看这个会话（归属 404 或角色 403），再决定 full_tool_results 是否放行。
+    """
     cap = max(1, min(limit, MESSAGES_MAX))
     rows = list(reversed(
         db.query(Message).filter(Message.conversation_id == conversation_id)

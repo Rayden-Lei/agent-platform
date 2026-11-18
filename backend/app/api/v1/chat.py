@@ -18,10 +18,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.core.deps import current_api_key, get_current_user, require_roles
+from app.core.exceptions import BizError
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas import CALLER_ID_PATTERN, AgentIn
-from app.services import chat_runner, chat_service, conversation_service
+from app.services import chat_events, chat_runner, chat_service, conversation_service
 from app.services import model_chat as model_chat_service
 from app.services import workflow_chat as workflow_chat_service
 
@@ -38,6 +39,10 @@ class ChatIn(BaseModel):
     conversation_id: int | None = None
     end_user: str | None = Field(None, pattern=CALLER_ID_PATTERN)
     client_message_id: str | None = Field(None, pattern=CALLER_ID_PATTERN)
+    # 响应模式（docs/15 PB-10，与工作流对外接口 WF-05 同一个词）：
+    # streaming = 现在的 SSE 事件流（默认，所有既有调用方不受影响）；
+    # blocking  = 服务端跑完一整轮后返回一个 JSON，字段与流式 done 事件对齐，对接方不必解析 SSE。
+    response_mode: Literal["streaming", "blocking"] = "streaming"
 
 
 # 调试历史由前端保存并随请求带上（docs/15 3.4）：条数与总长都要有界，否则一次请求就能塞进任意大的上下文
@@ -126,6 +131,66 @@ async def sse_stream(events):
                 pending.cancel()
 
 
+class _BlockingFailed(Exception):
+    """内部信号：执行器已经发过 error 事件（并完成收尾），把事件里的状态码与文案带回路由层。
+
+    不直接抛原始异常：error 事件里的文案已经过 public_error 脱敏（原文可能含内部地址或上游整页 HTML），
+    重新抛原异常等于绕过脱敏。
+    """
+
+    def __init__(self, event: dict, status: int):
+        super().__init__(event.get("message") or "生成失败")
+        self.event = event
+        self.status = status
+
+
+async def _blocking(events) -> dict:
+    """blocking 模式的路由入口：把执行器事件收成 JSON，失败按 HTTP 状态码返回（docs/15 PB-10）。"""
+    try:
+        return await blocking_response(events, timeout=settings.CHAT_BLOCKING_TIMEOUT_SECONDS)
+    except _BlockingFailed as e:
+        raise BizError(e.status, e.event.get("message") or "生成失败")
+
+
+async def blocking_response(events, *, timeout: float) -> dict:
+    """把执行器的事件流收成一个 JSON（docs/15 PB-10 的 blocking 模式）。
+
+    复用执行器，不重写执行逻辑：工具轮数上限、错误脱敏、检索、落库、中断收尾全部由
+    chat_runner 的三个 stream_* 负责，这里只做"收齐 + 汇总 + 异常转状态码"。
+
+    **超时后必须显式关闭生成器**（aclosing）：关掉才会走到执行器的 finally，
+    把已生成的内容落库、运行记录置 cancelled。只放弃等待而不关闭，运行记录会永远停在 running。
+    """
+    collected: list[dict] = []
+    async with aclosing(events) as it:
+        try:
+            async with asyncio.timeout(timeout):
+                async for event in it:
+                    collected.append(event)
+                    if event.get("type") == "error":
+                        # 执行器已经收尾（finalize_run failed），这里只需要把状态码给调用方。
+                        # 流式事件里没有异常类型，只能按 finished_reason 与文案粗分：
+                        # 轮数超限是 400，其余按 502（上游/执行故障）。业务 4xx 在更早的阶段
+                        # 就已按 HTTP 状态码拒绝，不会走到这里。
+                        status = 400 if event.get("finished_reason") == "exceed_max_iters" else 502
+                        raise _BlockingFailed(event, status)
+        except TimeoutError:
+            # 超时：让 aclosing 关闭生成器，执行器按"客户端中断"收尾（内容落库、运行 cancelled）
+            raise BizError(504, f"生成超时（{int(timeout)} 秒），已中止本轮；已生成的内容已保存，可稍后在会话里查看")
+    done = next((e for e in reversed(collected) if e.get("type") == "done"), None)
+    reduced = chat_events.reduce_events(collected)
+    return {
+        "conversation_id": done.get("conversation_id") if done else None,
+        "message_id": done.get("message_id") if done else None,
+        "run_id": done.get("run_id") if done else None,
+        "content": reduced["content"],
+        "citations": reduced["citations"],
+        "tool_calls": reduced["tool_calls"],
+        "usage": reduced["usage"],
+        "status": "success" if done else "failed",
+    }
+
+
 @router.post("/agents/{agent_id}/chat")
 async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """发起对话。
@@ -141,6 +206,8 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     prepared = await run_in_threadpool(chat_service.prepare_chat, db, caller, agent_id, data.message, data.conversation_id,
                                        data.client_message_id, api_key)
     if isinstance(prepared, chat_service.ReplayChat):  # 重复的 client_message_id：回放首次的结果
+        if data.response_mode == "blocking":
+            return await _blocking(chat_runner.replay_chat(prepared))
         return StreamingResponse(sse_stream(chat_runner.replay_chat(prepared)), media_type="text/event-stream")
     # 智能体对话跑的必定是某个发布版本（prepare_chat 已断言过一次），这里再断言是把"非 None"带给检查器；
     # 属性访问的收窄在不同检查器下不稳定，先取成局部变量。
@@ -149,6 +216,8 @@ async def chat(agent_id: int, data: ChatIn, request: Request, db: Session = Depe
     turn = chat_runner.ChatTurn(agent_id=agent_id, user_id=user.id, role=user.role, message=data.message,
                                 conversation_id=prepared.conversation_id, run_id=prepared.run_id, agent_version=agent_version,
                                 kb_scope=kb_scope, source=conversation_service.RUN_SOURCE_OF[caller.channel])
+    if data.response_mode == "blocking":
+        return await _blocking(chat_runner.stream_chat(turn))
     return StreamingResponse(sse_stream(chat_runner.stream_chat(turn)), media_type="text/event-stream")
 
 
@@ -165,6 +234,8 @@ async def model_chat(model_id: int, data: ChatIn, request: Request, db: Session 
     prepared, replay = await run_in_threadpool(model_chat_service.prepare_model_chat, db, caller, model_id, data.message,
                                                data.conversation_id, data.client_message_id)
     if replay is not None:  # 重复的 client_message_id：回放首次的结果
+        if data.response_mode == "blocking":
+            return await _blocking(chat_runner.replay_chat(replay))
         return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
     # open_turn 的返回是"二选一"：(PreparedTurn, None) 或 (None, ReplayChat)，回放已经在上一条分支返回，
     # 这条分支里 prepared 必定有值；检查器推不出这个关系，断言一次。
@@ -172,6 +243,8 @@ async def model_chat(model_id: int, data: ChatIn, request: Request, db: Session 
     turn = chat_runner.ModelTurn(model_id=model_id, user_id=user.id, message=data.message,
                                  conversation_id=prepared.conversation_id, run_id=prepared.run_id,
                                  source=conversation_service.RUN_SOURCE_OF[caller.channel])
+    if data.response_mode == "blocking":
+        return await _blocking(chat_runner.stream_model(turn))
     return StreamingResponse(sse_stream(chat_runner.stream_model(turn)), media_type="text/event-stream")
 
 
@@ -188,6 +261,8 @@ async def workflow_chat(workflow_id: int, data: ChatIn, request: Request, db: Se
     prepared, replay = await run_in_threadpool(workflow_chat_service.prepare_workflow_chat, db, caller, workflow_id,
                                                data.message, data.conversation_id, data.client_message_id)
     if replay is not None:
+        if data.response_mode == "blocking":
+            return await _blocking(chat_runner.replay_chat(replay))
         return StreamingResponse(sse_stream(chat_runner.replay_chat(replay)), media_type="text/event-stream")
     # 同上：回放这条分支已经返回，走到这里的 prepared 必定有值。
     assert prepared is not None
@@ -199,6 +274,8 @@ async def workflow_chat(workflow_id: int, data: ChatIn, request: Request, db: Se
     turn = chat_runner.WorkflowTurn(workflow_id=workflow_id, user_id=user.id, role=user.role, message=data.message,
                                     conversation_id=prepared.conversation_id, run_id=prepared.run_id,
                                     inputs=extra["inputs"], version=extra["version"])
+    if data.response_mode == "blocking":
+        return await _blocking(chat_runner.stream_workflow(turn))
     return StreamingResponse(sse_stream(chat_runner.stream_workflow(turn)), media_type="text/event-stream")
 
 

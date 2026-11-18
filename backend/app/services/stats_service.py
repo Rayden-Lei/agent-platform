@@ -260,8 +260,10 @@ def overview(db: Session) -> dict:
     pending = {
         "awaiting_review": db.query(func.count(Run.id)).filter(Run.status == "awaiting_review").scalar(),
         "running": db.query(func.count(Run.id)).filter(Run.status == "running").scalar(),
-        # 超过 1 小时仍 running 的记录通常是进程被杀后没收尾的幽灵记录
-        "stuck_running": db.query(func.count(Run.id)).filter(Run.status == "running", Run.started_at < datetime.now(timezone.utc) - timedelta(hours=1)).scalar(),
+        # 超过 STUCK_RUN_MINUTES 仍 running 的记录通常是进程被杀后没收尾的幽灵记录。
+        # 判定线走 run_service.stuck_cutoff：工作台的这个数字与运行记录页"卡住的运行"筛选、
+        # 以及处置入口的前置条件必须是同一口径，否则会出现"工作台说有卡住的、点处置却说过期不够"。
+        "stuck_running": db.query(func.count(Run.id)).filter(run_service.stuck_condition(run_service.stuck_cutoff())).scalar(),
         "failed_today": db.query(func.count(Run.id)).filter(Run.status == "failed", Run.started_at >= today_since, run_service.operational_only()).scalar(),
         "failed_documents": db.query(func.count(Document.id)).filter(Document.status == "failed").scalar(),
         "processing_documents": db.query(func.count(Document.id)).filter(Document.status.in_(("uploading", "parsing", "chunking"))).scalar(),
