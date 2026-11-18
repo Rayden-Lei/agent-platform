@@ -145,10 +145,15 @@ Vite 会把 `^/api/` 代理到 `http://127.0.0.1:8000`（键必须是带尾斜�
 
 ```bash
 cd backend
-.venv/bin/pytest
+.venv/bin/pytest                      # 全量（连接 .env 指向的库）
+.venv/bin/pytest tests/test_kb.py -q  # 单文件
 ```
 
-CI 在每次 push 与 PR 时启动 pgvector 与 Redis 容器运行后端测试，并对前端做 `tsc --noEmit` 与构建。
+**跑全量请在数据库所在的那台机器上跑**：本机经 SSH 隧道连库时每次查询多付约 25ms（p50），
+全量 1185 条要 27 分钟；在服务器上直连同一套库只要 3 分钟。原因、做法与内存注意事项见
+[docs/08 第 5 节](docs/08-运行与部署.md)。
+
+CI 在每次 push 与 PR 时启动 pgvector 与 Redis 容器运行后端测试，并对前端做 `tsc --noEmit`、`npm run lint` 与 `vite build`。
 
 ## 目录结构
 

@@ -127,5 +127,9 @@ jobs:
         run: cd frontend && npm install
       - name: Type check
         run: cd frontend && npx tsc --noEmit
+      # 规则集从简（typescript-eslint recommended + react-hooks recommended），不跑格式化规则。
+      # 不加 continue-on-error：lint 挂了就是门禁失败，否则等于没有 lint
+      - name: Lint
+        run: cd frontend && npm run lint
       - name: Build
         run: cd frontend && npm run build
