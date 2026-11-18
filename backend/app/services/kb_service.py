@@ -241,11 +241,84 @@ def _access_change(a: AuditLog) -> dict:
             "created_at": a.created_at.isoformat() if a.created_at else None, "before": before, "after": after}
 
 
+# 引用说明里最多点名几个：知识库可能被几十个智能体用着，409 的文案不该变成一屏名字
+REF_NAMES_IN_MESSAGE = 5
+
+
+def _ref_names(names: list[str]) -> str:
+    """引用方名字的可读清单：超过 REF_NAMES_IN_MESSAGE 个时只点名前几个并给出总数。"""
+    shown = names[:REF_NAMES_IN_MESSAGE]
+    text = "、".join(f"「{n}」" for n in shown)
+    return f"{text} 等 {len(names)} 个" if len(names) > len(shown) else text
+
+
+def _live_agent_refs(db: Session, kb_id: int) -> list[str]:
+    """线上版本快照里仍绑着本知识库的智能体名称（只算在线智能体，与 model_service.delete_model 同一口径）。
+
+    草稿引用不拦：删除时把它从草稿的 kb_ids 里摘掉（见 delete_kb）。
+    线上版本是不可变快照，改不了 —— 删掉知识库后快照里的 id 悬空，检索静默少一路召回，
+    对话看起来只是"知识库里没有相关内容"，所以只能拒绝删除。
+    一次查询（join 线上版本），不逐行查库。
+    """
+    snap_kb_ids = AgentVersion.snapshot["kb_ids"]
+    rows = (
+        db.query(Agent.name)
+        .join(AgentVersion, (AgentVersion.agent_id == Agent.id) & (AgentVersion.version == Agent.published_version))
+        .filter(Agent.status == "published", snap_kb_ids.contains([kb_id]))
+        .order_by(Agent.id)
+        .all()
+    )
+    return [name for (name,) in rows]
+
+
+def _live_workflow_refs(db: Session, kb_id: int) -> list[str]:
+    """线上版本快照里仍引用本知识库的工作流名称（知识库检索节点的 config.kb_id）。
+
+    工作流节点按 kb_id 引用（engine.py 的 _make_kb_node 读 config.kb_id），线上快照不可变；
+    删掉知识库后该节点会以"知识库不存在"的检索结果静默继续（retrieve 对不存在的库返回空），
+    所以一并拦。一次查询：jsonb_array_elements 展开线上版本的节点。
+    """
+    from sqlalchemy import text
+
+    rows = db.execute(text(
+        "select w.name from workflows w "
+        "join workflow_versions wv on wv.workflow_id = w.id and wv.version = w.published_version "
+        "cross join lateral jsonb_array_elements(coalesce(wv.snapshot->'graph'->'nodes', '[]'::jsonb)) as node "
+        "where w.status = 'published' and node->>'type' = 'kb_retrieval' "
+        "and (node->'config'->>'kb_id') = cast(:kb_id as text) "
+        "order by w.id"
+    ), {"kb_id": kb_id}).all()
+    return [name for (name,) in rows]
+
+
 def delete_kb(db: Session, kb_id: int, user: User) -> None:
-    """删除知识库，文档与切片由数据库外键 CASCADE 级联删除；写审计 delete（与删除同一次提交）。"""
+    """删除知识库，文档与切片由数据库外键 CASCADE 级联删除；写审计 delete（与删除同一次提交）。
+
+    **先查线上引用（docs/09 第 4 节待做项）**：被在线智能体的线上版本快照、或已发布工作流的知识库检索节点
+    引用时 409 并点名引用方 —— 线上快照不可变，删掉之后检索只是安静地少一路召回，
+    用户分不清"库里没内容"和"库没了"。口径与 model_service.delete_model 一致。
+
+    草稿引用不拦（与删除工具同一处理）：agents.kb_ids 是 JSONB 列表、无外键，
+    删除后不会级联清理，这里主动把它从所有草稿的 kb_ids 里移除，不留悬空 id。
+    """
     kb = get_kb(db, kb_id, user.role)
+    live_agents = _live_agent_refs(db, kb_id)
+    live_workflows = _live_workflow_refs(db, kb_id)
+    if live_agents or live_workflows:
+        parts = []
+        if live_agents:
+            parts.append(f"智能体 {_ref_names(live_agents)} 的线上版本")
+        if live_workflows:
+            parts.append(f"工作流 {_ref_names(live_workflows)} 的线上版本")
+        raise BizError(409, f"该知识库仍被 {'、'.join(parts)} 引用，无法删除；请先发布不再使用它的新版本，或下线相关智能体 / 工作流")
+    agents = db.query(Agent).filter(Agent.kb_ids.contains([kb_id])).all()
+    for a in agents:
+        if kb_id in a.kb_ids:
+            a.kb_ids = [x for x in a.kb_ids if x != kb_id]
+    name = kb.name
     db.delete(kb)
-    record_audit(db, user, "delete", "knowledge_base", kb_id, detail={"name": kb.name})
+    record_audit(db, user, "delete", "knowledge_base", kb_id,
+                 detail={"name": name, "detached_agents": len(agents)})
 
 
 def upload_policy() -> dict:

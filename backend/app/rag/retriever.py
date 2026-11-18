@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import select
 
 from app.core.exceptions import BizError
-from app.db.models import Document, DocumentChunk, KnowledgeBase
+from app.db.models import Document, DocumentChunk, EmbeddingModel, KnowledgeBase
 from app.db.session import SessionLocal
 from app.rag import embedding_dims
 from app.rag.embeddings import embed_query
@@ -52,20 +52,44 @@ class KBUnsearchable(Exception):
     """
 
 
-def _kb_vector(db, kb: KnowledgeBase) -> tuple:
-    """知识库当前该用的 (向量模型配置, 维度列)；不满足检索条件时抛 KBUnsearchable。
+def unsearchable_reason(kb_name: str, embedding_model_id: int | None, model: EmbeddingModel | None) -> str | None:
+    """知识库当前无法检索的原因；可检索时返回 None。
 
     三个前置条件缺一不可：模型行还在、模型是启用的、维度在支持集合里。
     维度不在支持集合里意味着切片表没有对应的列，任何查询都无从下手。
-    """
-    from app.services import embedding_model_service
 
+    为什么是纯函数、参数用标量而不是 KnowledgeBase 行：系统状态页要一次列出**所有**不可检索的库，
+    那是"一次查询取回 knowledge_bases + embedding_models，再逐行判断"，不能逐库 db.get（06 第 1 节禁循环内 IO）。
+    检索路径（_kb_vector）与状态页共用本函数，判断规则只有这一处，不会出现
+    "检索认为不可用、状态页认为正常"这种对不上的情况。
+    """
+    if model is None:
+        return f"知识库「{kb_name}」绑定的向量模型不存在（id={embedding_model_id}），请重新配置"
+    if not model.is_enabled:
+        return f"知识库「{kb_name}」绑定的向量模型「{model.name}」已停用"
+    if not embedding_dims.is_supported(model.dim):
+        return f"知识库「{kb_name}」的向量模型维度 {model.dim} 不受支持（可选 {list(embedding_dims.SUPPORTED_DIMS)}）"
+    return None
+
+
+def _kb_vector(db, kb: KnowledgeBase) -> tuple:
+    """知识库当前该用的 (向量模型配置, 维度列)；不满足检索条件时抛 KBUnsearchable。
+
+    三个前置条件见 unsearchable_reason（判断规则与系统状态页共用那一处）。
+    模型行只取一次（先判断、再由同一行建 spec）：检索是对话主链路，不能为了一次判断多打一次远程库。
+    """
+    from app.rag.embeddings import spec_from_row
+
+    model = db.get(EmbeddingModel, kb.embedding_model_id) if kb.embedding_model_id else None
+    reason = unsearchable_reason(kb.name, kb.embedding_model_id, model)
+    if reason:
+        raise KBUnsearchable(f"知识库 {kb.id} 不可检索：{reason}")
     try:
-        spec = embedding_model_service.spec_for_kb(db, kb)
+        # 解密失败（库换过 AES_KEY）也按"不可检索"处理：检索主链路上抛 BizError 会让对话 500、
+        # 工作流节点 failed，而这个库本来就只是"这一路召回不可用"。
+        spec = spec_from_row(model)
     except BizError as e:
-        raise KBUnsearchable(f"知识库 {kb.id} 绑定的向量模型不可用：{e}") from e
-    if not embedding_dims.is_supported(spec.dim):
-        raise KBUnsearchable(f"知识库 {kb.id} 的向量模型维度 {spec.dim} 不受支持（可选 {list(embedding_dims.SUPPORTED_DIMS)}）")
+        raise KBUnsearchable(f"知识库 {kb.id} 不可检索：{e}") from e
     return spec, embedding_dims.orm_column(spec.dim)
 
 

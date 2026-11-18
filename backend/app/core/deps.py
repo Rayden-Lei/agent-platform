@@ -40,6 +40,8 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未认证")
     token = credentials.credentials
     if token.startswith(API_KEY_PREFIX):
+        # Key 的有效性判定全在 authenticate 里：不存在/停用/已过期都是 401（过期与停用同一口径，docs/15 PB-11），
+        # 归属账号停用是 403；被拒的请求在那里留痕（审计或结构化日志）。这里不做第二份判定。
         user, api_key, rate_limit = api_key_service.authenticate(db, token)
         request.state.auth_via = "api_key"
         request.state.api_key_id = api_key.id

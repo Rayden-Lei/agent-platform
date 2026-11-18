@@ -38,6 +38,9 @@ class ChatContext:
     history_messages: list
     acl_rejected: int = 0
     rerank_mode: str | None = None  # 本轮检索实际用的重排后端（model / lexical），写进审计
+    # 本轮绑定了、但当前检索不了的库：[{kb_id, kb_name, reason}]（向量模型被停用/删除、维度不受支持）。
+    # 不下发这个字段的话，用户看到"回答里没有引用"分不清是库里确实没内容、还是库坏了（docs/09 已知问题）。
+    kb_unsearchable: list = field(default_factory=list)
     summary_pending: bool = False  # 待折叠消息已攒够一批：响应结束后在后台刷新会话摘要，不占用本轮首字节
     trace: list = field(default_factory=list)  # 装配阶段的调用链步骤（改写、检索），只有调试才收集
     retrieval_ms: int = 0
@@ -226,6 +229,9 @@ class Retrieval(NamedTuple):
     acl_rejected: int
     rerank_mode: str | None
     steps: list  # 每个 (知识库, 查询) 一条调用链步骤（chat_trace.retrieve_step），调试下发，线上暂不用
+    # 检索不了的库（同一库多个查询只记一条）：[{kb_id, kb_name, reason}]，见 ChatContext.kb_unsearchable。
+    # 不给默认值：可变默认值（[]）会被所有实例共享，这类坑在 NamedTuple 上尤其隐蔽
+    kb_unsearchable: list
 
 
 def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict | None = None, kb_scope: list | None = None) -> Retrieval:
@@ -254,15 +260,21 @@ def _retrieve_all(kb_ids: list, queries: list, role: str | None, kb_names: dict 
     merged: dict = {}
     acl_rejected = 0
     rerank_mode = None
+    # 检索不了的库：以前只把 kb_unsearchable 丢在这里不合并，用户完全看不到"库坏了"（docs/09 已登记）。
+    # 一个库可能有多个查询，按 kb_id 去重，只留第一条原因（同一库的不可检索原因必然相同）。
+    unsearchable: dict = {}
     for kb_id, stats, _ in results:
         acl_rejected += stats["stats"].get("acl_rejected", 0)
         rerank_mode = stats["stats"].get("rerank_mode") or rerank_mode
+        if stats["stats"].get("kb_unsearchable") and kb_id not in unsearchable:
+            unsearchable[kb_id] = {"kb_id": kb_id, "kb_name": kb_names.get(kb_id) or f"知识库 #{kb_id}",
+                                   "reason": stats["stats"]["kb_unsearchable"]}
         for item in stats["items"]:
             key = (kb_id, item["chunk_id"])
             if key not in merged or item["score"] > merged[key]["score"]:
                 merged[key] = {"kb_id": kb_id, "chunk_id": item["chunk_id"], "doc_name": item["doc_name"], "content": item["content"], "score": item["score"]}
     citations = sorted(merged.values(), key=lambda x: -x["score"])[: top_k * len(kb_ids)]
-    return Retrieval(citations, acl_rejected, rerank_mode, [step for _, _, step in results])
+    return Retrieval(citations, acl_rejected, rerank_mode, [step for _, _, step in results], list(unsearchable.values()))
 
 
 # 幂等回放与会话/运行记录的开立已经下沉到 chat_turn（三种对话共用），这里转出旧名字，
@@ -340,7 +352,7 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
     tools = build_tools(tool_dbs, source=source, agent_id=cfg.agent_id, run_id=run_id, skills=skills)
 
     kb_context = ""
-    retrieval = Retrieval([], 0, None, [])
+    retrieval = Retrieval([], 0, None, [], [])
     steps: list = []
     started = time.perf_counter()
     if cfg.kb_ids:
@@ -351,6 +363,13 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
         kb_names = rows_to_dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(KnowledgeBase.id.in_(cfg.kb_ids)).all()) if trace else None
         retrieval = _retrieve_all(cfg.kb_ids, queries, role, kb_names, kb_scope)
         steps.extend(retrieval.steps)
+        if retrieval.kb_unsearchable and not kb_names:
+            # 线上对话不查库名（trace 关闭时 kb_names 为空，省一次查询）。真出现检索不了的库时补一次 IN 查询，
+            # 让用户看到库名而不是"知识库 #12"；没有不可检索的库时一个查询都不多发。
+            names = rows_to_dict(db.query(KnowledgeBase.id, KnowledgeBase.name).filter(
+                KnowledgeBase.id.in_([e["kb_id"] for e in retrieval.kb_unsearchable])).all())
+            for entry in retrieval.kb_unsearchable:
+                entry["kb_name"] = names.get(entry["kb_id"]) or entry["kb_name"]
         if retrieval.citations:
             kb_context = (
                 "【参考片段】只能依据下列片段作答，每条断言须标注片段编号 [n]，"
@@ -362,7 +381,8 @@ def _context_from_config(db: Session, cfg: AgentRunConfig, message_text: str, ro
     # 技能分两段进系统提示：always_on 的正文常驻（每轮都要的规则），其余只进目录等模型按需加载
     system_prompt = cfg.system_prompt + _skills_block(skills) + (("\n\n" + kb_context) if kb_context else "")
     return ChatContext(model=model, llm=llm, tools=tools, system_prompt=system_prompt, citations=retrieval.citations, history_messages=[],
-                       acl_rejected=retrieval.acl_rejected, rerank_mode=retrieval.rerank_mode, trace=steps if trace else [], retrieval_ms=retrieval_ms)
+                       acl_rejected=retrieval.acl_rejected, rerank_mode=retrieval.rerank_mode, kb_unsearchable=retrieval.kb_unsearchable,
+                       trace=steps if trace else [], retrieval_ms=retrieval_ms)
 
 
 def build_chat_context(db: Session, agent_id: int, message_text: str, conversation_id: int, role: str | None = None,

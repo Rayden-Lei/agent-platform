@@ -5,7 +5,7 @@ from app.core.exceptions import BizError
 from app.core.pagination import PageParams, SortParams, apply_sort, paginate
 from app.core.security import encrypt_secret
 from app.db.session import rows_to_dict
-from app.db.models import Agent, Tool, User
+from app.db.models import Agent, AgentVersion, Tool, User
 from app.tools.builtin import BUILTIN_PARAMETERS
 from app.tools.tool_config import TOOL_CONFIG_FIELDS
 from app.tools.executor import execute_tool
@@ -273,14 +273,77 @@ def set_tool_enabled(db: Session, tool_id: int, enabled: bool, user: User) -> di
     return {"id": t.id, "is_enabled": t.is_enabled}
 
 
+# 引用说明里最多点名几个：工具/知识库可能被几十个智能体用着，409 的文案不该变成一屏名字
+REF_NAMES_IN_MESSAGE = 5
+
+
+def _name_list(names: list[str]) -> str:
+    """引用方名字的可读清单：超过 REF_NAMES_IN_MESSAGE 个时只点名前几个并给出总数。"""
+    shown = names[:REF_NAMES_IN_MESSAGE]
+    text = "、".join(f"「{n}」" for n in shown)
+    return f"{text} 等 {len(names)} 个" if len(names) > len(shown) else text
+
+
+def _live_agent_refs(db: Session, tool_id: int) -> list[str]:
+    """线上版本快照里仍绑着本工具的智能体名称（只算在线智能体，与 model_service.delete_model 同一口径）。
+
+    草稿引用不拦：删除时会把它从草稿的 tool_ids 里摘掉（见 delete_tool）。
+    线上版本是**不可变快照**，改不了 —— 删掉工具后快照里的 id 就悬空，该工具从线上静默消失，
+    所以只能拒绝删除，让调用方先发布一版不含它的配置或下线。
+    一次查询（join 线上版本），不逐行查库。
+    """
+    snap_tool_ids = AgentVersion.snapshot["tool_ids"]
+    rows = (
+        db.query(Agent.name)
+        .join(AgentVersion, (AgentVersion.agent_id == Agent.id) & (AgentVersion.version == Agent.published_version))
+        .filter(Agent.status == "published", snap_tool_ids.contains([tool_id]))
+        .order_by(Agent.id)
+        .all()
+    )
+    return [name for (name,) in rows]
+
+
+def _live_workflow_refs(db: Session, tool_name: str) -> list[str]:
+    """线上版本快照里仍引用本工具的工作流名称。
+
+    工作流的工具节点按 **Tool.name** 引用（engine.py 按名字查后取唯一一行），不是按 id，
+    所以判断依据是节点 config.tool_name；这也是工具名必须唯一的原因（_check_name_taken）。
+    线上快照不可变，删掉工具后节点会以"工具不存在"失败，因此一并拦。
+    一次查询：jsonb_array_elements 展开线上版本的节点（与 _agents_count_by_tool 同一写法）。
+    """
+    from sqlalchemy import text
+
+    rows = db.execute(text(
+        "select w.name from workflows w "
+        "join workflow_versions wv on wv.workflow_id = w.id and wv.version = w.published_version "
+        "cross join lateral jsonb_array_elements(coalesce(wv.snapshot->'graph'->'nodes', '[]'::jsonb)) as node "
+        "where w.status = 'published' and node->>'type' = 'tool' and node->'config'->>'tool_name' = :name "
+        "order by w.id"
+    ), {"name": tool_name}).all()
+    return [name for (name,) in rows]
+
+
 def delete_tool(db: Session, tool_id: int, user: User) -> None:
     """删除工具。
 
-    tools 与智能体的关联是 agents.tool_ids（JSONB 列表）而非外键，删除后不会级联清理，
-    这里主动把该 tool_id 从所有智能体的 tool_ids 里移除，避免留下悬空引用
-    （否则对话/工作流运行时会按已不存在的工具做无谓查询或报"工具不存在"）。
+    **先查线上引用（docs/09 第 4 节待做项）**：被在线智能体的线上版本快照、或已发布工作流的工具节点
+    引用时 409 并点名引用方 —— 线上快照不可变，删掉之后该工具从线上静默消失，
+    调用方只看到"工具不存在"却查不到是谁删的。口径与 model_service.delete_model 一致。
+
+    草稿引用不拦：tools 与智能体的关联是 agents.tool_ids（JSONB 列表）而非外键，
+    删除后不会级联清理，这里主动把该 tool_id 从所有草稿的 tool_ids 里移除，
+    避免留下悬空引用（否则对话/工作流运行时会按已不存在的工具做无谓查询或报"工具不存在"）。
     """
     t = get_tool(db, tool_id)
+    live_agents = _live_agent_refs(db, tool_id)
+    live_workflows = _live_workflow_refs(db, t.name)
+    if live_agents or live_workflows:
+        parts = []
+        if live_agents:
+            parts.append(f"智能体 {_name_list(live_agents)} 的线上版本")
+        if live_workflows:
+            parts.append(f"工作流 {_name_list(live_workflows)} 的线上版本")
+        raise BizError(409, f"该工具仍被 {'、'.join(parts)} 引用，无法删除；请先发布不再使用它的新版本，或下线相关智能体 / 工作流")
     agents = db.query(Agent).filter(Agent.tool_ids.contains([tool_id])).all()
     for a in agents:
         if tool_id in a.tool_ids:

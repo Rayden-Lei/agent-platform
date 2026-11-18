@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import ipaddress
 import uuid
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -94,6 +96,7 @@ def make_key():
                 agent_ids=kw.get("agent_ids", []),
                 workflow_ids=kw.get("workflow_ids", []),
                 kb_ids=kw.get("kb_ids", []),
+                expires_at=kw.get("expires_at"),
             )
             db.add(ak)
             db.commit()
@@ -322,6 +325,75 @@ def test_scope_checks_types_in_order_agent_first():
         assert "工作流" not in ei.value.detail
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- 有效期（docs/15 PB-11）
+
+def test_is_expired_compares_against_now():
+    """纯函数口径：空 = 永不过期；等于当下算过期（<=，不是 <，边界不留空档）。"""
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    assert api_key_service.is_expired(SimpleNamespace(expires_at=None), now) is False
+    assert api_key_service.is_expired(SimpleNamespace(expires_at=now - timedelta(seconds=1)), now) is True
+    assert api_key_service.is_expired(SimpleNamespace(expires_at=now), now) is True
+    assert api_key_service.is_expired(SimpleNamespace(expires_at=now + timedelta(seconds=1)), now) is False
+
+
+def test_authenticate_rejects_expired_key_without_consuming_quota(make_key):
+    """过期的 Key 401「已过期」且**不消耗配额**：判定在扣配额之前，过期 Key 不该把额度刷掉。"""
+    raw, kid = make_key(quota=10, used=0, expires_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    db = SessionLocal()
+    try:
+        with pytest.raises(BizError) as ei:
+            api_key_service.authenticate(db, raw)
+        assert ei.value.status_code == 401
+        assert "已过期" in ei.value.detail
+    finally:
+        db.close()
+    assert _read(kid).used == 0
+
+
+def test_authenticate_accepts_key_expiring_later(make_key):
+    raw, kid = make_key(expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
+    db = SessionLocal()
+    try:
+        _, ak, _ = api_key_service.authenticate(db, raw)
+        assert ak.id == kid
+    finally:
+        db.close()
+    assert _read(kid).used == 1
+
+
+def test_quota_null_is_unlimited(make_key):
+    """quota 为空 = 不限次数：多次调用都成功且 used 一直累加（docs/15 PB-11）。"""
+    raw, kid = make_key(quota=None)
+    for _ in range(3):
+        db = SessionLocal()
+        try:
+            api_key_service.authenticate(db, raw)
+        finally:
+            db.close()
+    assert _read(kid).used == 3
+
+
+def test_expired_rejection_is_audited(make_key):
+    """过期被拒要留痕，detail 里只有原因与前缀，不含明文。"""
+    raw, kid = make_key(expires_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    db = SessionLocal()
+    try:
+        with pytest.raises(BizError):
+            api_key_service.authenticate(db, raw)
+    finally:
+        db.close()
+    db2 = SessionLocal()
+    try:
+        rows = db2.execute(text(
+            "select detail from audit_logs where action = 'api_key_expired' and resource_id = :rid"
+        ), {"rid": kid}).scalars().all()
+        assert rows, "过期被拒没有留痕"
+        assert rows[-1]["reason"] == "API Key 已过期"
+        assert raw not in str(rows[-1])
+    finally:
+        db2.close()
 
 
 # --------------------------------------------------------------------------- 序列化不泄露

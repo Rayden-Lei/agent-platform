@@ -1,12 +1,14 @@
 """API Key 鉴权：以归属用户身份调用、配额扣减、管理接口拒绝、无效 / 停用 / 删除的 Key 被拒；
-入口治理（`12-差距补齐开发计划.md` 1.2）：来源白名单、单 Key 限速、按创建人隔离、编辑接口。"""
+入口治理（`12-差距补齐开发计划.md` 1.2）：来源白名单、单 Key 限速、按创建人隔离、编辑接口；
+生命周期（docs/15 PB-11）：有效期、轮换、配额"不限"语义、被拒留痕。"""
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import redis
 
 from app.config import settings
 from app.core import rate_limiter, redis_client
-from app.db.models import AuditLog
+from app.db.models import ApiKey, AuditLog
 from app.db.session import SessionLocal
 from tests.conftest import publish_workflow
 
@@ -107,6 +109,243 @@ def test_api_key_quota_exhausted_returns_429(client, auth_headers, key_scope):
         assert r.status_code == 429
         assert "配额" in r.json()["detail"]
         assert _key_row(client, auth_headers, k["id"])["used"] == 2  # 超额请求不再累加
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+# ---------- 生命周期：有效期与轮换（docs/15 PB-11，2026-11-18） ----------
+
+def _set_expires_at(key_id: int, value: datetime | None) -> None:
+    """直接改库里的有效期：接口只收未来时间（422），造"已过期"的现场只能从库里改。"""
+    db = SessionLocal()
+    try:
+        row = db.get(ApiKey, key_id)
+        assert row is not None
+        row.expires_at = value
+        db.commit()
+    finally:
+        db.close()
+
+
+def _create_key_with(client, auth_headers, scope: dict, **extra) -> dict:
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-lifecycle", **scope, **extra})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_expired_key_is_rejected_401_without_consuming_quota(client, auth_headers, key_scope):
+    """过期 Key 调 401 且文案明确是"已过期"（与"已停用"同一口径），used 不变 —— 过期判定在扣配额之前。"""
+    k = _create_key(client, auth_headers, key_scope, name="pytest-expired")
+    try:
+        _set_expires_at(k["id"], datetime.now(timezone.utc) - timedelta(minutes=1))
+        r = client.get("/api/v1/auth/me", headers=_bearer(k["key"]))
+        assert r.status_code == 401, r.text
+        assert "已过期" in r.json()["detail"]
+        row = _key_row(client, auth_headers, k["id"])
+        assert row["used"] == 0, "过期 Key 不该消耗配额"
+        assert row["is_expired"] is True
+        audit = _latest_audit("api_key_expired", k["id"])
+        assert audit is not None and audit.detail["reason"] == "API Key 已过期"
+        assert "key_prefix" in audit.detail and k["key"] not in str(audit.detail)
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_key_with_future_expiry_works(client, auth_headers, key_scope):
+    """未到期的 Key 正常可用；列表里能看出有效期与 is_expired=False。"""
+    expires = datetime.now(timezone.utc) + timedelta(hours=2)
+    k = _create_key_with(client, auth_headers, key_scope, expires_at=expires.isoformat())
+    try:
+        assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
+        row = _key_row(client, auth_headers, k["id"])
+        assert row["is_expired"] is False
+        assert row["expires_at"] is not None
+        assert row["used"] == 1
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_key_without_expiry_never_expires(client, auth_headers, key_scope):
+    """不传 expires_at = 永不过期（存量 Key 迁移后都是这个状态），is_expired 为 False。"""
+    k = _create_key(client, auth_headers, key_scope, name="pytest-no-expiry")
+    try:
+        row = _key_row(client, auth_headers, k["id"])
+        assert row["expires_at"] is None and row["is_expired"] is False
+        assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_expires_at_in_past_or_naive_returns_422(client, auth_headers, key_scope):
+    """有效期必须是未来时间、且带时区（服务端唯一权威，不靠前端日期选择器）。"""
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    r = client.post("/api/v1/api-keys", headers=auth_headers, json={"name": "pytest-past", "expires_at": past, **key_scope})
+    assert r.status_code == 422, r.text
+    assert "未来时间" in r.text
+
+    k = _create_key(client, auth_headers, key_scope, name="pytest-past-put")
+    try:
+        r = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"expires_at": past})
+        assert r.status_code == 422, r.text
+        assert "未来时间" in r.text
+        # 不带时区的时间不猜时区
+        naive = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"expires_at": "2030-01-01T00:00:00"})
+        assert naive.status_code == 422, naive.text
+        assert "时区" in naive.text
+        # 被拒的请求没有改动库里的值
+        assert _key_row(client, auth_headers, k["id"])["expires_at"] is None
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_update_expires_at_and_clear_it(client, auth_headers, key_scope):
+    """PUT 能设有效期，显式传 null 能清除（永不过期）；审计 update 里记了改动的字段。"""
+    k = _create_key(client, auth_headers, key_scope, name="pytest-expiry-update")
+    try:
+        expires = datetime.now(timezone.utc) + timedelta(days=7)
+        r = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"expires_at": expires.isoformat()})
+        assert r.status_code == 200, r.text
+        assert r.json()["expires_at"] is not None and r.json()["is_expired"] is False
+        assert "expires_at" in _latest_audit("update", k["id"]).detail["changed"]
+
+        cleared = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"expires_at": None})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["expires_at"] is None
+        # 不传这个字段时保持不变（设置后不会被"未传"清掉）
+        again = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"expires_at": expires.isoformat()})
+        assert again.status_code == 200
+        kept = client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"name": "pytest-expiry-kept"})
+        assert kept.json()["expires_at"] is not None
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_rotate_invalidates_old_plaintext_and_keeps_settings(client, auth_headers, key_scope):
+    """轮换：旧明文立即 401，新明文可用；其余设置与累计用量不变；审计有 rotate 且不含明文。"""
+    expires = datetime.now(timezone.utc) + timedelta(days=3)
+    k = _create_key_with(client, auth_headers, key_scope, quota=7, rate_limit_per_minute=30,
+                         allowed_ips=["10.0.0.0/8"], expires_at=expires.isoformat())
+    try:
+        # 先正常用一次，确认轮换不会重置累计用量
+        db = SessionLocal()
+        try:
+            row = db.get(ApiKey, k["id"])
+            row.allowed_ips = []
+            db.commit()
+        finally:
+            db.close()
+        assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 200
+
+        r = client.post(f"/api/v1/api-keys/{k['id']}/rotate", headers=auth_headers)
+        assert r.status_code == 200, r.text
+        rotated = r.json()
+        assert rotated["key"] != k["key"] and rotated["key"].startswith("ak_")
+        assert rotated["id"] == k["id"]
+        assert rotated["name"] == k["name"] and rotated["quota"] == 7
+        assert rotated["rate_limit_per_minute"] == 30
+        assert rotated["agent_ids"] == k["agent_ids"] and rotated["workflow_ids"] == k["workflow_ids"]
+        assert rotated["expires_at"] is not None
+        assert rotated["used"] == 1, "轮换不改身份，累计用量保留"
+        assert rotated["key_prefix"] != k["key_prefix"]
+
+        assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 401
+        assert client.get("/api/v1/auth/me", headers=_bearer(rotated["key"])).status_code == 200
+
+        audit = _latest_audit("rotate", k["id"])
+        assert audit is not None
+        assert audit.detail["old_key_prefix"] == k["key_prefix"]
+        assert k["key"] not in str(audit.detail) and rotated["key"] not in str(audit.detail)
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_developer_cannot_rotate_others_key(client, auth_headers, key_scope):
+    """developer 轮换他人创建的 Key → 404（不暴露存在性），旧明文照常可用。"""
+    dev_id, dev_headers = _developer(client, auth_headers)
+    admin_key = _create_key(client, auth_headers, key_scope, name="pytest-rotate-others")
+    try:
+        assert client.post(f"/api/v1/api-keys/{admin_key['id']}/rotate", headers=dev_headers).status_code == 404
+        assert client.get("/api/v1/auth/me", headers=_bearer(admin_key["key"])).status_code == 200
+    finally:
+        client.delete(f"/api/v1/api-keys/{admin_key['id']}", headers=auth_headers)
+        client.delete(f"/api/v1/users/{dev_id}", headers=auth_headers)
+
+
+def test_rotate_unknown_key_returns_404(client, auth_headers):
+    assert client.post("/api/v1/api-keys/99999999/rotate", headers=auth_headers).status_code == 404
+
+
+def test_quota_null_means_unlimited(client, auth_headers, key_scope):
+    """quota 为空 = 不限次数（docs/15 PB-11）：连续调用不被配额拦；quota=0 仍是一次都调不了。"""
+    unlimited = _create_key_with(client, auth_headers, key_scope, quota=None, name="pytest-quota-null")
+    zero = _create_key_with(client, auth_headers, key_scope, quota=0, name="pytest-quota-zero")
+    try:
+        assert unlimited["quota"] is None
+        for _ in range(3):
+            assert client.get("/api/v1/auth/me", headers=_bearer(unlimited["key"])).status_code == 200
+        assert _key_row(client, auth_headers, unlimited["id"])["used"] == 3
+
+        r = client.get("/api/v1/auth/me", headers=_bearer(zero["key"]))
+        assert r.status_code == 429 and "配额" in r.json()["detail"]
+        assert _key_row(client, auth_headers, zero["id"])["used"] == 0
+    finally:
+        client.delete(f"/api/v1/api-keys/{unlimited['id']}", headers=auth_headers)
+        client.delete(f"/api/v1/api-keys/{zero['id']}", headers=auth_headers)
+
+
+# ---------- 被拒留痕（docs/15 PB-11）：过期 / 停用 / 越权 ----------
+
+def test_disabled_key_rejection_is_audited(client, auth_headers, key_scope):
+    """停用的 Key 被拒要留痕：能回答"谁在什么时候停用了 Key、之后还有谁在调"。"""
+    k = _create_key(client, auth_headers, key_scope, name="pytest-audit-disabled")
+    try:
+        assert client.post(f"/api/v1/api-keys/{k['id']}/toggle", headers=auth_headers).json()["is_enabled"] is False
+        assert client.get("/api/v1/auth/me", headers=_bearer(k["key"])).status_code == 401
+        audit = _latest_audit("api_key_disabled", k["id"])
+        assert audit is not None and audit.detail["reason"] == "API Key 已停用"
+        assert k["key"] not in str(audit.detail)
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+
+
+def test_scope_rejection_logs_key_id_and_reason(client, auth_headers, caplog):
+    """越权被拒记结构化日志：带 key id 与资源 id，不带任何密钥片段。"""
+    w = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-audit-scope-wf", "description": "", "graph": START_END_GRAPH})
+    assert w.status_code == 200, w.text
+    wid = w.json()["id"]
+    other = client.post("/api/v1/workflows", headers=auth_headers, json={"name": "pytest-audit-scope-wf2", "description": "", "graph": START_END_GRAPH})
+    other_id = other.json()["id"]
+    k = _create_key(client, auth_headers, {"workflow_ids": [wid]}, name="pytest-audit-scope")
+    try:
+        with caplog.at_level("WARNING", logger="app.services.api_key_service"):
+            r = client.get(f"/api/v1/workflows/{other_id}/parameters", headers=_bearer(k["key"]))
+        assert r.status_code == 403, r.text
+        line = next((x for x in caplog.messages if "越权被拒" in x), None)
+        assert line is not None
+        assert f"key_id={k['id']}" in line and f"workflow_id={other_id}" in line
+        assert k["key"] not in line
+    finally:
+        client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
+        client.delete(f"/api/v1/workflows/{wid}", headers=auth_headers)
+        client.delete(f"/api/v1/workflows/{other_id}", headers=auth_headers)
+
+
+def test_lifecycle_actions_are_audited(client, auth_headers, key_scope):
+    """增删改启停轮换都写审计（docs/15 PB-11 与 OP-05）：detail 只含前缀，不含明文与哈希。"""
+    k = _create_key(client, auth_headers, key_scope, name="pytest-audit-lifecycle")
+    try:
+        assert _latest_audit("create", k["id"]) is not None
+        assert client.put(f"/api/v1/api-keys/{k['id']}", headers=auth_headers, json={"name": "pytest-audit-lifecycle-2"}).status_code == 200
+        assert _latest_audit("update", k["id"]) is not None
+        assert client.post(f"/api/v1/api-keys/{k['id']}/toggle", headers=auth_headers).status_code == 200
+        assert _latest_audit("disable", k["id"]) is not None
+        assert client.post(f"/api/v1/api-keys/{k['id']}/toggle", headers=auth_headers).status_code == 200
+        assert _latest_audit("enable", k["id"]) is not None
+        assert client.post(f"/api/v1/api-keys/{k['id']}/rotate", headers=auth_headers).status_code == 200
+        assert _latest_audit("rotate", k["id"]) is not None
+        assert client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers).status_code == 200
+        deleted = _latest_audit("delete", k["id"])
+        assert deleted is not None and deleted.detail["name"] == "pytest-audit-lifecycle-2"
     finally:
         client.delete(f"/api/v1/api-keys/{k['id']}", headers=auth_headers)
 
