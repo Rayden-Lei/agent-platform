@@ -6,9 +6,13 @@ __pycache__/
 *.pyc
 
 # 环境变量（含敏感信息，绝不提交）
+# .env.* 覆盖 .env.local、.env.prod、.env.bak-<日期> 等一切派生文件：
+# 2026-11-19 服务器上留了个 .env.bak-20261107-embedding（含明文 API Key），
+# 旧规则只挡 .env / .env.local / .env.*.local，它不在其中，一次 git add -A 就会把密钥推上去。
+# 示例文件必须入库，用 ! 例外放行。
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # 构建产物
 dist/
