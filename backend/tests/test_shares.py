@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.config import settings
-from app.core import rate_limiter
+from app.core import rate_limiter, redis_client
 from app.core.security import create_guest_token
 from app.db.models import AgentShare, AuditLog, Conversation, Document, DocumentChunk, Message, Run
 from app.db.session import SessionLocal
@@ -450,20 +450,52 @@ def test_daily_limits_return_429_without_new_runs(client, auth_headers, public_s
 
 
 def test_ip_limit_applies_across_visitor_tokens(client_from, public_share, monkeypatch):
-    """同一 IP 换着访客令牌对话，超过 RATE_LIMIT_IP_PER_MINUTE 后 429 且不建运行记录（防绕开每位访客的分钟限额）。"""
+    """同一 IP 换着访客令牌对话，超过 RATE_LIMIT_IP_PER_MINUTE 后 429 且不建运行记录（防绕开每位访客的分钟限额）。
+
+    **IP 与时间窗口都必须独占，且起点必须显式归零**（2026-11-20 第二次修）：
+    计数键是 rl:<scope>:<key>:<窗口>，落在 Redis 里、跨用例存活。这个用例要求"第 3 次才 429"，
+    也就是 ip 域的计数必须从 0 开始。两次踩到的坑：
+    ① 原来随机取 10.x.y.z，会与 test_api_keys / test_gateway_basics 里写死的 10.1.2.3、
+       10.10.0.9 撞上；改成 203.0.113.0/24（TEST-NET-3）后不再撞 IP。
+    ② 但**窗口也会撞**：test_api_keys / test_rate_limit 把 _clock 固定成 1_800_000_000.0，
+       本用例原来也是"基准值 + 随机整数个窗口"，只要随机值取到 0 就与它们同窗口，
+       同一个 IP 的计数被前面的用例抬高，第 1 次 _done 就 429。
+    所以现在窗口取一个**远离所有固定基准**的值（基准 + 10^7 个窗口），
+    并把 ip / share_ip 两个键在前后都清掉 —— 起点为 0 是本用例的前提，不能靠"上一次没跑过"。
+    """
     code = public_share["code"]
     share_id = _share_row(public_share["agent"]).id
-    visitor = client_from(f"10.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}")
+    ip = f"203.0.113.{random.randint(1, 254)}"
+    visitor = client_from(ip)
     monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", True)
     monkeypatch.setattr(settings, "RATE_LIMIT_IP_PER_MINUTE", 2)
-    now = 1_800_000_000.0 + random.randint(0, 10**6) * 60  # 固定在一个随机窗口里：计数键 TTL 65 秒，重跑不撞上次的计数
+    # 远离 1_800_000_000.0（其他用例的固定时钟）：偏移 10^7 个窗口，撞不上任何固定基准
+    now = 1_800_000_000.0 + 10**7 * 60
     monkeypatch.setattr(rate_limiter, "_clock", lambda: now)
-    guests = [_guest(visitor, code) for _ in range(3)]
-    for g in guests[:2]:
-        _done(visitor, code, g)
-    r = _gchat(visitor, code, guests[2])
-    assert r.status_code == 429 and "请求过于频繁" in r.json()["detail"]
-    assert len(_share_runs(share_id)) == 2
+    share_id_for_key = share_id
+
+    def _keys() -> list[str]:
+        bucket, _ = rate_limiter._window(now)
+        return [f"rl:ip:{ip}:{bucket}",
+                f"rl:share_ip:{share_id_for_key}:{ip}:{bucket}"]
+
+    def _clear():
+        """清掉本用例会用到的计数键：起点为 0 是本用例的前提。"""
+        client = redis_client.get_redis()
+        if client is None:
+            return
+        client.delete(*_keys())
+
+    _clear()
+    try:
+        guests = [_guest(visitor, code) for _ in range(3)]
+        for g in guests[:2]:
+            _done(visitor, code, g)
+        r = _gchat(visitor, code, guests[2])
+        assert r.status_code == 429 and "请求过于频繁" in r.json()["detail"]
+        assert len(_share_runs(share_id)) == 2
+    finally:
+        _clear()
 
 
 def test_same_client_message_id_replays_without_new_messages(client, public_share):

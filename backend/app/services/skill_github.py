@@ -35,7 +35,10 @@ MAX_TOTAL_BYTES = 8 * 1024 * 1024   # 整次导入的下载总量
 MAX_SKILL_MD_BYTES = 1024 * 1024    # SKILL.md 本身（正文另有 64KB 上限，解析后再校验）
 TIMEOUT_SECONDS = 20.0
 
-ALLOWED_HOSTS = {"github.com", "www.github.com", "raw.githubusercontent.com", "codeload.github.com"}
+# 实际发请求的目标主机。**api.github.com 必须在里面**：_api_base 打的都是它，
+# 而 _get 的重定向校验也拿这个集合比对 —— 漏掉它时，GitHub 对改名仓库回的 301
+# （Location 仍在 api.github.com）会被判成"重定向到了白名单外的域名"，导入直接失败。
+ALLOWED_HOSTS = {"github.com", "www.github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com"}
 
 # 只拉这些后缀当资源：文本类 + 代码类。二进制（png/zip）不拉 ——
 # 本平台的资源是给 load_skill 读、run_skill_script 跑的，拉一堆图片没有意义还占空间。
